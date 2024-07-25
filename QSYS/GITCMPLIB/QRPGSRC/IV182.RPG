@@ -1,0 +1,298 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IV182    Counted item expiration date.
+     F*  05 June, 2002
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT2   IP  E           K        DISK
+     F*           SLREC                             KRENAMERECORD
+     FPIRITEM IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FIV182PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    RPD     1   3 25
+     E                    RECK        3  7 0
+     E                    LVLK        3  7 0
+     E*
+     E                    A22        22  1
+     E*
+     E*
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I            DS
+     I                                        1   60T#DATE
+     I                                        1   20MONTH
+     I                                        3   40DAY
+     I                                        5   60YEAR
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse #
+     C*      $PEDT   Entered date (YYYMMDD)
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS   3
+     C                     PARM           $PENDT  8
+     C                     MOVE $PWHS     $PWHSE  30
+     C                     MOVE $PENDT    PENDT   80
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C           SLITEM    IFNE *BLANKS
+     C           PARTKY    CHAINPIRITEM              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   IDESC
+     C                     MOVE 'N'       ITFLGD
+     C                     ELSE
+     C                     MOVE ITDESC    IDESC
+     C                     ENDIF
+     C           ITFLGD    IFEQ 'Y'
+     C           SLENTD    ANDEQPENDT
+     C* Convert date
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE SLEXPD    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    W1DATE  60
+     C*
+     C                     WRITEDETAIL1
+     C                     WRITESKIP2
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      FIRST
+     C*----------------------------------------------------------------
+     C*
+     C* Grand totals
+     C*
+     C*R                   Z-ADD3         L
+     C*
+     CLR         RECK,L    IFGT 0
+     C*R                   EXSR ZRTOTL
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     CLR                   RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C*
+     C           PARTKY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           SLITEM
+     C*
+     C*
+     C           RPKEY     KLIST
+     C                     KFLD           WKPRTF 10
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD1         L       10
+     C                     Z-ADD0         N       30
+     C                     MOVE #PROG     $CVPRG
+     CSR                   MOVE *ON       FOREVR  1
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C* Convert date
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE $PENDT    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    WODATE  60
+     C*
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           $PWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*  Get report title.
+     C*
+     C                     MOVEL'IV182PR 'WKPRTF
+     C                     MOVE *BLANKS   RPTTTL
+     C           RPKEY     CHAINREPORTS              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELRPDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     RPTTTL
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITESKIP1
+     C                     WRITESBHEAD
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C*
+     C                     MOVE RPD,L     $RPD   25
+     C*
+     C*                    WRITETOTAL1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZZTOTL    BEGSR
+     C*
+     C*
+     C                     MOVE RPD,L     $RPD   25
+     C*
+     C*                    Z-ADD0         TLSTK1
+     C*                    Z-ADD0         TLSTK2
+     C*
+     C**                   WRITETOTAL1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**      RPD   Report level descriptions
+ * Not used *
+ Average for week:
+ *** Grand totals ***

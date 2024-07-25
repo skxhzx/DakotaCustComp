@@ -1,0 +1,514 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  SL510     Get put-away slot
+     F*  19 October 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT3   IF  E           K        DISK
+     FSLOT6   IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FITEMDEF1IF  E           K        DISK
+     FBLDCODE1IF  E           K        DISK
+     FACTIVITYIF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A40        40  1
+     E                    ACT        50  2
+     E                    BLD        50  2
+     E                    OCR         9  4
+     E                    $MD       128  1
+     E                    MSG     1   5 40
+     I*----------------------------------------------------------------
+     I*  Tie/High definitions data structure.
+     I*
+     I*   DSSDEF - Slot definition.
+     I*   DSTIE  - Tie value.
+     I*   DSHIGH - High value.
+     I*   DSPMAX - Maximum pallet quantity (Tie * High).
+     I*   DSPOS  - Number of pallets slot definition can hold.
+     I*   DSSMAX - Maximum slot quantity (Tie * High * Pallets).
+     I*   DSSMIN - Minumum slot quantity (Tie * High * Pallets).
+     I*
+     IDEFS        DS                          9
+     I                                        1   2 DSSDEF
+     I                                        3   60DSTIE
+     I                                        7   80DSHIGH
+     I                                        9  130DSPQTY
+     I                                       14  182DSPLTS
+     I                                       19  210DSPPCS
+     I                                       22  240DSSLTS
+     I                                       25  262DSSPCT
+     I                                       27  27 DSMTCH
+     I            DS
+     I                                        1   4 SVGRP
+     I                                        1   30SVSLTS
+     I                                        4   40SVOCUR
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$AERM       DS
+     I                                        1  60 XAERM
+     I                                        1   4 $AMSG
+     I$CERM       DS
+     I                                        1  60 XCERM
+     I                                        1   4 $CMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERRCL1
+     I                                       11  16 ERRCL2
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *PICK    - Picking new orders.
+     C*              *RESTART - Restarting abnormally ended batch.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PITEM  Item to put away.
+     C*      $PQTY   Quantity to put-away.
+     C*      $PWHSE  Warehouse.
+     C*      $PWHDP  Department.
+     C*      $PSTYP  Section type (P,F).
+     C*      $PDESG  Designation area.
+     C*      $PBLD   Prefered build code.
+     C*      $PACTV  Prefered activity zone.
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message sent to pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PITEM 15
+     C                     PARM           $PQTY   50
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PSTYP  1
+     C                     PARM           $PDESG  5
+     C                     PARM           $PBLD   2
+     C                     PARM           $PACTV  2
+     C                     PARM           $PRTN   8
+     C                     PARM           $PMSG   4
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *BLANKS   $PRTN
+     C*
+     C* Get item information.
+     C*
+     C           KEYIT     CHAINPIRITEM              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE '*INVALID'$PRTN
+     C                     GOTO BOTTOM
+     C                     ENDIF
+     C*
+     C* Get receiving options.
+     C*
+     C                     EXSR GETOPT
+     C*
+     C* If fixed item then try to put in reserved slot.
+     C*
+     C                     EXSR RESRV
+     C           DONE      IFEQ *ON
+     C                     MOVE '*OK     '$PRTN
+     C                     GOTO BOTTOM
+     C                     ENDIF
+     C*
+     C* Get "normal" tie/high definitions for item.
+     C*
+     C                     EXSR GETDEF
+     C           ERROR     CABEQ*ON       BOTTOM
+     C*
+     C* First, try to find perfect match.
+     C*
+     C                     EXSR TRY1
+     C*
+     C           BOTTOM    TAG
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   MOVE 'O'       KYOPEN  1
+     C*
+     C*  Define partial key for ITEMDEF1 file.
+     C*
+     CSR         KEYID1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     CSR                   KFLD           IDUM
+     CSR                   MOVE 'N'       IDUM
+     C*
+     C*  Define partial key for SLOT3 file.
+     C*
+     C           *LIKE     DEFN SLSTAT    KYSTAT
+     C           *LIKE     DEFN SLPICK    KYPICK
+     C           KEYSL3    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PITEM
+     C                     KFLD           KYSTAT
+     C                     KFLD           KYPICK
+     C*
+     C*  Define partial key for SLOT6 file.
+     C*
+     CSR         *LIKE     DEFN SLSDEF    KYSDEF
+     CSR         *LIKE     DEFN SLBLD     KYBLD
+     CSR         *LIKE     DEFN SLACTV    KYACTV
+     CSR         KEYSL6    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           $PSTYP
+     CSR                   KFLD           $PDESG
+     CSR                   KFLD           KYSDEF
+     CSR                   KFLD           KYBLD
+     CSR                   KFLD           KYACTV
+     C*
+     C*  Variables and constants.
+     C*
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*   Get build codes.
+     C*
+     CSR                   Z-ADD0         X
+     CSR         FOREVR    DOUNEFOREVR
+     CSR                   READ BCREC                    79
+     CSR         *IN79     IFEQ *ON
+     CSR         X         OREQ 50
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   ADD  1         X
+     CSR                   MOVE BCCODE    BLD,X
+     CSR                   ENDDO
+     CSR                   Z-ADDX         LSTBLD
+     C*
+     C*   Get activity zones.
+     C*
+     CSR                   Z-ADD0         X
+     CSR         FOREVR    DOUNEFOREVR
+     CSR                   READ ACREC                    79
+     CSR         *IN79     IFEQ *ON
+     CSR         X         OREQ 50
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   ADD  1         X
+     CSR                   MOVE ACCODE    ACT,X
+     CSR                   ENDDO
+     CSR                   Z-ADDX         LSTACT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  INIT    Initialize arrays.
+     C*
+     CSR         INIT      BEGSR
+     C*
+     C*   Get "normal" tie/high definitions for item.
+     C*
+     CSR                   Z-ADD0         LSTDEF  20
+     CSR                   Z-ADD0         CURDEF  20
+     CSR                   MOVE *HIVAL    OCR
+     CSR                   MOVE *OFF      TMPFLG  1
+     C*
+     CSR         KEYID1    SETLLITEMDEF1
+     C*
+     CSR         LSTDEF    DOUEQ9
+     CSR         KEYID1    READEITEMDEF1                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ADD  1         LSTDEF
+     CSR         LSTDEF    OCUR DEFS
+     CSR                   MOVE IDSDEF    DSSDEF
+     CSR                   Z-ADDIDTIE     DSTIE
+     CSR                   Z-ADDIDHIGH    DSHIGH
+     CSR         IDTIE     MULT IDHIGH    DSPQTY
+     C*
+     C*   Calculate number of pallets needed. Save overflow quantity.
+     C*
+     CSR         $PQTY     DIV  DSPQTY    PALETS  52
+     CSR                   MVR            DSPRMN
+     CSR         DSPRMN    IFEQ 0
+     CSR                   Z-ADDPALETS    DSPLTS
+     CSR                   ELSE
+     CSR         PALETS    ADD  1         DSPLTS
+     CSR                   ENDIF
+     C*
+     C*   Calculate number of slots needed.
+     C*
+     CSR         PALETS    DIV  SDPOS     SLOTS   32
+     CSR                   Z-ADDSLOTS     DSSPCT
+     CSR         DSSPCT    IFEQ 0
+     CSR                   Z-ADDSLOTS     DSSLTS
+     CSR                   ELSE
+     CSR         SLOTS     ADD  1         DSSLTS
+     CSR                   ENDIF
+     CSR                   MOVE *OFF      DSMTCH
+     C*
+     C*   Save slots needed in array for later sorting.
+     C*
+     CSR                   Z-ADDLSTDEF    X       20
+     CSR                   Z-ADDDSSLTS    SVSLTS
+     CSR                   Z-ADDLSTDEF    SVOCUR
+     CSR                   MOVE SVGRP     OCR,X
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETDEF  Get "normal" tie/high definitions for item.
+     C*
+     CSR         GETDEF    BEGSR
+     C*
+     CSR                   Z-ADD0         LSTDEF  20
+     CSR                   Z-ADD0         CURDEF  20
+     CSR                   MOVE *HIVAL    OCR
+     CSR                   MOVE *OFF      TMPFLG  1
+     C*
+     CSR         KEYID1    SETLLITEMDEF1
+     C*
+     CSR         LSTDEF    DOUEQ9
+     CSR         KEYID1    READEITEMDEF1                 77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ADD  1         LSTDEF
+     CSR         LSTDEF    OCUR DEFS
+     CSR                   MOVE IDSDEF    DSSDEF
+     CSR                   Z-ADDIDTIE     DSTIE
+     CSR                   Z-ADDIDHIGH    DSHIGH
+     C*
+     C*   Calculate quantity on one pallet.
+     C*
+     CSR         IDTIE     MULT IDHIGH    DSPQTY
+     C*
+     C*   Calculate number of pallets needed. Save overflow quantity.
+     C*
+     CSR         $PQTY     DIV  DSPQTY    PALETS  52
+     CSR                   MVR            DSPRMN
+     CSR         DSPRMN    IFEQ 0
+     CSR                   Z-ADDPALETS    DSPLTS
+     CSR                   ELSE
+     CSR         PALETS    ADD  1         DSPLTS
+     CSR                   ENDIF
+     C*
+     C*   Calculate number of slots needed.
+     C*
+     CSR         PALETS    DIV  SDPOS     SLOTS   32
+     CSR                   Z-ADDSLOTS     DSSPCT
+     CSR         DSSPCT    IFEQ 0
+     CSR                   Z-ADDSLOTS     DSSLTS
+     CSR                   ELSE
+     CSR         SLOTS     ADD  1         DSSLTS
+     CSR                   ENDIF
+     CSR                   MOVE *OFF      DSMTCH
+     C*
+     C*   Save slots needed in array for later sorting.
+     C*
+     CSR                   Z-ADDLSTDEF    X       20
+     CSR                   Z-ADDDSSLTS    SVSLTS
+     CSR                   Z-ADDLSTDEF    SVOCUR
+     CSR                   MOVE SVGRP     OCR,X
+     C*
+     CSR                   ENDDO
+     C*
+     C*   Error if no definitions found.
+     C*
+     CSR         LSTDEF    IFEQ 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*NODEF  '$PRTN
+     CSR                   GOTO ENDDEF
+     CSR                   ENDIF
+     C*
+     C*   Sort definitions by slots needed.
+     C*
+     CSR                   SORTAOCR
+     C*
+     CSR         ENDDEF    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETOPT  Get put-away options.
+     C*
+     CSR         GETOPT    BEGSR
+     C*
+     CSR                   Z-ADD1         OPSLTS  10
+     CSR                   Z-ADD2         OPBLD   10
+     CSR                   Z-ADD3         OPACTV  10
+     CSR                   Z-ADD.60       OPUPCT  22
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  RESRV   Try to put fixed item in an existing reserved slot.
+     C*
+     CSR         RESRV     BEGSR
+     C*
+     C*  Loop through reserved, active, non-picking slots for item.
+     C*
+     C                     MOVE 'A '      SLSTAT
+     C                     MOVE 'N'       SLPICK
+     C           KEYSL3    SETLLSLOT3
+     C           FOREVR    DOUNEFOREVR
+     C           KEYSL3    READESLOT3                  7879
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*     Ignore slot if it is already occupied.
+     C*
+     C           SLENTD    IFNE 0
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*     Get matching slot tie/high definition.
+     C*
+     CSR                   MOVE *OFF      TMPFLG
+     CSR         1         DO   LSTDEF    CURDEF
+     CSR         CURDEF    OCUR DEFS
+     CSR         SLSDEF    IFEQ DSSDEF
+     CSR         DSMTCH    ANDEQ*ON
+     CSR                   MOVE *ON       TMPFLG
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*     Ignore slot if no matching definition.
+     C*
+     CSR         TMPFLG    IFEQ *OFF
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Put away as much as we can.
+     C*
+     CSR                   Z-ADDDSPOS     PALETS
+     CSR         1         DO   PALETS
+     C*
+     C                     ENDDO
+     C*----------------------------------------------------------------
+     C*
+     C*  TRY1    Try to get a perfect match. Same build code, same
+     C*          activity zone and definition that uses the least
+     C*          number of pallets.
+     C*
+     CSR         TRY1      BEGSR
+     C*
+     CSR                   MOVE *OFF      FOUND   1
+     CSR                   MOVE $PBLD     KYBLD
+     CSR                   MOVE $PACTV    KYACTV
+     C*
+     CSR         1         DO   LSTDEF    CURDEF
+     CSR         CURDEF    OCUR DEFS
+     CSR         DSSLTS    IFEQ 1
+     CSR         DSSPCT    ANDGEOPUPCT
+     CSR         DSSLTS    ORGT 1
+     CSR                   MOVE *ON       FOUND
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*   If definition found now try to find slot.
+     C*
+     CSR         FOUND     IFEQ *ON
+     CSR                   MOVE DSSDEF    KYSDEF
+     CSR         KEYSL6    SETLLSLOT6
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYSL6    READESLOT6                  7879
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR         *IN78     IFEQ *ON
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE $PITEM    SLITEM
+     CSR                   MOVE 'A '      SLSTAT
+     CSR                   MOVE TODAY     SLSDAT
+     CSR                   TIME           SLSTIM
+     CSR                   MOVE TODAY     SLENTD
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ  10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**   Error messages
+Item master record not on file
+First item after restarting batch
+Not enough stock available for order
+Slots did not contain enough stock
+No picking slot defined for item

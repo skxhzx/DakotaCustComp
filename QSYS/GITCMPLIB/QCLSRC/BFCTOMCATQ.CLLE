@@ -1,0 +1,297 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  BFCTOMCATQ   Start/End Tomcat Servers - QSH Command              */
+/*  03 November 2011                                                 */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*  Revisions:                                                       */
+/*                                                                   */
+/*  11/03/11  DAS  6.40                                              */
+/*    - Created.                                                     */
+/*    - Based on original STRBFCTOMC program writtent by Max.        */
+/*    - Original program now just calls this program to submit       */
+/*      the QShell command. Re: this will keep from setting the      */
+/*      environment variables in the user's job.                     */
+/*  02/24/12  DAS  6.40a                                             */
+/*    - Added PROD2                                                  */
+/*  03/22/12  DAS  6.40b                                             */
+/*    - Changed BFCdg to BFCDakota                                   */
+/*  03/26/12  DAS  6.40c                                             */
+/*    - Revised to set JRE_HOME for *PROD2.                          */
+/*  01/08/13  DAS  6.50a                                             */
+/*    - Revised to use jdk60/32bit as default.                       */
+/*  02/22/13  DAS  6.50b                                             */
+/*    - Revised to be softcoded.                                     */
+/*    - Added parameters for tomcat path, app location, jdk path.    */
+/*      These will normally come from file BFCGLOBALF/GLOTOMSRV.     */
+/*    - Old code deleted for readability.                            */
+/*      See BFCTOMCQ.2 for old code.                                 */
+/*  04/17/15  DAS  7.00a                                             */
+/*    - Added environment variable QIBM_QSH_CMD_OUTPUT to define     */
+/*      a log for QShell messages. When a startup error occurs       */
+/*      you should be able to look a this log for more details.      */
+/*      The log file will be /logs/qshell_cmdlog_yymmdd.txt.         */
+/*  08/28/15  DAS  7.00b                                             */
+/*    - Added cluster and debug parms for GETTOMSRV                  */
+/*  05/03/16  DAS  7.00c                                             */
+/*    - Commented out MRC code                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes                                                            */
+/*                                                                   */
+/*    In order to get the stdout file to be readable from WRKLNK     */
+/*    and a PC program, I had to put the redirection into the        */
+/*    QShell command. In theory, I should have been able to do the   */
+/*    'touch' part and then set the QIBM_QSH_CMD_OUTPUT environment  */
+/*    variable, but the result was a file that had a CCSID of 819    */
+/*    but the data was gibberish when read from the PC and was       */
+/*    readable from WRKLNK, meaning the data was actually being      */
+/*    written in EBCDIC. I also tried setting the QIBM_CCSID         */
+/*    environment variable to no avail.                              */
+/*                                                                   */
+/*    700b - A cluster is defined by a code that starts with CLUSTER */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ BFCTOMCATQ: PGM        PARM(&CMD &SERVER)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CATOUT)     TYPE(*CHAR)  LEN(128)
+             DCL        VAR(&CMD)        TYPE(*CHAR)  LEN(6)
+             DCL        VAR(&CHARSTAT)   TYPE(*CHAR)  LEN(10)
+             DCL        VAR(&CHARSIG)    TYPE(*CHAR)  LEN(10)
+             DCL        VAR(&CLUSTER)    TYPE(*CHAR)  LEN(1)   /* (700bA) */
+             DCL        VAR(&CURDTMDY)   TYPE(*CHAR)  LEN(6)
+             DCL        VAR(&CURDTYYMD)  TYPE(*CHAR)  LEN(8)
+             DCL        VAR(&DEBUG)      TYPE(*CHAR)  LEN(1)   /* (700bA) */
+             DCL        VAR(&MSGID)      TYPE(*CHAR)  LEN(7)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR)  LEN(256)
+             DCL        VAR(&QSHCMD)     TYPE(*CHAR)  LEN(256)
+             DCL        VAR(&TOUCH)      TYPE(*CHAR)  LEN(256)
+             DCL        VAR(&QSHOUT)     TYPE(*CHAR)  LEN(128) /* (700aA) */
+             DCL        VAR(&RESULT)     TYPE(*CHAR)  LEN(4)
+             DCL        VAR(&SIGNAL)     TYPE(*DEC)   LEN(10 0)
+             DCL        VAR(&SERVER)     TYPE(*CHAR)  LEN(10) /* (640bA) */
+             DCL        VAR(&SERVER7)    TYPE(*CHAR)  LEN(7)  /* (700bA) */
+             DCL        VAR(&STATUS)     TYPE(*DEC)   LEN(10 0)
+             DCL        VAR(&STDOUT)     TYPE(*CHAR)  LEN(128)
+             DCL        VAR(&JDKPATH)    TYPE(*CHAR)  LEN(100)
+             DCL        VAR(&TOMPATH)    TYPE(*CHAR)  LEN(50)
+             DCL        VAR(&APPPATH)    TYPE(*CHAR)  LEN(100)
+             DCL        VAR(&USER)       TYPE(*CHAR)  LEN(10)
+             DCL        VAR(&RETURN)     TYPE(*CHAR)  LEN(10)
+
+/*-------------------------------------------------------------------*/
+/*  Mainline                                                         */
+/*-------------------------------------------------------------------*/
+
+  /* Get server information */
+  /* Note, this must be called within this program instead of passing */
+  /* in the path parameters from BFCTOMCAT or BFCTOMCAT2. Reason: CL  */
+  /* doesn't like parameters greater than 32 characters, which caused */
+  /* *TCAT not to work.                                               */
+
+             CALL PGM(GETTOMSRV) PARM(&SERVER &USER &TOMPATH +
+                        &JDKPATH &APPPATH &CLUSTER &DEBUG &RETURN)  /* 700bM */
+                    /*  &JDKPATH &APPPATH &RETURN)                     700bD */
+
+             IF  COND(&CLUSTER = 'Y') THEN(DO)                /* 700bA */
+               CHGVAR  VAR(&APPPATH) VALUE(&TOMPATH)          /* 700bA */
+             ENDDO                                            /* 700bA */
+
+             IF COND(&RETURN = '*ERROR') THEN(DO)
+               SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('Error +
+                          getting info for server ' *CAT &SERVER) +
+                          MSGTYPE(*ESCAPE)
+             ENDDO
+
+  /* Tomcat path must be sent */
+
+             IF         COND(&TOMPATH = ' ') THEN(DO)
+               SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('Tomcat +
+                          path cannot be blank (' *CAT &SERVER +
+                          *TCAT ')') TOUSR(*SYSOPR)
+               GOTO       CMDLBL(ENDPGM)
+             ENDDO
+
+  /* JDK path must be sent */
+
+             IF         COND(&JDKPATH = ' ') THEN(DO)
+               SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('JDK +
+                          path cannot be blank (' *CAT &SERVER +
+                          *TCAT ')') TOUSR(*SYSOPR)
+               GOTO       CMDLBL(ENDPGM)
+             ENDDO
+
+  /* Get date to be used for file name */
+
+             RTVSYSVAL  SYSVAL(QDATE) RTNVAR(&CURDTMDY)
+             CVTDAT     DATE(&CURDTMDY) TOVAR(&CURDTYYMD) +
+                          FROMFMT(*MDY) TOFMT(*YYMD) TOSEP(*NONE)
+
+  /* Define default QShell command */
+
+             CHGVAR     VAR(&QSHCMD) VALUE(' ')
+
+             IF COND(&CMD = '*START') THEN(DO)
+
+               CHGVAR VAR(&QSHCMD) VALUE(&TOMPATH *TCAT +
+                          '/bin/startup.sh start') /* 650bM */
+
+               IF  COND(&CLUSTER = 'Y') THEN(DO)                /* 700bA */
+                  CHGVAR VAR(&QSHCMD) VALUE(&TOMPATH *TCAT +
+                          '/bin/start_tomcat_cluster.sh start') /* 700bA */
+               ENDDO                                            /* 700bA */
+
+           /*  IF  COND(&SERVER = '*MRC8011') THEN(DO)                      700c*/
+           /*    CHGVAR  VAR(&QSHCMD) VALUE('/m-power/start_tomcat400.sh')  700c*/
+           /*  ENDDO                                                        700c*/
+
+           /*  IF  COND(&SERVER = '*MRC8021') THEN(DO)                      700c*/
+           /*    CHGVAR  VAR(&QSHCMD) VALUE('/m-power2/start_tomcat400.sh') 700c*/
+           /*  ENDDO                                                        700c*/
+
+               IF  COND(&DEBUG = 'Y') THEN(DO)                        /* 700bA */
+                 CHGVAR VAR(&QSHCMD) VALUE(&QSHCMD *TCAT ' bfcdebug') /* 700bA */
+               ENDDO                                                  /* 700bA */
+
+             ENDDO
+
+             IF COND(&CMD = '*END') THEN(DO)
+
+               CHGVAR  VAR(&QSHCMD) VALUE(&TOMPATH *TCAT +
+                          '/bin/shutdown.sh')                /* 650bM */
+
+          /*   IF COND(&SERVER = '*MRC8011') THEN(DO)                      700c*/
+          /*     CHGVAR  VAR(&QSHCMD) VALUE('/m-power/end_tomcat400.sh')   700c*/
+          /*   ENDDO                                                       700c*/
+
+          /*   IF COND(&SERVER = '*MRC8021') THEN(DO)                      700c*/
+          /*     CHGVAR  VAR(&QSHCMD) VALUE('/m-power2/end_tomcat400.sh')  700c*/
+          /*   ENDDO                                                       700c*/
+
+             ENDDO
+
+  /* If &QSHCMD not set, then we have an invalid command */
+
+             IF         COND(&QSHCMD = ' ') THEN(DO)
+                 SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('Invalid +
+                            command sent: ' *CAT &CMD) TOUSR(*SYSOPR)
+                 GOTO       CMDLBL(ENDPGM)
+             ENDDO
+
+  /* Set Catalina Base */
+
+             ADDENVVAR  ENVVAR(CATALINA_BASE) VALUE(&APPPATH) +
+                          LEVEL(*JOB) REPLACE(*YES)
+
+  /* Set Java Home for certain options */
+
+             ADDENVVAR  ENVVAR(JAVA_HOME) VALUE(&JDKPATH) +
+                          LEVEL(*JOB) REPLACE(*YES)
+             ADDENVVAR  ENVVAR(JRE_HOME) VALUE(&JDKPATH) LEVEL(*JOB) +
+                          REPLACE(*YES)
+
+  /* Create path / file name for QShell STDOUT */
+
+             CHGVAR     VAR(&STDOUT) VALUE(&APPPATH *TCAT +
+                          '/logs/qshell_stdout_' *CAT &CURDTYYMD +
+                          *TCAT '.log')
+
+  /* Physically create file with ASCII CCSID */
+
+             CHGVAR     VAR(&TOUCH) VALUE('touch -C 819 ' *CAT +
+                          &STDOUT)
+             QSH CMD(&TOUCH)
+
+  /* Create path / file name for Catalina Out */
+
+             CHGVAR     VAR(&CATOUT) VALUE(&APPPATH *TCAT +
+                          '/logs/catout_' *CAT &CURDTYYMD *TCAT '.log')
+
+  /* Physically create file with ASCII CCSID */
+
+             CHGVAR     VAR(&TOUCH) VALUE('touch -C 819 ' *CAT +
+                          &CATOUT)
+             QSH CMD(&TOUCH)
+
+  /* Set Catlina Out environment variable */
+
+             ADDENVVAR  ENVVAR(CATALINA_OUT) VALUE(&CATOUT) +
+                          REPLACE(*YES)
+
+  /* Set environment variable for output log */ /* 700aA */
+
+             CHGVAR     VAR(&QSHOUT) +
+                        VALUE('FILEAPPEND=' *CAT &APPPATH *TCAT +
+                          '/logs/qshell_cmdlog_' *CAT &CURDTYYMD +
+                          *TCAT '.txt')
+
+             ADDENVVAR  ENVVAR(QIBM_QSH_CMD_OUTPUT) VALUE(&QSHOUT) +
+                          REPLACE(*YES)
+
+  /* Set environment variable to receive back escape message */
+
+             ADDENVVAR  ENVVAR(QIBM_QSH_CMD_ESCAPE_MSG) VALUE(Y) +
+                          REPLACE(*YES)
+             MONMSG     MSGID(CPFA980) EXEC(DO)
+               RCVMSG     MSGTYPE(*EXCP) RMV(*YES)
+             ENDDO
+
+  /* Run script to start Tomcat, appending STDOUT to file created above */
+
+             IF  COND(&CLUSTER *NE 'Y') THEN(DO)                /* 700bA */
+             CHGVAR     VAR(&QSHCMD) VALUE(&QSHCMD *TCAT ' >> ' *CAT +
+                          &STDOUT)
+             ENDDO                                              /* 700bA */
+
+             QSH        CMD(&QSHCMD)
+
+  /* Catch errors */
+
+     /* From "Handling QShell Errors in a CL Program" +
+        By Scott Klement                              +
+     */
+     MONMSG MSGID(QSH0005 QSH0006 QSH0007) EXEC(DO)
+      RCVMSG  MSGTYPE(*LAST) RMV(*YES) MSGDTA(&MSGDTA) +
+                MSGID(&MSGID)
+
+      /* CPF0005 - QSHELL COMMAND ENDED "NORMALLY."  */
+      IF (&MSGID *EQ 'QSH0005') DO
+          CHGVAR VAR(&RESULT) VALUE(%SST(&MSGDTA 1 4))
+          CHGVAR VAR(&STATUS) VALUE(%BIN(&RESULT))
+          CHGVAR VAR(&SIGNAL) VALUE(0)
+      ENDDO
+
+     /* QSH0006 - QSHELL COMMAND ENDED WHEN IT RECEIVED A  +
+           SIGNAL.                                         */
+        IF (&MSGID *EQ 'QSH0006') DO
+           CHGVAR VAR(&RESULT) VALUE(%SST(&MSGDTA 1 4))
+           CHGVAR VAR(&SIGNAL) VALUE(%BIN(&RESULT))
+           CHGVAR VAR(&STATUS) VALUE(-1)
+        ENDDO
+
+     /* QSH0007 - QSHELL COMMAND ENDED DUE TO AN EXCEPTION,+
+          FOR EXAMPLE THE PROGRAM CRASHED WITH A CPF MSG.+
+     */
+        IF (&MSGID *EQ 'QSH0007') DO
+           CHGVAR VAR(&STATUS) VALUE(-1)
+           CHGVAR VAR(&SIGNAL) VALUE(-1)
+        ENDDO
+     ENDDO
+
+     IF (&STATUS *NE 0) THEN(DO)
+       CHGVAR VAR(&CHARSTAT) VALUE(&STATUS)
+       CHGVAR VAR(&CHARSIG) VALUE(&SIGNAL)
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) +
+                          MSGDTA('BFCTOMCATQ QShell command failed +
+                          with status ' *CAT &CHARSTAT *CAT ' and +
+                          signal ' *CAT &CHARSIG) TOUSR(*REQUESTER) +
+                          MSGTYPE(*ESCAPE)
+     ENDDO
+     /* End "Handling QShell Errors in a CL Program" excerpt */
+
+ ENDPGM:

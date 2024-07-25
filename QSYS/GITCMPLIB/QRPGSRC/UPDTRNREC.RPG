@@ -1,0 +1,755 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1996 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  UPDTRNREC   Update transaction record (EPM version).
+     F*  26 February 1996
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FTASK    IF  E           K        DISK
+     FPIRTRAN UF  E           K        DISK                      A
+     FTASKDET UF  E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  PIRTRAN record layout for use as parameters
+     I*
+     IPTPARM    E DSPIRTRAN
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  10 ERORIG
+     I                                       11  20 ERAVAL
+     I                                       21  30 ERACTU
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *GEN      - Generating a transaction.
+     C*              *START    - Starting a transaction.
+     C*              *END      - Ending a transaction.
+     C*              *CLOSE    - Closing a transaction.
+     C*      $PTYPE  *INTER    - Interactive, use program msg queue.
+     C*              *BATCH    - Batch, send error code.
+     C*      PTPARM  PIRTRAN record.
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*              *NOTASKD - TASKDET record not found.
+     C*              *NOTRAN  - PIRTRAN record not found.
+     C*              *PTLOCK  - PIRTRAN record is locked.
+     C*              *TDLOCK  - TASKDET record is locked.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PTYPE  8
+     C                     PARM           PTPARM
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *OFF      ERROR   1
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C*
+     C*  Get transaction record.
+     C*
+     C           $PCMD     IFNE '*GEN    '
+     C                     EXSR GETPT
+     C           ERROR     CABEQ*ON       OUT
+     C                     ENDIF
+     C*
+     C*  Get task detail record.
+     C*
+     C                     EXSR GETTD
+     C           ERROR     CABEQ*ON       OUT
+     C*
+     C*  Execute corresponding routine.
+     C*
+     C           $PCMD     CASEQ'*GEN    'GENTRN
+     C           $PCMD     CASEQ'*START  'STRTRN
+     C           $PCMD     CASEQ'*END    'ENDTRN
+     C           $PCMD     CASEQ'*CLOSE  'CLSTRN
+     C                     ENDCS
+     C*
+     C*  Update transaction record.
+     C*
+     C           $PCMD     IFEQ '*GEN    '
+     C                     WRITEPTREC
+     C                     ELSE
+     C                     UPDATPTREC
+     C                     ENDIF
+     C*
+     C*  Update task detail record.
+     C*
+     C                     UPDATTDREC
+     C*
+     C*  Do some clean up before leaving.
+     C*
+     C           OUT       TAG
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define file keys
+     C*
+     C*  Define key for TASKDET file.
+     C*
+     CSR         KEYTD     KLIST
+     CSR                   KFLD           PTTASK
+     CSR                   KFLD           PTWHSE
+     CSR                   KFLD           PTWHDP
+     CSR                   KFLD           PTSTYP
+     C*
+     C*  Initialize message handling
+     C*
+     CSR                   EXSR ZMIMSG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CLSTRN  Closing transaction.
+     C*
+     CSR         CLSTRN    BEGSR
+     C*
+     CSR                   SELEC
+     C*
+     C*   When start date is zero.
+     C*
+     C*       - Set start date/time to generated date.
+     C*       - Set end date/time to close date.
+     C*       - Reduce pending totals.
+     C*       - Increase finished and closed totals.
+     C*
+     CSR         PTSDTE    WHEQ 0
+     CSR                   Z-ADDPTGDTE    PTSDTE
+     CSR                   Z-ADDPTGTIM    PTSTIM
+     CSR                   Z-ADDPTCDTE    PTEDTE
+     CSR                   Z-ADDPTCTIM    PTETIM
+     CSR                   MOVE '*DEC'    #UPTYP
+     CSR                   MOVE '*PND'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*FIN'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*CLS'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     C*   When end date is zero.
+     C*
+     C*       - Set end date/time to close date.
+     C*       - Reduce active totals.
+     C*       - Increase finished and closed totals.
+     C*
+     CSR         PTEDTE    WHEQ 0
+     CSR                   Z-ADDPTCDTE    PTEDTE
+     CSR                   Z-ADDPTCTIM    PTETIM
+     CSR                   MOVE '*DEC'    #UPTYP
+     CSR                   MOVE '*PND'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*FIN'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*CLS'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     C*   Otherwise
+     C*
+     C*       - Increase closed totals.
+     C*
+     CSR                   OTHER
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*CLS'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ENDTRN  Ending transaction.
+     C*
+     CSR         ENDTRN    BEGSR
+     C*
+     CSR                   SELEC
+     C*
+     C*   When start date is zero.
+     C*
+     C*       - Set start date/time to generated date.
+     C*       - Set end date/time to close date.
+     C*       - Reduce pending totals.
+     C*       - Increase finished.
+     C*
+     CSR         PTSDTE    WHEQ 0
+     CSR                   Z-ADDPTGDTE    PTSDTE
+     CSR                   Z-ADDPTGTIM    PTSTIM
+     CSR                   Z-ADDPTCDTE    PTEDTE
+     CSR                   Z-ADDPTCTIM    PTETIM
+     CSR                   MOVE '*DEC'    #UPTYP
+     CSR                   MOVE '*PND'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*FIN'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*CLS'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     C*   When end date is zero.
+     C*
+     C*       - Set end date/time to close date.
+     C*       - Reduce active totals.
+     C*       - Increase finished and closed totals.
+     C*
+     CSR         PTEDTE    WHEQ 0
+     CSR                   Z-ADDPTCDTE    PTEDTE
+     CSR                   Z-ADDPTCTIM    PTETIM
+     CSR                   MOVE '*DEC'    #UPTYP
+     CSR                   MOVE '*PND'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*FIN'    #UPFLD
+     CSR                   EXSR UPDTTL
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*CLS'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     C*   Otherwise
+     C*
+     C*       - Increase closed totals.
+     C*
+     CSR                   OTHER
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*CLS'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     CSR                   ENDSL
+     C*
+     C*
+     C*   Decrease active fields - Make sure nothing goes negative.
+     C*     -
+     C*
+     C*
+     CSR         TDPNDJ    IFGT 0
+     CSR                   SUB  1         TDPNDJ
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDJ
+     CSR                   ENDIF
+     CSR         TDPNDC    IFGT 0
+     CSR                   SUB  1         TDPNDC
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDC
+     CSR                   ENDIF
+     CSR         TDPNDW    IFGT 0
+     CSR                   SUB  1         TDPNDW
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDW
+     CSR                   ENDIF
+     CSR         TDPNDP    IFGT 0
+     CSR                   SUB  1         TDPNDP
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDP
+     CSR                   ENDIF
+     CSR         TDPND1    IFGT 0
+     CSR                   SUB  1         TDPND1
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPND1
+     CSR                   ENDIF
+     CSR         TDPND2    IFGT 0
+     CSR                   SUB  1         TDPND2
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPND2
+     CSR                   ENDIF
+     CSR         TDPND3    IFGT 0
+     CSR                   SUB  1         TDPND3
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPND3
+     CSR                   ENDIF
+     C*
+     C*   Increase active fields.
+     C*
+     CSR                   ADD  1         TDACTJ
+     CSR                   ADD  PTCUBE    TDACTC
+     CSR                   ADD  PTSWGT    TDACTW
+     CSR                   ADD  PTPCS     TDACTP
+     CSR                   ADD  PTQTY1    TDACT1
+     CSR                   ADD  PTQTY2    TDACT2
+     CSR                   ADD  PTQTY3    TDACT3
+     C*
+     C*
+     C*
+     C*            - End current task
+     C*            - Update TASKDET file.
+     C*            - Decrease active and increase finished.
+     C*
+     CSR                   MOVELW2CTSK    T#TASK
+     CSR         TDKEY     CHAINTASKDET              79
+     CSR         *IN79     IFEQ *OFF
+     CSR         TDACTC    SUB  PTCUBE    TDACTC
+     CSR         TDACTW    SUB  PTSWGT    TDACTW
+     CSR         TDACTP    SUB  PTPCS     TDACTP
+     CSR         TDACT1    SUB  PTQTY1    TDACT1
+     CSR         TDACT2    SUB  PTQTY2    TDACT2
+     CSR         TDACT3    SUB  PTQTY3    TDACT3
+     CSR                   SUB  1         TDACTJ
+     CSR         TDFINC    ADD  PTCUBE    TDFINC
+     CSR         TDFINW    ADD  PTSWGT    TDFINW
+     CSR         TDFINP    ADD  PTPCS     TDFINP
+     CSR         TDFIN1    ADD  PTQTY1    TDFIN1
+     CSR         TDFIN2    ADD  PTQTY2    TDFIN2
+     CSR         TDFIN3    ADD  PTQTY3    TDFIN3
+     CSR                   ADD  1         TDFINJ
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GENTRN  Generating transaction.
+     C*
+     CSR         GENTRN    BEGSR
+     C*
+     C*   Increase pending totals.
+     C*
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*PND'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETPT   Get transaction record.
+     C*
+     CSR         GETPT     BEGSR
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+     C*  Get task detail record.
+     C*
+     CSR         KEYPT     CHAINPIRTRAN              7978
+     C*
+     C*     Record is locked.
+     C*
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR         $PTYPE    IFEQ '*INTER  '
+     CSR                   EXSR ZM7980
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   ELSE
+     CSR                   MOVE '*PTLOCK '$PRTN
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*     Record not found.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR         $PTYPE    IFEQ '*INTER  '
+     CSR                   EXSR ZM7981
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   ELSE
+     CSR                   MOVE '*NOTRAN '$PRTN
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETTD   Get task detail record.
+     C*
+     C*    It is assumed that the department/section information is
+     C*    written to the transaction record according the the task
+     C*    tracking level found in the TASK file.
+     C*
+     C*    For example, if a task is only being tracked at the warehouse
+     C*    level then the department and section should be blank. If at
+     C*    the department level, the section should be blank.
+     C*
+     C*    This was done so the transaction file could easily be joined
+     C*    to the task detail file in order to get standards.
+     C*
+     CSR         GETTD     BEGSR
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+     C*  Get task detail record.
+     C*
+     CSR         KEYTD     CHAINTASKDET              7978
+     C*
+     C*     Record is locked.
+     C*
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR         $PTYPE    IFEQ '*INTER  '
+     CSR                   EXSR ZM7980
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   ELSE
+     CSR                   MOVE '*TDLOCK '$PRTN
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*     Record not found.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR         $PTYPE    IFEQ '*INTER  '
+     CSR                   EXSR ZM7981
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   ELSE
+     CSR                   MOVE '*NOTASKD'$PRTN
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  STRTRN  Starting transaction.
+     C*
+     CSR         STRTRN    BEGSR
+     C*
+     C*   Decrease pending totals.
+     C*
+     CSR                   MOVE '*DEC'    #UPTYP
+     CSR                   MOVE '*PND'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     C*   Increase active totals.
+     C*
+     CSR                   MOVE '*INC'    #UPTYP
+     CSR                   MOVE '*ACT'    #UPFLD
+     CSR                   EXSR UPDTTL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UPDTTL  Update totals.
+     C*
+     C*    Input:
+     C*      #UPTYP     *INC - Increase totals
+     C*                 *DEC - Decrease totals
+     C*      #UPFLD     *PND - Update pending totals
+     C*                 *ACT - Update active totals
+     C*                 *FIN - Update finished totals
+     C*                 *CLS - Update closed totals
+     C*
+     CSR         UPDTTL    BEGSR
+     C*
+     CSR                   SELEC
+     C*
+     C*   PENDING totals.
+     C*
+     CSR         #UPFLD    WHEQ '*PND'
+     CSR                   SELEC
+     C*
+     C*      Decrease pending totals. Don't let totals go negative.
+     C*
+     CSR         #UPTYP    WHEQ '*DEC'
+     CSR         TDPNDJ    IFGE 1
+     CSR                   SUB  1         TDPNDJ
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDJ
+     CSR                   ENDIF
+     CSR         PTCUBE    IFGE TDPNDC
+     CSR                   SUB  PTCUBE    TDPNDC
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDC
+     CSR                   ENDIF
+     CSR         PTSWGT    IFGE TDPNDW
+     CSR                   SUB  PTSWGT    TDPNDW
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDW
+     CSR                   ENDIF
+     CSR         PTPCS     IFGE TDPNDP
+     CSR                   SUB  PTPCS     TDPNDP
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPNDP
+     CSR                   ENDIF
+     CSR         PTQTY1    IFGE TDPND1
+     CSR                   SUB  PTQTY1    TDPND1
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPND1
+     CSR                   ENDIF
+     CSR         PTQTY2    IFGE TDPND2
+     CSR                   SUB  PTQTY2    TDPND2
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPND2
+     CSR                   ENDIF
+     CSR         PTQTY3    IFGE TDPND3
+     CSR                   SUB  PTQTY3    TDPND3
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDPND3
+     CSR                   ENDIF
+     C*
+     C*      Increase pending totals.
+     C*
+     CSR                   OTHER
+     CSR                   ADD  1         TDPNDJ
+     CSR                   ADD  PTCUBE    TDPNDC
+     CSR                   ADD  PTSWGT    TDPNDW
+     CSR                   ADD  PTPCS     TDPNDP
+     CSR                   ADD  PTQTY1    TDPND1
+     CSR                   ADD  PTQTY2    TDPND2
+     CSR                   ADD  PTQTY3    TDPND3
+     CSR                   ENDSL
+     C*
+     C*   ACTIVE totals.
+     C*
+     CSR         #UPFLD    WHEQ '*ACT'
+     CSR                   SELEC
+     C*
+     C*      Decrease active totals.  Don't let totals go negative.
+     C*
+     CSR         #UPTYP    WHEQ '*DEC'
+     CSR         TDACTJ    IFGE 1
+     CSR                   SUB  1         TDACTJ
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDACTJ
+     CSR                   ENDIF
+     CSR         PTCUBE    IFGE TDACTC
+     CSR                   SUB  PTCUBE    TDACTC
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDACTC
+     CSR                   ENDIF
+     CSR         PTSWGT    IFGE TDACTW
+     CSR                   SUB  PTSWGT    TDACTW
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDACTW
+     CSR                   ENDIF
+     CSR         PTPCS     IFGE TDACTP
+     CSR                   SUB  PTPCS     TDACTP
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDACTP
+     CSR                   ENDIF
+     CSR         PTQTY1    IFGE TDACT1
+     CSR                   SUB  PTQTY1    TDACT1
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDACT1
+     CSR                   ENDIF
+     CSR         PTQTY2    IFGE TDACT2
+     CSR                   SUB  PTQTY2    TDACT2
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDACT2
+     CSR                   ENDIF
+     CSR         PTQTY3    IFGE TDACT3
+     CSR                   SUB  PTQTY3    TDACT3
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDACT3
+     CSR                   ENDIF
+     C*
+     C*      Increase active totals.
+     C*
+     CSR                   OTHER
+     CSR                   ADD  1         TDACTJ
+     CSR                   ADD  PTCUBE    TDACTC
+     CSR                   ADD  PTSWGT    TDACTW
+     CSR                   ADD  PTPCS     TDACTP
+     CSR                   ADD  PTQTY1    TDACT1
+     CSR                   ADD  PTQTY2    TDACT2
+     CSR                   ADD  PTQTY3    TDACT3
+     CSR                   ENDSL
+     C*
+     C*   FINISHED totals.
+     C*
+     CSR         #UPFLD    WHEQ '*FIN'
+     CSR                   SELEC
+     C*
+     C*      Decrease finished totals.  Don't let totals go negative.
+     C*
+     CSR         #UPTYP    WHEQ '*DEC'
+     CSR         TDFINJ    IFGE 1
+     CSR                   SUB  1         TDFINJ
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDFINJ
+     CSR                   ENDIF
+     CSR         PTCUBE    IFGE TDFINC
+     CSR                   SUB  PTCUBE    TDFINC
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDFINC
+     CSR                   ENDIF
+     CSR         PTSWGT    IFGE TDFINW
+     CSR                   SUB  PTSWGT    TDFINW
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDFINW
+     CSR                   ENDIF
+     CSR         PTPCS     IFGE TDFINP
+     CSR                   SUB  PTPCS     TDFINP
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDFINP
+     CSR                   ENDIF
+     CSR         PTQTY1    IFGE TDFIN1
+     CSR                   SUB  PTQTY1    TDFIN1
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDFIN1
+     CSR                   ENDIF
+     CSR         PTQTY2    IFGE TDFIN2
+     CSR                   SUB  PTQTY2    TDFIN2
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDFIN2
+     CSR                   ENDIF
+     CSR         PTQTY3    IFGE TDFIN3
+     CSR                   SUB  PTQTY3    TDFIN3
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDFIN3
+     CSR                   ENDIF
+     C*
+     C*      Increase finished totals.
+     C*
+     CSR                   OTHER
+     CSR                   ADD  1         TDFINJ
+     CSR                   ADD  PTCUBE    TDFINC
+     CSR                   ADD  PTSWGT    TDFINW
+     CSR                   ADD  PTPCS     TDFINP
+     CSR                   ADD  PTQTY1    TDFIN1
+     CSR                   ADD  PTQTY2    TDFIN2
+     CSR                   ADD  PTQTY3    TDFIN3
+     CSR                   ENDSL
+     C*
+     C*
+     C*   CLOSED totals.
+     C*
+     CSR         #UPFLD    WHEQ '*CLS'
+     CSR                   SELEC
+     C*
+     C*      Decrease closed totals.  Don't let totals go negative.
+     C*
+     CSR         #UPTYP    WHEQ '*DEC'
+     CSR         TDCLSJ    IFGE 1
+     CSR                   SUB  1         TDCLSJ
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDCLSJ
+     CSR                   ENDIF
+     CSR         PTCUBE    IFGE TDCLSC
+     CSR                   SUB  PTCUBE    TDCLSC
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDCLSC
+     CSR                   ENDIF
+     CSR         PTSWGT    IFGE TDCLSW
+     CSR                   SUB  PTSWGT    TDCLSW
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDCLSW
+     CSR                   ENDIF
+     CSR         PTPCS     IFGE TDCLSP
+     CSR                   SUB  PTPCS     TDCLSP
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDCLSP
+     CSR                   ENDIF
+     CSR         PTQTY1    IFGE TDCLS1
+     CSR                   SUB  PTQTY1    TDCLS1
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDCLS1
+     CSR                   ENDIF
+     CSR         PTQTY2    IFGE TDCLS2
+     CSR                   SUB  PTQTY2    TDCLS2
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDCLS2
+     CSR                   ENDIF
+     CSR         PTQTY3    IFGE TDCLS3
+     CSR                   SUB  PTQTY3    TDCLS3
+     CSR                   ELSE
+     CSR                   Z-ADD0         TDCLS3
+     CSR                   ENDIF
+     C*
+     C*      Increase closed totals.
+     C*
+     CSR                   OTHER
+     CSR                   ADD  1         TDCLSJ
+     CSR                   ADD  PTCUBE    TDCLSC
+     CSR                   ADD  PTSWGT    TDCLSW
+     CSR                   ADD  PTPCS     TDCLSP
+     CSR                   ADD  PTQTY1    TDCLS1
+     CSR                   ADD  PTQTY2    TDCLS2
+     CSR                   ADD  PTQTY3    TDCLS3
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSGP'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM #PROG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7980  ITEMQTY record is locked.
+     C*
+     CSR         ZM7980    BEGSR
+     CSR                   MOVE 'PIR7980' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     C*R                   MOVEA$PITEM    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR7981  ITEMQTY record does not exist.
+     C*
+     CSR         ZM7981    BEGSR
+     CSR                   MOVE 'PIR7981' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     C*R                   MOVEA$PITEM    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR

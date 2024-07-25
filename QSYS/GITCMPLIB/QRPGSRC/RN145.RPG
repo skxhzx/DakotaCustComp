@@ -1,0 +1,457 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  RN145     Batch customer returns - Process
+     F*  Dave Sommerville/Roxanne Harrison
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+218 AF*    01/13/97  RH   2.18
+     F*      - Call RC160 with Parm $RSEQ, $RRPCK, $RPLBL
+223 AF*    07/02/97  RH   2.23
+     F*      - Add Parm $PLFLG use generic license option.
+     F*      - Call RN146 License entry if license option is yes
+     F*      - Add Parm $RDWGT catch weight for call to RC160.
+     F*      - If put away OK, delete record from ORTNBAT file.
+     F*
+417 AF*    06/06/03  MLB  4.17
+     F*      - Fix: Revise program to run convert date every time
+     F*        record is added to returns file. Revised ZZEXCP with
+     F*        same change for field EXGDTE.
+417bAF*    02/26/04  RH   4.17b
+     F*      - Enh: Call RC160 with $RFIFO
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes -
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  61        - Special order (Customer # > 0)
+     F*  79        - EOF for ORTNBAT
+     F*  78        - EOF for
+     F*  91        - Overflow indicator
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     FORTNBAT UF  E           K        DISK
+     FORRTN   O   E           K        DISK                      A
+     FWAREHS  IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FRN145PR O   E             91     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    DESC    1   5 20
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*
+223 AI$LPARM      DS
+223 AI                                        1   8 $LCMD
+223 AI                                        9  18 $LPRG
+223 AI                                       19  68 $LUKY
+223 AI                                       69  76 $LRTN
+223 AI                                       77 136 $LERM
+223 AI                                       77  80 $LMSG
+223 AI*   Redefine key
+223 AI                                       19  210$LWHSE
+223 AI                                       22  36 $LITEM
+223 AI                                       37  45 $LPO
+223 AI                                       46  500$LRQ1
+223 AI                                       51  550$LRQ2
+223 AI                                       56  600$LRQ3
+223 AI                                       61  630$LRPAL
+223 AI*
+     I*
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHS   Warehouse to process.
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS  155
+     C                     PARM           $PUSR  10
+     C                     PARM           $PDEV  10
+     C                     PARM           $PFORM 10
+223 AC                     PARM           $PLFLG  1
+     C*----------------------------------------------------------------
+     C                     Z-ADD$PWHS     $PWHSE  30
+     C*----------------------------------------------------------------
+     C* Main line
+     C*
+     C* Get report heading.
+     C*
+     C                     MOVE *BLANKS   W1HEAD
+     C                     MOVEL'RN145PR' RPPRTF
+     C           RPPRTF    CHAINREPORTS              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELRPDESC    $PSTR
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD50        $PLEN
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR  60
+     C                     PARM           $PLEN   30
+     C                     MOVEL$PSTR     W1HEAD
+     C*
+     C*   Get warehouse description.
+     C*
+     C           $PWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   WHDESC
+     C                     END
+     C*
+     C*   Create warehouse heading.
+     C*
+     C                     MOVE $PWHSE    WORK3A  3
+     C           ' 0'      CHECKWORK3A    POS     10
+     C           4         SUB  POS       LEN     10
+     C           LEN       SUBSTWORK3A:POSWHHEAD
+     C           WHHEAD    CAT  '-':1     WHHEAD
+     C           WHHEAD    CAT  WHDESC:1  WHHEAD
+     C                     CALL 'CENTER'
+     C                     PARM WHHEAD    $CSTR  60
+     C                     PARM 40        $CLEN   30
+     C                     MOVEL$CSTR     WHHEAD
+     C*
+     C* Initialize grand total fields
+     C*
+     C                     Z-ADD0         GRDLIN
+     C                     Z-ADD0         NOITEM
+     C*
+     C*    Initialize order subtotals
+     C*
+     C                     Z-ADD0         SUBLIN  30
+     C                     Z-ADD0         SUBQ1   70
+     C                     Z-ADD0         SUBQ2   70
+     C                     Z-ADD0         SUBQ3   70
+     C*
+     C*
+     C* Whip through all the records
+     C*
+     C                     MOVE *OFF      PFLAG   1
+     C                     MOVE *OFF      EOFH    1
+     C                     Z-ADD55        LINPPG  30       MAX LINES PER PAGE
+     C                     Z-ADD0         COUNT   30       LINE COUNTER
+     C           OBRKEY    SETLLORTNBAT
+     C           EOFH      DOUEQ*ON
+     C*
+     C           OBRKEY    READEORTNBAT                  79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       EOFH
+     C                     GOTO ENDDOH
+     C                     ENDIF
+     C*
+     C*  Only process records not previously processed
+     C*  and records for the selected warehouse.
+     C*
+     C           OBRSTS    IFEQ '*OK     '
+     C           OBRWHS    ORNE $PWHSE
+     C                     GOTO ENDDOH
+     C                     ENDIF
+     C*
+     C*  Print report heading if necessary.
+     C*
+     C           PFLAG     IFEQ *OFF
+     C           COUNT     ORGE LINPPG
+     C                     Z-ADD0         COUNT
+     C                     WRITEHEAD1
+     C                     ADD  3         COUNT
+     C                     MOVE *OFF      PFLAG
+     C                     ENDIF
+     C*
+     C*
+     C*    Print order heading
+     C*
+     C           PFLAG     IFEQ *OFF
+     C                     WRITEHEAD2
+     C                     ADD  2         COUNT
+     C                     MOVE *ON       PFLAG
+     C                     ENDIF
+     C*
+     C                     MOVE *BLANKS   DETMSG
+     C*
+     C*
+     C*    Put product away and write return record.
+     C*
+     C           OBRPUT    IFEQ 'Y'
+     C                     EXSR PUTIT
+     C                     ELSE
+     C                     EXSR NOPUT
+     C                     ENDIF
+     C           $RRTN     IFEQ '*OK     '
+     C                     WRITEORREC
+     C                     ENDIF
+     C*
+     C*       Print return detail and update subtotals
+     C*
+     C                     EXSR ZRHEAD
+     C                     MOVELOBRMEM    RMEMO
+     C                     WRITEDETAIL
+     C                     ADD  1         COUNT
+     C                     ADD  1         GRDLIN
+     C           DETMSG    IFNE *BLANKS
+     C                     WRITEDETL2
+     C                     ADD  1         COUNT
+     C                     ENDIF
+     C*
+     C*       Update status in ORTNBAT file
+223 AC           $RRTN     IFNE '*OK     '
+     C                     MOVE $RRTN     OBRSTS
+     C                     UPDATOBRREC
+223 AC                     ELSE
+223 AC*       Delete record from ORTNBAT if status = *OK.
+223 AC                     DELETOBRREC
+223 AC                     ENDIF
+     C                     MOVE *BLANKS   OBRSTS
+     C*
+     C           ENDDOH    TAG
+     C                     ENDDO
+     C*
+     C*  Print order grand totals
+     C*
+     C           PFLAG     IFEQ *ON
+     C           COUNT     IFGE LINPPG
+     C                     WRITEHEAD1
+     C                     ENDIF
+     C                     WRITEGRNDTTL
+     C                     ENDIF
+     C*
+     C*  We are finished so get out
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *ON       FIRST   1
+     C*
+     C* Key definitions
+     C*
+     C* Batch return file - Partial key
+     C*
+     C           OBRKEY    KLIST
+     C                     KFLD           $PWHSE
+     C*
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  NOPUT   Call to Put product in warehouse.
+     C*
+     CSR         NOPUT     BEGSR
+     C*
+     C                     MOVE '*OK     '$RRTN
+     C                     CLEARORREC
+     C                     Z-ADDOBRWHS    ORWHSE
+     C                     Z-ADDOBRORD    ORORD
+     C                     MOVE OBRITM    ORITEM
+     C                     Z-ADDOBRQT1    ORQTY1
+     C                     Z-ADDOBRQT2    ORQTY2
+     C                     Z-ADDOBRQT3    ORQTY3
+     C                     Z-ADDOBRCWT    ORCWTR
+417 AC*    Retrieve current date.
+417 AC                     MOVE '*CURCMD '$CVCMD
+417 AC                     CALL @CVTDT
+417 AC                     PARM           $CVTDT
+417 DC*                    Z-ADDTODAY     ORRDTE
+417 MC                     Z-ADD$CVD8O    ORRDTE
+     C                     TIME           ORRTIM
+     C                     MOVE $PUSR     ORRUSR
+     C                     MOVE OBRTYP    ORTYPE
+     C                     Z-ADDOBRTRN    ORTRN#
+     C                     MOVE OBRCIT    ORCITM
+     C                     MOVE OBRRCD    ORRCOD
+     C                     MOVE OBRMEM    ORRMEM
+     C                     MOVE *BLANKS   ORSLOT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PUTIT   Call to Put product in warehouse.
+     C*
+     CSR         PUTIT     BEGSR
+     C*
+     C                     CALL 'RC160'
+     C                     PARM '*RETURN '$RCMD   8
+     C                     PARM           $RPRG  10
+     C                     PARM '*BATCH  '$RTYPE  8
+     C                     PARM OBRWHS    $RWHSE  30
+     C                     PARM OBRITM    $RITEM 15
+     C                     PARM OBRQT1    $RQTY1  50
+     C                     PARM OBRQT2    $RQTY2  50
+     C                     PARM OBRQT3    $RQTY3  50
+     C                     PARM *BLANKS   $RPO    9
+     C                     PARM 0         $RVEN  110
+     C                     PARM *BLANKS   $RVNAM 40
+     C                     PARM *BLANKS   $RVITM 15
+     C                     PARM OBRORD    $RORD   70
+     C                     PARM OBRRCD    $RRCOD  2
+     C                     PARM OBRMEM    $RRMEM 30
+     C                     PARM OBREDT    $REXPD  80
+417b CSR                   PARM 0         $RFIFO  80
+     C                     PARM $PDEV     $RDEV  10
+     C                     PARM $PFORM    $RFORM 10
+     C                     PARM *BLANKS   $RSLOT 12
+218 ACSR                   PARM 0         $RSEQ   50
+218 ACSR                   PARM           $RRPCK  1
+218 ACSR                   PARM           $RPLBL  1
+223 ACSR                   PARM OBRCWT    $RDWGT  92
+     C                     PARM           $RRQ1   50
+     C                     PARM           $RRQ2   50
+     C                     PARM           $RRQ3   50
+     C                     PARM           $RRPAL  30
+     C                     PARM           $RRTN   8
+     C                     PARM           $RMSG   4
+     C*
+     C*   What happened with putaway?
+     C*
+     C                     SELEC
+     C*
+     C*      Error occured.
+     C*      $PRTN   *OK      - No problem encountered.
+     C*              *INVALID - Invalid item number.
+     C*              *NOOPT   - No receiving options defined.
+     C*              *NODEF   - No Tie/High defs defined for item.
+     C*              *NOSLOT  - No slots available for item.
+     C*              *NOTENGH - Not enough slots available for item.
+     C*
+     C           $RRTN     WHNE '*OK     '
+     C           $RRTN     IFEQ '*INVALID'
+     C                     MOVE DESC,2    DETMSG
+     C                     ENDIF
+     C           $RRTN     IFEQ '*NOSLOT '
+     C                     MOVE DESC,4    DETMSG
+     C                     ENDIF
+     C           $RRTN     IFEQ '*NOTENGH'
+     C                     MOVE DESC,5    DETMSG
+     C                     ENDIF
+     C*
+223 AC*      Enter license if $PLFLG is on.                            .
+     C*      Product put away. Move fields for history record.         .
+     C*
+     C                     OTHER
+     C*
+223 DC*R                   ADD  $RRQ1     $PRSQT
+223 DC*R                   ADD  $RRQ2     $PRSQT
+223 DC*R                   ADD  $RRQ3     $PRSQT
+     C*
+223 ACSR         $PLFLG    IFEQ *ON
+223 ACSR                   MOVE '*CHANGE '$LCMD
+223 ACSR                   Z-ADD$PWHSE    $LWHSE
+223 ACSR                   MOVE OBRORD    $LPO
+223 ACSR                   MOVE OBRITM    $LITEM
+223 ACSR                   Z-ADD$RRQ1     $LRQ1
+223 ACSR                   Z-ADD$RRQ2     $LRQ2
+223 ACSR                   Z-ADD$RRQ3     $LRQ3
+223 ACSR                   Z-ADD$RRPAL    $LRPAL
+223 ACSR                   Z-ADD$RORD     $LORD   70
+223 ACSR                   CALL 'RN146'
+223 ACSR                   PARM           $LPARM
+223 DC*R                   PARM           $LUM1
+223 DC*R                   PARM           $LUM2
+223 DC*R                   PARM           $LUM3
+223 ACSR                   PARM           $LORD
+223 ACSR                   ENDIF
+     C*      Product put away. Move fields for history record.         .
+     C                     CLEARORREC
+     C                     Z-ADDOBRWHS    ORWHSE
+     C                     Z-ADDOBRORD    ORORD
+     C                     MOVE OBRITM    ORITEM
+     C                     Z-ADD$RRQ1     ORQTY1
+     C                     Z-ADD$RRQ2     ORQTY2
+     C                     Z-ADD$RRQ3     ORQTY3
+     C                     Z-ADDOBRCWT    ORCWTR
+417 AC*    Retrieve current date.
+417 AC                     MOVE '*CURCMD '$CVCMD
+417 AC                     CALL @CVTDT
+417 AC                     PARM           $CVTDT
+417 DC*                    Z-ADDTODAY     ORRDTE
+417 MC                     Z-ADD$CVD8O    ORRDTE
+     C                     TIME           ORRTIM
+     C                     MOVE $PUSR     ORRUSR
+     C                     MOVE OBRTYP    ORTYPE
+     C                     Z-ADDOBRTRN    ORTRN#
+     C                     MOVE OBRCIT    ORCITM
+     C                     MOVE OBRRCD    ORRCOD
+     C                     MOVE OBRMEM    ORRMEM
+     C                     MOVE $RSLOT    ORSLOT
+     C*
+     C                     ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZRHEAD   Print report headings.
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         COUNT     IFGE LINPPG
+     CSR                   SETON                     81
+     CSR                   Z-ADD0         COUNT
+     CSR                   WRITEHEAD1
+     CSR                   ADD  3         COUNT
+     CSR                   WRITEHEAD2
+     CSR                   ADD  2         COUNT
+     CSR                   SETOF                     81
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+*EXIST*
+*INVALID ITEM*
+*BREAKDOWN INVALID*
+*NO SLOTS AVAILABLE*
+*NOT ENOUGH SLOTS*

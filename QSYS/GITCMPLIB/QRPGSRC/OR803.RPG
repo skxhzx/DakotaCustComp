@@ -1,0 +1,387 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2002 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (630) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR803     Write Close Log Entries to File - Post
+     F*  30 January 2002
+     F*  Max Blacknik
+     F*
+     F*  Revisions
+     F*
+416 AF*    01/30/02  MLB  4.16
+     F*      - Created.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  20        POSITION CURSOR
+     F*  21 - 29   FIELD INPUT ERROR (REVERSE DISPLAY)
+     F*  45        RI OUTPUT ON TITLE
+     F*  56        EMPTY SUBFILE
+     F*  79        CHAIN INDICATOR
+     F*  90        PROTECT INPUT FIELDS FOR DELETE DISPLAY
+     F*  97        ALWAYS ON (USED FOR SFLEND KEYWORD)
+     F*  98        ERROR ON SCREEN (SOUND BUZZER)
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRTEHED  IF  E           K        DISK
+     FPIRTRCK2UF  E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     I*----------------------------------------------------------------
+     I*  Partial key redefinition
+     I*
+     I$PRTKY      DS
+     I                                        1  50 $LEN50
+     I                                        1   30$PWHSE
+     I                                        4  12 $PPGM
+     I                                       13  17 $PRTE
+     I                                       18  250$PJBDT
+     I                                       26  310$PJBTM
+     I*----------------------------------------------------------------
+     I*  Data structure for FKEY and UKEY
+     I*
+     I            DS
+     I I            0                         1   30TRWHSE
+     I                                        4  12 TRPGM
+     I                                       13  17 TRRTE
+     I I            0                        18  250TRJBDT
+     I I            0                        26  310TRJBTM
+     I I            0                        32  360TRSQNR
+     I*----------------------------------------------------------------
+     I*  Working field(s)
+     I*
+     I            DS
+     I                                       11 150 TRDTA
+     I                                        1 150 TRDATA
+     I*----------------------------------------------------------------
+     I*
+     I* The following data structures are for capturing closing
+     I* tracking info.
+     I*
+     I*----------------------------------------------------------------
+     I*  *PCK001   -  Close Route info
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    TRPCMD  -  Program processing option
+     I*    TRPPRG  -  Calling program
+     I*    TROTYP  -  Order type (' '=Reg, W=Will Call, T=Transfer)
+     I*    TRRORD  -  Not used in this format.  Defaults to 0.
+     I*    TRPKST  -  Closing status
+     I*    TRFLPK  -  Not used in this format.  Defaults to 0.
+     I*    TRFLTK  -  Not used in this format.  Defaults to 0.
+     I*
+     I* Data structure
+     I*
+     ITR01DS      DS
+     I                                        1   8 TRPCMD
+     I                                        9  18 TRPRG
+     I                                       19  19 TROTYP
+     I I            0                        20  260TRRORD
+     I                                       27  46 TRPKST
+     I I            0                        47  470TRFLPK
+     I I            0                        48  480TRFLTK
+     I                                        1 150 TRDT01
+     ITR1ADS      DS
+     I                                       27  46 TRPKSA
+     I                                        1 150 TRDT1A
+     I*----------------------------------------------------------------
+     I*  *PCK050  -  Tracking message(s)
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    TRSR50  -  Subroutine sending message
+     I*    TRDT50  -  Tracking message(s)
+     I*
+     I* Data structure
+     I*
+     ITR50DS      DS
+     I                                        1  10 TRSR50
+     I                                       11 150 TRDT50
+     I*----------------------------------------------------------------
+     I*  Tracking messages
+     I*----------------------------------------------------------------
+     I              'Closed - No Chg'     C         TR80
+     I              'Closed - W/Chg''s'   C         TR81
+     I*----------------------------------------------------------------
+     I$CVTDT      DS
+     I                                        1   8 $CVDOP
+     I                                        9  140$CVDD6
+     I                                       15  220$CVDD8
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $TCODE  *PCK001  - Close Route Header.
+     C*              *PCK050  - Close Route Message.
+     C*      $TWHSE  Warehouse
+     C*      $TPGM   Calling program
+     C*      $TITEM  Item number
+     C*      $TDEV   Workstation
+     C*      $TUSER  User Id
+     C*      $TRTID  FS-WMS internal route id
+     C*      $TSTOP  Customer stop number.
+     C*      $TPBAT  Batch number.
+     C*      $TORD   Customer order number.
+     C*      $TMSGT  Message type: S=Summary msg, D=Detail msg.
+     C*      $TMSGN  Message Id.
+     C*      $TDATA  Message data.
+     C*
+     C*    Returned Parameters
+     C*      *None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $TCODE  8
+     C                     PARM           $TWHSE  30
+     C                     PARM           $TPGM   9
+     C                     PARM           $TITEM 15
+     C                     PARM           $TDEV  10
+     C                     PARM           $TUSER 10
+     C                     PARM           $TRTID  5
+     C                     PARM           $TSTOP  20
+     C                     PARM           $TPBAT  70
+     C                     PARM           $TORD   70
+     C                     PARM           $TMSGT  1
+     C                     PARM           $TMSGN  4
+     C                     PARM           $TDATA150
+     C*
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     EXSR ZZINZ2
+     C*
+     C                     EXSR ZZGTRH
+     C                     EXSR ZZFILL
+     C                     EXSR ZZADD
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR   Program initialization.
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*    File key - Route Header RTEHED
+     CSR         RHKEY     KLIST
+     CSR                   KFLD           $TWHSE
+     CSR                   KFLD           $TRTID
+     C*
+     C*    File key - Tracking file PIRTRCK2
+     CSR         *LIKE     DEFN TRSQNR    KYSQNR
+     CSR                   MOVE *ALL'9'   KYSQNR
+     CSR         TRKEY     KLIST
+     CSR                   KFLD           $TWHSE
+     CSR                   KFLD           $TPGM
+     CSR                   KFLD           RHRTE
+     CSR                   KFLD           RHPRTD
+     CSR                   KFLD           RHPRTT
+     CSR                   KFLD           KYSQNR
+     C*
+     CSR         TRKEY2    KLIST
+     CSR                   KFLD           $TWHSE
+     CSR                   KFLD           $TPGM
+     CSR                   KFLD           RHRTE
+     CSR                   KFLD           RHPRTD
+     CSR                   KFLD           RHPRTT
+     C*
+     CSR         *LIKE     DEFN TRSQNR    KYSEQ0
+     CSR                   MOVE *ZEROS    KYSEQ0
+     CSR         TRKEY3    KLIST
+     CSR                   KFLD           $TWHSE
+     CSR                   KFLD           $TPGM
+     CSR                   KFLD           RHRTE
+     CSR                   KFLD           RHPRTD
+     CSR                   KFLD           RHPRTT
+     CSR                   KFLD           KYSEQ0
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     ZZADD  - Write tracking record to file.
+     CSR         ZZADD     BEGSR
+     C*
+     CSR                   SELEC
+     CSR         $TCODE    WHEQ '*PCK001 '                 Close route hdr
+     CSR                   SELEC
+     C*    Header not found - Add record.
+     CSR         WRT01     WHEQ '*YES'
+     CSR                   WRITETR01REC                78
+     C*
+     C*    Header found - Update record.
+     CSR         UPD01     WHEQ '*YES'
+     CSR                   UPDATTR01REC                78
+     C*
+     C*    Header found - No changes. Release record lock.
+     CSR                   OTHER
+     CSR                   UNLCKPIRTRCK2
+     CSR                   ENDSL
+     C*
+     CSR         $TCODE    WHEQ '*PCK002 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK003 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK010 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK040 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK050 '                 Tracking msgs
+     CSR                   WRITETR50REC                78
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     ZZFILL - Load passed in values into tracking fields.
+     CSR         ZZFILL    BEGSR
+     CSR                   SELEC
+     CSR         $TCODE    WHEQ '*PCK001 '                 Close route hdr
+     C*    Get Close Route Header record.
+     CSR                   EXSR ZZGTTR
+     C*
+     CSR                   MOVEL$TCODE    TRCODE
+     CSR                   Z-ADD$TWHSE    TRWHSE
+     CSR                   MOVE $TPGM     TRPGM
+     CSR                   MOVE *BLANKS   TRJBNR
+     CSR                   Z-ADDRHPRTD    TRJBDT
+     CSR                   Z-ADDRHPRTT    TRJBTM
+     CSR                   MOVE $TDEV     TRDEV
+     CSR                   MOVE $TUSER    TRUSER
+     CSR                   MOVE RHTRUK    TRTRUK
+     CSR                   MOVE RHRTE     TRRTE
+     CSR                   MOVE $TRTID    TRRTID
+     CSR                   Z-ADD$TPBAT    TRPBAT
+     CSR                   MOVE *ZEROS    TRSQNR
+     CSR                   MOVE $TDATA    TRDT01
+     CSR                   SELEC
+     C*    Close Route Header record found. Previously
+     C*    Close status was "no errors".  Now there have
+     C*    been changes, update status.
+     CSR         WRT01     WHEQ '*NO '
+     CSR         TRPKSA    ANDNETRPKST
+     CSR         TRPKST    ANDEQTR81
+     CSR                   MOVE TRDT01    TRDATA
+     CSR                   MOVE '*YES'    UPD01
+     C*    Close Route Header record not found. Add record.
+     CSR         WRT01     WHEQ '*YES'
+     CSR                   MOVE TRDT01    TRDATA
+     CSR                   ENDSL
+     C*
+     CSR         $TCODE    WHEQ '*PCK002 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK003 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK010 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK040 '
+     C*
+     CSR         $TCODE    WHEQ '*PCK050 '                 Tracking msgs
+     C*
+     C*    Retrieve last record for this route and then increment
+     C*    sequence number up by one.
+     CSR                   EXSR ZZGTTR
+     C*
+     CSR                   Z-ADDNXTSEQ    TRSQNR
+     CSR                   MOVEL$TCODE    TRCODE
+     CSR                   Z-ADD$TWHSE    TRWHSE
+     CSR                   MOVE $TPGM     TRPGM
+     CSR                   MOVE $TITEM    TRITEM
+     CSR                   Z-ADDRHPRTD    TRJBDT
+     CSR                   Z-ADDRHPRTT    TRJBTM
+     CSR                   MOVE $TDEV     TRDEV
+     CSR                   MOVE $TUSER    TRUSER
+     CSR                   MOVE RHTRUK    TRTRUK
+     CSR                   MOVE RHRTE     TRRTE
+     CSR                   MOVE $TRTID    TRRTID
+     CSR                   Z-ADD$TSTOP    TRSTOP
+     CSR                   Z-ADD$TPBAT    TRPBAT
+     CSR                   Z-ADD$TORD     TRORD
+     CSR                   MOVE $TMSGT    TRMSGT
+     CSR                   MOVE $TMSGN    TRMSGN
+     CSR                   MOVE $TDATA    TRDATA
+     C*
+     CSR                   ENDSL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGTRH   Get Route Header record.
+     C*
+     CSR         ZZGTRH    BEGSR
+     C*
+     CSR         RHKEY     CHAINRTEHED               79
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGTTR   Get Tracking file last sequence number.
+     C*
+     CSR         ZZGTTR    BEGSR
+     C*
+     CSR                   SELEC
+     CSR         $TCODE    WHEQ '*PCK001 '
+     C*
+     CSR         TRKEY3    CHAINTR01REC              79
+     CSR                   SELEC
+     CSR         *IN79     WHEQ *ON
+     CSR                   MOVE '*YES'    WRT01
+     C*
+     CSR                   OTHER
+     CSR                   MOVE TRDATA    TRDT1A
+     CSR                   MOVE '*NO '    WRT01
+     CSR                   MOVE '*NO '    UPD01
+     CSR                   ENDSL
+     C*
+     CSR         $TCODE    WHEQ '*PCK050 '
+     C*
+     CSR         TRKEY     SETGTTR50REC
+     CSR         TRKEY2    REDPETR50REC             N    79
+     CSR                   SELEC
+     CSR         *IN79     WHEQ *ON
+     CSR                   Z-ADD1         NXTSEQ
+     C*
+     CSR                   OTHER
+     C*
+     CSR         TRSQNR    ADD  1         NXTSEQ
+     CSR                   ENDSL
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Initialization
+     C*
+     CSR         ZZINZ2    BEGSR
+     C*
+     CSR                   MOVE *ZEROS    NXTSEQ  50
+     CSR                   MOVE '*NO '    WRT01   4
+     CSR                   MOVE '*NO '    UPD01   4
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*

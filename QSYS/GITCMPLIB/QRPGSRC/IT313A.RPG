@@ -1,0 +1,459 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT313A    Item/Slot activity report
+     F*  Roxanne Harrison
+     F*  27 June, 1996
+     F*
+     F*  Revisions
+     F*
+213 AF*    05/20/96  DAS  2.13
+     F*      - Change to process in Item, Date & Slot order.
+214 AF*    07/08/96  RH   2.14
+     F*      - Add code to process Broken case replenishment.
+216 AF*    08/07/96  RH   2.16
+     F*      - Fix values in Parms for GETFULL.
+412 AF*    08/31/99  RH   4.12
+     F*      - Add code to process type I=Inventory and A=Adjustment
+413 AF*    01/26/00  RH   4.13
+     F*      - Add label and transaction # to file.
+415aAF*    11/27/00  RH   4.15a
+     F*      - Add code to process type T=Transfer.
+416 AF*    01/02/02  RH   4.16
+     F*      - Remove LABEL file and add IT312A file.
+416aAF*    12/18/02  RH   4.16a
+     F*      - Change to use virtual slots with base slot.
+417aAF*    10/23/03  RH   4.17a
+     F*      - ENH: Add close date, LBSDTE if label is closed.
+500 AF*    04/27/05  RLP  5.00
+     F*      - ENH: when creating type 'R' record, use "to" slot
+     F*             item info when writing LBQRMN record so the
+     F*             correct item# & UOM show up in view/report
+     F*      -      added SLOT2 input file
+700aAF*    03/09/16  RH   7.00a
+     F*      - Fix: Breakdown item needs to use Full case item, not
+     F*        label from slot item, is wrong if different item is in
+     F*        from slot now.
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+416 AFIT312A  IP  E           K        DISK
+416 DF*ABEL   IP  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+500 AFSLOT2   IF  E           K        DISK
+     FIT313A  O   E           K        DISK                      A
+     I*****************************************************************
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I*----------------------------------------------------------------
+     I*
+     I*  Program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+214 AI                                       19  210$LWHSE
+214 AI                                       22  36 $LITEM
+214 AI                                       37  51 $LITMF
+214 AI                                       52  83 $LDESC
+     I*
+     I*----------------------------------------------------------------
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $DISP  - Slot or *all
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $DISP  12
+     C                     PARM           $RTNCD  8
+     C*----------------------------------------------------------------
+     C*
+     C*  Main line
+416bAC*
+416bAC* Get length of field.
+416bAC*
+416bAC*   CHEKR starts at the rightmost position looking for a
+416bAC*   character that does not match the charater in factor 1.
+416bAC*   The position of the non-matching character, which is the
+416bAC*   same as its length is put into the result field.
+416bAC*
+416bAC           ' '       CHEKR$DISP     LEN     20
+416bAC*
+416bAC* Extract comparison characters from LBDISP.
+416bAC*
+416bAC*   SUBST will extract a string of the length found in factor 1,
+416bAC*   starting with character 1 in LBDISP.
+416bAC*
+416bAC                     MOVE *BLANKS   CMDISP 12
+416bAC           LEN       SUBSTLBDISP    CMDISP
+     C*
+500 AC                     EXSR ZZGETI
+     C*
+     C           KEYIT     CHAINPIRITEM              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVE ITDESC    WKDESC
+     C                     ELSE
+     C                     MOVE *BLANKS   WKDESC
+     C                     ENDIF
+     C*
+     C* Type B=Bulk  O=Order  R=Replenishment  P=Put away
+415aAC* Type T=Transfer
+     C*
+     C                     MOVE LBWHSE    WKWHSE
+     C                     MOVE LBITEM    WKITEM
+     C                     Z-ADDLBRDTE    WKDATE
+     C                     MOVE LBWHDP    WKWHDP
+     C                     MOVE LBUCOD    WKUOM
+413 AC                     Z-ADDLBLBL#    WKLBL#
+413 AC                     Z-ADDLBTRN#    WKTRN#
+417a C           LBSTAT    IFEQ 'C'
+417a C                     Z-ADDLBSDTE    WKCDTE
+417a C                     ELSE
+417a C                     Z-ADD0         WKCDTE
+417a C                     ENDIF
+     C                     SELEC
+     C           LBTYPE    WHEQ 'B'
+     C           $DISP     IFEQ '*ALL'
+     C                     MOVE LBDISP    WKDISP
+     C                     Z-ADD0         WKQTY
+     C           LBQPCK    MULT -1        WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C                     ELSE
+416bDC*          $DISP     IFEQ LBDISP
+416bMC           $DISP     IFEQ CMDISP
+     C                     MOVE LBDISP    WKDISP
+     C                     Z-ADD0         WKQTY
+     C           LBQPCK    MULT -1        WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C           LBQRMN    IFNE 0
+     C           $DISP     IFEQ '*ALL'
+500 AC                     MOVE S2ITEM    WKITEM
+500 AC                     MOVE S2DESC    WKDESC
+500 AC                     MOVE S2UOM     WKUOM
+     C                     MOVE LBDSP2    WKDISP
+     C                     Z-ADDLBQRMN    WKQTY
+     C                     MOVE 'R'       WKTYPE
+     C                     WRITEWKREC
+     C                     ELSE
+     C           $DISP     IFEQ LBDSP2
+500 AC                     MOVE S2ITEM    WKITEM
+500 AC                     MOVE S2DESC    WKDESC
+500 AC                     MOVE S2UOM     WKUOM
+     C                     MOVE LBDSP2    WKDISP
+     C                     Z-ADDLBQRMN    WKQTY
+     C                     MOVE 'R'       WKTYPE
+     C                     WRITEWKREC
+     C                     ENDIF
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C           LBTYPE    WHEQ 'O'
+     C                     MOVE LBDISP    WKDISP
+     C                     Z-ADD0         WKQTY
+     C           LBQPCK    MULT -1        WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C*
+     C           LBTYPE    WHEQ 'R'
+214 AC           ITTYPE    IFNE 'B'
+500 AC*
+500 AC*  If the "to" slot has a broken case item associated
+500 AC*  with it, a flag was set in ZZGETI and we want to
+500 AC*  jump down and do the broken case routine
+500 AC           S2BFLG    IFEQ *ON
+500 AC                     GOTO BRKN
+500 AC                     ENDIF
+500 AC*
+     C           $DISP     IFEQ '*ALL'
+     C                     MOVE LBDISP    WKDISP
+     C                     Z-ADD0         WKQTY
+     C           LBQPCK    MULT -1        WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C                     ELSE
+416bDC*          $DISP     IFEQ LBDISP
+416bMC           $DISP     IFEQ CMDISP
+     C                     MOVE LBDISP    WKDISP
+     C                     Z-ADD0         WKQTY
+     C           LBQPCK    MULT -1        WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C           $DISP     IFEQ '*ALL'
+     C                     MOVE LBDSP2    WKDISP
+     C                     Z-ADDLBQPCK    WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C                     ELSE
+     C           $DISP     IFEQ LBDSP2
+     C                     MOVE LBDSP2    WKDISP
+     C                     Z-ADDLBQPCK    WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C                     ENDIF
+     C                     ENDIF
+214 AC*  REPLENISH BROKEN ITEM#
+214 AC                     ELSE
+500 AC           BRKN      TAG
+214 AC                     Z-ADDLBWHSE    $LWHSE
+214 AC                     MOVE LBITEM    $LITEM
+216 AC                     MOVE WKDESC    SVDESC 30
+216 AC                     Z-ADDLBWHSE    $FWHSE
+216 AC                     MOVE LBITEM    $FITMB
+214 AC                     CALL 'GETFULL'
+214 AC                     PARM           $FWHSE  30
+214 AC                     PARM           $FITMB 15
+214 AC                     PARM           $FITMF 15
+214 AC                     PARM           $FDESC 30
+214 AC                     PARM           $FPDSC 15
+214 AC                     PARM           $FWHDP  5
+214 AC                     PARM           $FSTYP  1
+214 AC                     PARM           $FUM1   2
+214 AC                     PARM           $FUM2   2
+214 AC                     PARM           $FUMQ2  30
+214 AC                     MOVE $FITMF    WKITEM
+214 AC                     MOVE $FDESC    WKDESC
+214 AC                     MOVE $FUM1     WKUOM
+214 AC           $DISP     IFEQ '*ALL'
+214 AC                     MOVE LBDISP    WKDISP
+214 AC                     Z-ADD0         WKQTY
+214 AC           LBQPCK    MULT -1        WKQTY
+214 AC                     MOVE LBTYPE    WKTYPE
+500 AC           S2BFLG    IFEQ *ON
+700aDC*                    MOVE S1ITEM    WKITEM
+700aDC*                    MOVE S1DESC    WKDESC
+700aDC*                    MOVE S1UOM     WKUOM
+700aMC                     MOVE $FITMF    WKITEM
+700aMC                     MOVE $FDESC    WKDESC
+700aMC                     MOVE $FUM1     WKUOM
+500 AC                     ENDIF
+214 AC                     WRITEWKREC
+214 AC                     ELSE
+416bDC*          $DISP     IFEQ LBDISP
+416bMC           $DISP     IFEQ CMDISP
+214 AC                     MOVE LBDISP    WKDISP
+214 AC                     Z-ADD0         WKQTY
+214 AC           LBQPCK    MULT -1        WKQTY
+214 AC                     MOVE LBTYPE    WKTYPE
+500 AC           S2BFLG    IFEQ *ON
+700aDC*                    MOVE S1ITEM    WKITEM
+700aDC*                    MOVE S1DESC    WKDESC
+700aDC*                    MOVE S1UOM     WKUOM
+700aMC                     MOVE $FITMF    WKITEM
+700aMC                     MOVE $FDESC    WKDESC
+700aMC                     MOVE $FUM1     WKUOM
+500 AC                     ENDIF
+214 AC                     WRITEWKREC
+214 AC                     ENDIF
+214 AC                     ENDIF
+214 AC*
+216 AC                     MOVE SVDESC    WKDESC
+214 AC           $DISP     IFEQ '*ALL'
+214 AC                     MOVE LBITEM    WKITEM
+214 AC                     Z-ADDLBRDTE    WKDATE
+214 AC                     MOVE LBWHDP    WKWHDP
+413 AC                     Z-ADDLBLBL#    WKLBL#
+413 AC                     Z-ADDLBTRN#    WKTRN#
+214 AC                     MOVE LBUCOD    WKUOM
+214 AC                     MOVE LBDSP2    WKDISP
+214 AC                     Z-ADDLBQRMN    WKQTY
+214 AC                     MOVE LBTYPE    WKTYPE
+417a C           LBSTAT    IFEQ 'C'
+417a C                     Z-ADDLBSDTE    WKCDTE
+417a C                     ELSE
+417a C                     Z-ADD0         WKCDTE
+417a C                     ENDIF
+500 AC                     MOVE S2ITEM    WKITEM
+500 AC                     MOVE S2DESC    WKDESC
+500 AC                     MOVE S2UOM     WKUOM
+214 AC                     WRITEWKREC
+214 AC                     ELSE
+214 AC           $DISP     IFEQ LBDSP2
+214 AC                     MOVE LBITEM    WKITEM
+214 AC                     Z-ADDLBRDTE    WKDATE
+214 AC                     MOVE LBWHDP    WKWHDP
+413 AC                     Z-ADDLBLBL#    WKLBL#
+413 AC                     Z-ADDLBTRN#    WKTRN#
+214 AC                     MOVE LBUCOD    WKUOM
+214 AC                     MOVE LBDSP2    WKDISP
+214 AC                     Z-ADDLBQRMN    WKQTY
+214 AC                     MOVE LBTYPE    WKTYPE
+417a C           LBSTAT    IFEQ 'C'
+417a C                     Z-ADDLBSDTE    WKCDTE
+417a C                     ELSE
+417a C                     Z-ADD0         WKCDTE
+417a C                     ENDIF
+500 AC                     MOVE S2ITEM    WKITEM
+500 AC                     MOVE S2DESC    WKDESC
+500 AC                     MOVE S2UOM     WKUOM
+214 AC                     WRITEWKREC
+214 AC                     ENDIF
+214 AC                     ENDIF
+214 AC                     ENDIF
+     C*
+     C           LBTYPE    WHEQ 'P'
+     C                     MOVE LBDISP    WKDISP
+     C                     Z-ADDLBQPCK    WKQTY
+     C                     MOVE LBTYPE    WKTYPE
+     C                     WRITEWKREC
+     C*
+412 AC           LBTYPE    WHEQ 'I'
+412 AC                     MOVE LBDISP    WKDISP
+412 AC                     Z-ADDLBQPCK    WKQTY
+412 AC                     MOVE LBTYPE    WKTYPE
+412 AC                     WRITEWKREC
+412 AC*
+412 AC           LBTYPE    WHEQ 'A'
+412 AC                     MOVE LBDISP    WKDISP
+412 AC                     Z-ADDLBQPCK    WKQTY
+412 AC                     MOVE LBTYPE    WKTYPE
+412 AC                     WRITEWKREC
+412 AC*
+415aAC* TRANSFER FROM SLOT
+415aAC           LBTYPE    WHEQ 'T'
+415aAC           LBGRP2    ANDEQ'A'
+415aAC           $DISP     IFEQ '*ALL'
+416bDC*          $DISP     OREQ LBDISP
+416bMC           $DISP     OREQ CMDISP
+415aAC                     MOVE LBDISP    WKDISP
+415aAC           LBQPCK    MULT -1        WKQTY
+415aAC                     MOVE LBTYPE    WKTYPE
+415aAC                     WRITEWKREC
+415aAC                     ENDIF
+415aAC*
+415aAC* TRANSFER TO SLOT
+415aAC           LBTYPE    WHEQ 'T'
+415aAC           LBGRP2    ANDEQ'B'
+415aAC           $DISP     IFEQ '*ALL'
+416bDC*          $DISP     OREQ LBDISP
+416bMC           $DISP     OREQ CMDISP
+415aAC                     MOVE LBDISP    WKDISP
+415aAC                     Z-ADDLBQPCK    WKQTY
+415aAC                     MOVE LBTYPE    WKTYPE
+415aAC                     WRITEWKREC
+415aAC                     ENDIF
+     C*
+     C                     ENDSL
+     C*
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   MOVE '1'       FIRST   1
+     C*
+     C*
+     C*  Define keys.
+     C*
+     C*    PIRITEM file
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           LBWHSE
+     CSR                   KFLD           LBITEM
+     C*
+     C*    PIRITEM file for "from" (LBDISP) slot
+     C*
+500 ACSR         KEYFM     KLIST
+500 ACSR                   KFLD           LBWHSE
+500 ACSR                   KFLD           S1ITEM
+     C*
+     C*    PIRITEM file for "to" (LBDSP2) slot
+     C*
+500 ACSR         KEYTO     KLIST
+500 ACSR                   KFLD           LBWHSE
+500 ACSR                   KFLD           S2ITEM
+     C*
+     C*    SLOT2 file for "from" slot
+     C*
+500 ACSR         KEYS1     KLIST
+500 ACSR                   KFLD           LBWHSE
+500 ACSR                   KFLD           LBWHDP
+500 ACSR                   KFLD           LBDISP
+     C*
+     C*    SLOT2 file for "to" slot
+     C*
+500 ACSR         KEYS2     KLIST
+500 ACSR                   KFLD           LBWHSE
+500 ACSR                   KFLD           LBWHDP
+500 ACSR                   KFLD           LBDSP2
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*  Get/Load item info for both "from" and "to" slot
+500 ACSR         ZZGETI    BEGSR
+     C*
+500 ACSR                   MOVE *OFF      S2BFLG
+500 ACSR                   MOVE *BLANKS   S1ITEM 15
+500 ACSR                   MOVE *BLANKS   S1DESC 30
+500 ACSR                   MOVE *BLANKS   S1UOM   2
+500 ACSR                   MOVE *BLANKS   S2ITEM 15
+500 ACSR                   MOVE *BLANKS   S2DESC 30
+500 ACSR                   MOVE *BLANKS   S2UOM   2
+     C*
+     C*  "FROM" SLOT
+500 ACSR         LBDISP    IFNE *BLANKS
+500 ACSR         KEYS1     CHAINSLOT2                79
+500 ACSR         *IN79     IFEQ *OFF
+500 ACSR                   MOVE SLITEM    S1ITEM
+500 ACSR         KEYFM     CHAINPIRITEM              79
+500 ACSR         *IN79     IFEQ *OFF
+500 ACSR                   MOVE ITDESC    S1DESC
+500 ACSR                   MOVE ITUM1     S1UOM
+500 ACSR                   ENDIF
+500 ACSR                   ENDIF
+500 ACSR                   ENDIF
+     C*
+     C*  "TO" SLOT
+500 ACSR         LBDSP2    IFNE *BLANKS
+500 ACSR         KEYS2     CHAINSLOT2                79
+500 ACSR         *IN79     IFEQ *OFF
+500 ACSR                   MOVE SLITEM    S2ITEM
+500 ACSR         KEYTO     CHAINPIRITEM              79
+500 ACSR         *IN79     IFEQ *OFF
+500 ACSR         ITTYPE    IFEQ 'B'
+500 ACSR                   MOVE *ON       S2BFLG  1
+500 ACSR                   ENDIF
+500 ACSR                   MOVE ITDESC    S2DESC
+500 ACSR                   MOVE ITUM1     S2UOM
+500 ACSR                   ENDIF
+500 ACSR                   ENDIF
+500 ACSR                   ENDIF
+     C*
+500 ACSR                   ENDSR
+     C*****************************************************************
+     C*

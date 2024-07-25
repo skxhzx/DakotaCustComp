@@ -1,0 +1,454 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1996 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IV345     Print inventory exceptions - Print
+     F*  29 April, 1999
+     F*  Roxanne Harrison
+     F*  Created using IV125
+     F*
+     F*  Revisions:
+408 AF*    01/12/97  RH    4.08
+     F*      - Added TIME to time stamp printed inventory sheets.
+409 AF*    07/14/98  RH    4.09
+     F*      - Print 'Cont. on next page' at bottom of page if hand
+     F*        stack or virtual slots are continued from one page to
+     F*        the next.  IVPMOR=*ON
+414aAF*    06/22/00  RH    4.14a
+     F*      - Print all virtual slots and items for a base slot excpt.
+414bAF*    06/29/00  RH    4.14b
+     F*      - Correct table to print using override.
+414cAF*    07/13/00  RH    414c
+     F*      - Add item description to detail2.
+416aAF*    05/14/02  RH    416a
+     F*      - Update excption status to 2=printed.
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+416aDF*NVEXCP IP  E           K        DISK
+416a FINVEXCP UP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FWHDEPT  IF  E           K        DISK
+414aAFSLOT2   IF  E           K        DISK
+414aAFVSLOT2  IF  E           K        DISK
+414cAFPIRITEM IF  E           K        DISK
+     FIV345PR O   E             90     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    A80        80  1
+     E                    $MD       128  1
+     E                    OVRPRT  1   1 80
+     I*----------------------------------------------------------------
+     I*  Input record
+     I*
+     IIVEREC
+     I                                              IVEWHSL1
+     I                                              IVEWHDL1
+     I                                              IVEASLL1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                    P   1   30ERCNT
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+4   DC*          *ENTRY    PLIST
+4   DC*                    PARM           $PRPRT  1
+     C*----------------------------------------------------------------
+     C*  Main Line
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Level break.
+     C*
+     C           *INL1     IFEQ *ON
+408 AC                     TIME           TIME
+     C                     EXSR OPNPRT
+     C                     EXSR ZRHEAD
+     C                     MOVE IVEWHS    LSTWHS
+     C                     MOVE IVEWHD    LSTWHD
+     C                     MOVE IVEASL    LSTASL
+     C                     ADD  1         COUNT   50
+     C                     ENDIF
+     C*
+     C*  Print detail line.
+     C*
+4   DC*          IVSITM    IFEQ *BLANKS
+    DC*                    MOVE *ON       *IN55
+    DC*                    ELSE
+    DC*                    MOVE *OFF      *IN55
+    DC*                    ENDIF
+    DC*                    MOVE IVEDSP    W1SDSP
+     C*
+     C*   Convert exception code into a word.
+     C*
+     C                     SELEC
+     C           IVEECD    WHEQ '1'
+     C                     MOVE 'SLOT  '  W1EXCP
+     C*
+     C           IVEECD    WHEQ '2'
+     C                     MOVE 'ITEM  '  W1EXCP
+     C*
+     C           IVEECD    WHEQ '3'
+     C                     MOVE 'QTY.  '  W1EXCP
+     C*
+     C                     OTHER
+     C                     MOVE 'ERROR '  W1EXCP
+     C                     ENDSL
+     C*
+416a C*   Convert exception status to * if printed.
+416a C           IVESTA    IFEQ '2'
+416a C                     MOVE '*'       W1STAT
+416a C                     ELSE
+416a C                     MOVE ' '       W1STAT
+416a C                     ENDIF
+     C*
+     C                     WRITEDETAIL1
+414a C*   Get virtual slots for base slot.
+414a C           PSKEY     CHAINSLOT2                79
+414a C           *IN79     CABEQ*ON       NOVIRT
+414a C           SLRSRV    CABEQ'V'       NOVIRT
+414a C                     MOVE *OFF      EOFVS   1
+414a C           PSKEY     SETLLVSLOT2
+414a C           EOFVS     DOUEQ*ON
+414a C           PSKEY     READEVSLOT2                   79
+414a C           *IN79     IFEQ *OFF
+414a C           SLKEY     CHAINSLOT2                78
+414a C           *IN78     IFEQ *OFF
+414a C                     MOVE SLITEM    VITEM  15
+414a C                     MOVE SLDISP    VSLOT  12
+414a C                     ELSE
+414a C                     MOVE *BLANKS   VITEM
+414a C                     MOVE VSDISP    VSLOT
+414a C                     ENDIF
+     C*
+414cAC           ITKEY     CHAINPIRITEM              79
+414cAC           *IN79     IFEQ *OFF
+414cAC                     MOVELITDESC    VDESC
+414cAC                     ELSE
+414cAC                     MOVE *BLANKS   VDESC
+414cAC                     ENDIF
+414a C                     WRITEDETAIL2
+414a C                     ELSE
+414a C                     MOVE *ON       EOFVS
+414a C                     ENDIF
+414a C                     ENDDO
+414a C           NOVIRT    TAG
+414a C*
+416a C*  Update exception status to 2=printed.
+416aAC           IVESTA    IFEQ '1'
+416aAC                     MOVE '2'       IVESTA
+416aAC                     UPDATIVEREC                 79
+416aAC                     ENDIF
+     C*
+     C*  Write footer and update page file.
+     C*
+     CL1         OPENED    IFEQ *ON
+409 AC*1         IVPMOR    IFEQ *ON
+409 AC*1                   MOVE *ON       *IN25
+409 AC*1                   ENDIF
+409 MCL1                   WRITEFOOT1
+409 ACL1                   MOVE *OFF      *IN25
+     CL1                   ENDIF
+     C*
+     C*  Send message back to user on how many sheets were printed.
+     C*
+     CLR                   Z-ADDCOUNT     ERCNT
+4   DC*R                   EXSR ZM21
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define keys
+     C*
+     C*
+     C*    File WHDEPT
+     C*
+     CSR         KEYWD     KLIST
+     CSR                   KFLD           IVEWHS
+     CSR                   KFLD           IVEWHD
+414aAC*
+414aACSR         PSKEY     KLIST
+414aACSR                   KFLD           IVEWHS
+414aACSR                   KFLD           IVEWHD
+414aACSR                   KFLD           IVEDSP
+414aAC*
+414aACSR         SLKEY     KLIST
+414aACSR                   KFLD           IVEWHS
+414aACSR                   KFLD           IVEWHD
+414aACSR                   KFLD           VSDISP
+    AC*
+416aACSR         PGKEY     KLIST
+416aACSR                   KFLD           IVEWHS
+416aACSR                   KFLD           IVEPAG
+     C*
+414cAC*  Define full key for item file.
+414cAC*
+414cACSR         ITKEY     KLIST
+414cACSR                   KFLD           IVEWHS
+414cACSR                   KFLD           VITEM
+     C*
+     C*  Define variables
+     C*
+     CSR         *LIKE     DEFN IVEWHS    LSTWHS
+     CSR         *LIKE     DEFN IVEWHD    LSTWHD
+     CSR         *LIKE     DEFN IVEASL    LSTASL
+     CSR         *LIKE     DEFN $DEV      LSTDEV
+     CSR         *LIKE     DEFN $FORM     LSTFRM
+     C*
+     C*  Get report heading.
+     C*
+     CSR                   EXSR ZRFRMT
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*   Clear previous program's message queue.
+     C*
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMSMSG
+     C*
+     C*  Dummy update for compiler.
+     C*
+4   DC*R         0         IFNE 0
+     C*R                   UPDATITREC
+     C*R                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  OPNPRT  Open printer file.
+     C*
+     CSR         OPNPRT    BEGSR
+     C*
+     C*   Get device and form type for department.
+     C*
+     CSR         IVEWHD    IFNE LSTWHD
+     CSR                   CALL 'GETRPT'
+     CSR                   PARM '*DEVFORM'$CMD    8
+     CSR                   PARM 'IV345PR' $LRPT  10
+     CSR                   PARM IVEWHS    $WHSE   30
+     CSR                   PARM IVESTP    $STYP   1
+     CSR                   PARM IVEWHD    $WHDP   5
+     CSR                   PARM           $DESC  50
+     CSR                   PARM           $DEV   10
+     CSR                   PARM           $FORM  10
+     CSR                   ENDIF
+     C*
+     C*   Open printer file for department.
+     C*
+     CSR         OPENED    IFNE *ON
+     CSR         $DEV      ORNE LSTDEV
+     CSR         $FORM     ORNE LSTFRM
+     C*
+     C*      If printer already open then close it.
+     C*
+     CSR         OPENED    IFEQ *ON
+     CSR                   CLOSEIV345PR
+     CSR                   ENDIF
+     C*
+     C*      Override printer file.
+     C*
+     C*          OVRPRTF FILE(IV345PR) OUTQ(*DEV) DEV($dev)
+     C*                  FORMTYPE($form)
+     C*
+     CSR                   MOVEAOVRPRT,1  A80
+     CSR                   MOVEA$DEV      A80,38
+     CSR                   MOVEA$FORM     A80,59
+     CSR                   MOVEAA80       QCMD
+     C*
+     CSR                   CALL 'QCMDEXC'
+     CSR                   PARM           QCMD   80
+     CSR                   PARM 80        QLEN   155
+     C*
+     C*      Open printer file.
+     C*
+     CSR                   OPEN IV345PR
+     CSR                   MOVE *ON       OPENED  1
+     CSR                   MOVE $DEV      LSTDEV
+     CSR                   MOVE $FORM     LSTFRM
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     C*  Get report title.
+     C*
+4   DC*R         $PRPRT    IFEQ 'Y'
+    DC*R                   MOVE 'REPRINT' RPRT
+    DC*R                   ELSE
+    DC*R                   MOVE *BLANKS   RPRT
+    DC*R                   ENDIF
+     C*
+     CSR                   CALL 'GETRPT'
+     CSR                   PARM '*DESC  ' $CMD    8
+     CSR                   PARM 'IV345PR' $LRPT  10
+     CSR                   PARM 0         $WHSE   30
+     CSR                   PARM ' '       $STYP   1
+     CSR                   PARM ' '       $WHDP   5
+     CSR                   PARM           $DESC  50
+     CSR                   PARM           $DEV   10
+     CSR                   PARM           $FORM  10
+     C*
+     C*   Center report title.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM $DESC     $PSTR  60
+     CSR                   PARM 40        $PLEN   30
+     CSR                   MOVEL$PSTR     RPTTTL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     CSR         IVEWHS    IFNE LSTWHS
+     CSR                   MOVE *BLANKS   W1WHSE
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR         IVEWHS    CHAINWAREHS               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVELWHDESC    $PSTR  60
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR                   ENDIF
+     CSR                   Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR
+     CSR                   PARM           $PLEN
+     CSR                   MOVEL$PSTR     W1WHSE
+     CSR                   ENDIF
+     C*
+     C*   Get warehouse department description.
+     C*
+     CSR         IVEWHD    IFNE LSTWHD
+     CSR                   MOVE *BLANKS   W1WHDP
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR         KEYWD     CHAINWHDEPT               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   WDDESC
+     CSR                   ENDIF
+     CSR         IVEWHD    CAT  '-':1     W1WHDP
+     CSR         W1WHDP    CAT  WDDESC:1  W1WHDP
+     CSR                   ENDIF
+     C*
+     C*   Convert section into a word.
+     C*
+     CSR         IVESTP    IFEQ 'P'
+     CSR                   MOVE 'PIR  '   W1STYP
+     CSR                   ELSE
+     CSR                   MOVE 'Fixed'   W1STYP
+     CSR                   ENDIF
+     C*
+     CSR                   WRITEHEAD1
+     CSR                   WRITECOLUMNS
+     C*
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMSMSG  Send program message to a previous program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSGP'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM #PROG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+4    C*     IV12521  Number of sheets printed.
+4    C*
+4   DC*R         ZM21      BEGSR
+4   DC*R                   MOVE 'IV12521' #MSGID
+4   DC*R                   MOVE '*COMP  ' #MSGTP
+4   DC*R                   MOVEAERRMSG    $MD,1
+4   DC*R                   EXSR ZMSMSG
+4   DC*R                   ENDSR
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**   OVRPRTF statment
+OVRPRTF FILE(IV345PR) OUTQ(*DEV) DEV(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)

@@ -1,0 +1,418 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  RN181   Returns exception report.
+     F*  09 July, 2002
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+     F*
+414aAF*    09/05/00  MLB  4.14a
+     F*      - Added PIRITEM to program.
+     F*      - Added support to program to print open/closed exceptions.
+     F*
+415aAF*  03/23/01  MLB  4.15a
+     F*    - Revised message text for error id VRTSLT to read
+     F*      'Vrt slot found' in DESC,2.
+415bAF*  03/26/01  MLB  4.15a
+     F*    - Added new message text for error id NOTEMTY.
+500aAF*  02/07/05  RH   5.00a
+     F*    - ENH: Print exception type for mispick, W1ETYP
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  91        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRN181   IP  E           K        DISK
+414aAFPIRITEM IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FRN181PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*
+     E                    RECK        3  7 0
+     E                    LVLK        3  7 0
+     E*
+     E                    CLS         3  5 0
+414eDE*                   DESC    1   5 50
+415BME                    DESC    1   6 50
+     I*----------------------------------------------------------------
+     IOQREC
+414aAI                                              EXESTAL2
+     I                                              EXWHDPL1
+     I                                              EXSTYPL1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I*
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $FROM   8
+     C                     PARM           $TO     8
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Level break occurred.
+     C*     - Filled page.
+     C*
+     C           *IN90     IFEQ '1'
+     C           *INL1     OREQ '1'
+     C                     EXSR ZRZERO
+     C*
+     C*  Format Dept/Section/Desig
+     C*
+     C           EXSTYP    IFEQ 'P'
+     C                     MOVE 'PIR  '   TYPE    5
+     C                     ELSE
+     C           EXSTYP    IFEQ 'F'
+     C                     MOVE 'Fixed'   TYPE
+     C                     ELSE
+     C                     MOVE '*None'   TYPE
+     C                     END
+     C                     END
+     C                     MOVE *BLANKS   P#DESC
+     C           'Dept:'   CAT  EXWHDP:1  P#DESC
+     C           P#DESC    CAT  'Type:':2 P#DESC
+     C           P#DESC    CAT  TYPE:1    P#DESC
+     C                     MOVELP#DESC    $LSTR  60
+     C                     Z-ADD40        $LLEN   30
+     C                     CALL 'CENTER'
+     C                     PARM           $LSTR
+     C                     PARM           $LLEN
+     C                     MOVEL$LSTR     P#DESC
+     C*
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - Dept/Section
+     C*
+     C           *INL1     IFEQ *ON
+     C                     Z-ADD1         L
+     C                     ENDIF
+     C*
+     C*
+     C*  Output Headings
+     C*
+     C           *IN91     IFEQ '1'
+     C           *INL1     OREQ '1'
+     C           *IN91     IFEQ '1'
+     C                     WRITERPHEAD
+     C                     END
+     C                     WRITECOLUMNS
+     C                     END
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*  Convert Generated date
+     C*
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE EXGDTE    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    GENDTE  60
+414aAC*
+414aAC*  Retrieve item description.
+414aAC*
+414aAC           ITKEY     CHAINPIRITEM              79
+414aAC           *IN79     IFEQ *ON
+414aAC                     MOVE *BLANKS   ITDESC
+414aAC                     ENDIF
+500aAC                     MOVE *BLANKS   W1ETYP  6
+414aAC*
+414aAC*  Setup error description for printing.
+414aAC*
+414aAC                     SELEC
+414aAC           EXERID    WHEQ 'MISPICK'
+414aAC                     MOVELDESC,3    ERRMSG
+500aAC                     MOVELEXFDIS    W1ETYP
+414aAC           EXERID    WHEQ 'INVCTL '
+414aAC                     MOVELDESC,4    ERRMSG
+414aAC**         EXERID    WHEQ 'QTYEXC '
+414aAC**                   MOVELDESC,5    ERRMSG
+415bAC**         EXERID    WHEQ 'NOTEMTY'
+415bAC**                   MOVELDESC,6    ERRMSG
+414aAC                     OTHER
+414aAC                     MOVELEXERID    ERRMSG    P
+414aAC                     ENDSL
+     C*
+     C*  Write detail line
+     C*
+     C                     WRITEDETAIL1
+     C*
+     C*  Accumulate totals
+     C*
+     C                     ADD  1         CLS,1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN92
+     C                     MOVE *OFF      *IN91
+     C*----------------------------------------------------------------
+     C*
+     C* Slot type totals
+     C*
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     C*
+     CL1         RECK,L    IFGT 0
+     CL1                   WRITESKIP1
+     CL1                   EXSR ZRTOTL
+     CL1                   END
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD3         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     CSR         RPKEY     KLIST
+     CSR                   KFLD           WKPRTF 10
+     C*
+414aAC           ITKEY     KLIST
+414aAC                     KFLD           EXWHSE
+414aAC                     KFLD           EXITEM
+414aAC*
+     CSR         EXKEY     KLIST
+     CSR                   KFLD           EXWHSE
+     CSR                   KFLD           EXWHDP
+     CSR                   KFLD           EXSTYP
+     CSR                   KFLD           EXITEM
+     CSR                   KFLD           EXGDTE
+     CSR                   KFLD           EXGTIM
+     C*
+     C*   Get report title.
+     C*
+     CSR                   MOVEL'RN181PR 'WKPRTF
+     CSR                   MOVE *BLANKS   RPTTTL
+     C                     MOVE *BLANKS   $PSTR
+     CSR         RPKEY     CHAINREPORTS              79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVELRPDESC    $PSTR  60
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR                   ENDIF
+     CSR                   Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR
+     CSR                   PARM           $PLEN
+     CSR                   MOVEL$PSTR     RPTTTL
+     C*
+     C*
+     C*   Convert dates to MMDDYY format.
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $FROM     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    FMDT    60
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $TO       $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    TODT    60
+     C*
+     C*
+     CSR                   MOVE #PROG     $CVPRG
+     C*
+     C                     Z-ADD3         L       10
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           EXWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*  Format Dept/Section/Desig
+     C*
+     C           EXSTYP    IFEQ 'P'
+     C                     MOVE 'PIR  '   TYPE    5
+     C                     ELSE
+     C           EXSTYP    IFEQ 'F'
+     C                     MOVE 'Fixed'   TYPE
+     C                     ELSE
+     C                     MOVE '*None'   TYPE
+     C                     END
+     C                     END
+     C                     MOVE *BLANKS   P#DESC
+     C           'Dept:'   CAT  EXWHDP:1  P#DESC
+     C           P#DESC    CAT  'Type:':2 P#DESC
+     C           P#DESC    CAT  TYPE:1    P#DESC
+     C                     MOVELP#DESC    $LSTR  60
+     C                     Z-ADD40        $LLEN   30
+     C                     CALL 'CENTER'
+     C                     PARM           $LSTR
+     C                     PARM           $LLEN
+     C                     MOVEL$LSTR     P#DESC
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*
+     C           *INL1     IFEQ '0'
+     C                     MOVE '1'       *IN91
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C                     EXSR ZRFRMT
+     C*
+     C                     WRITEHEAD1
+     C                     WRITEHEAD2
+     C*                    WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ADD  CLS,L     CLS,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C                     Z-ADDCLS,L     T#CLS
+220 DC*                    MOVE TYPE      T#DESC
+     C                     MOVE *BLANKS   T#DESC
+     C           EXWHDP    CAT  '/':1     T#DESC
+     C           T#DESC    CAT  TYPE:1    T#DESC
+     C*          'Dept:'   CAT  EXWHDP:1  P#DESC
+     C*          P#DESC    CAT  'Type:':2 P#DESC
+     C*          P#DESC    CAT  TYPE:1    P#DESC
+     C*
+     C*                    MOVE RPD,L     $RPD
+     C           L         IFEQ 1
+     C                     WRITETOTAL1
+     C                     ENDIF
+     C*
+     C           L         IFEQ 2
+     C                     WRITETOTAL2
+     C                     ENDIF
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     Z-ADD0         CLS,L
+     C*
+414aAC*    Setup heading for either open/closed exceptions.
+414aACSR                   SELEC
+414aACSR         EXESTA    WHEQ '1 '                       Open excpt
+414aACSR                   MOVELDESC,1    P#STAT
+414aAC*
+414aACSR         EXESTA    WHEQ '4 '                       Closed excpt
+414aACSR                   MOVELDESC,2    P#STAT
+414aACSR                   ENDSL
+414aAC*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*
+** Descriptions
+            Open Exceptions
+             Closed Exceptions
+Mispicked item
+Check inventory
+Qty exception
+Empty = No

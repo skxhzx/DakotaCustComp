@@ -1,0 +1,373 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  UT630DS   Un-Allocate/Pick route from WORKLBL
+     F*  02 March 2001
+     F*  Dave Sommerville
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+415 AF*    03/02/01  DAS  4.15
+     F*      -  Created.
+     F*
+     F*  Revisions
+417aAF*    08/11/04  RH   4.17a
+     F*      - Fix: Revised to call GETSLOTITM, if the item was an
+     F*        alias item for a SSB item, GETBASE would return the SSB
+     F*        item which is not a slot item.
+     F*
+CWD A*    04/26/16  MLB  CWD  P#01349
+     *      - Enh: Re-compiled pgm. WORKLBL5 had order id, descending
+     *        added to key for tote processing.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FWORKLBL5UF  E           K        DISK
+     FSLOT2   UF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$AERM       DS
+     I                                        1  60 XAERM
+     I                                        1   4 $AMSG
+417a I*----------------------------------------------------------------
+417a I*  Called programs
+417a I*
+417aAI              'GETSLOTITM'          C         @GETSI
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*    Hard code warehouse and route id.
+     C*
+     C                     Z-ADD1         KYWHSE
+     C                     MOVE '19147'   KYRTID
+     C*
+     C*    Un-Allocate/Pick WORKLBL records
+     C*
+     C                     EXSR UNWLBL
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *ON       FOREVR  1
+     C*
+     C*  Define partial key for WORKLBL5 file.
+     C*
+     CSR         *LIKE     DEFN LWWHSE    KYWHSE
+     CSR         *LIKE     DEFN LWRTE     KYRTID
+     CSR         KEYLW     KLIST
+     CSR                   KFLD           KYWHSE
+     CSR                   KFLD           KYRTID
+     C*
+     C*  Define key for SLOT2 file.
+     C*
+     CSR         KEYSL2    KLIST
+     CSR                   KFLD           LWWHSE
+     CSR                   KFLD           LWWHDP
+     CSR                   KFLD           LWDISP
+     C*
+     C*  Define key for PIRITEM file.
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           LWWHSE
+     CSR                   KFLD           LWITEM
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*
+     C*   Define variables.
+     C*
+     CSR         *LIKE     DEFN LWQALC    DIFF1
+     CSR         *LIKE     DEFN LWQALC    DIFF2
+     CSR         *LIKE     DEFN LWQALC    DIFF3
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETITM  Get item record.
+     C*
+     CSR         GETITM    BEGSR
+     C*
+     CSR         KEYIT     CHAINPIRITEM              78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *BLANK    ITTYPE
+     CSR                   Z-ADD0         ITUMQ2
+     CSR                   Z-ADD0         ITUMQ3
+     CSR                   ENDIF
+     CSR                   MOVE LWITEM    #BITEM
+417aACSR                   MOVE LWITEM    #SITEM
+     CSR                   MOVE ITTYPE    #BITYP
+     CSR                   MOVE ITDESC    #BDESC
+     CSR                   MOVE ITPDSC    #BPDSC
+     C*
+     C*     If Contract, Alias or SSB item
+     C*       Then get Base item.
+     C*
+     CSR         ITTYPE    IFEQ 'C'
+     CSR         ITTYPE    OREQ 'A'
+     CSR         ITTYPE    OREQ 'S'
+     CSR                   CALL 'GETBASE'
+     CSR                   PARM ITWHSE    $GWHSE  30
+     CSR                   PARM ITITEM    $GITEM 15
+     CSR                   PARM ' '       #BITEM 15
+     CSR                   PARM           #BITYP  1
+     CSR                   PARM           #BDESC 30
+     CSR                   PARM           #BPDSC 15
+     CSR                   PARM           #BWHDP  5
+     CSR                   PARM           #BSTYP  1
+     CSR                   PARM           #BUM    2
+     CSR                   PARM           #BUM2   2
+     CSR                   PARM           #BUMQ2  30
+     CSR                   PARM           #BUM3   2
+     CSR                   PARM           #BUMQ3  30
+     CSR                   PARM ' '       #BCITM 15
+     CSR                   PARM           #BCTYP  1
+     CSR                   PARM           #BCDSC 30
+     CSR                   PARM           #BCPDS 15
+     CSR                   PARM           #BCWDP  5
+     CSR                   PARM           #BCSTP  1
+     CSR                   PARM           #BCUM   2
+     CSR                   PARM           #BCUM2  2
+     CSR                   PARM           #BCUQ2  30
+     CSR                   PARM           #BCUM3  2
+     CSR                   PARM           #BCUQ3  30
+     CSR                   PARM           #BRTN   8
+     CSR                   ENDIF
+417aAC*   Get slot item.
+417aACSR                   CALL @GETSI
+417aACSR                   PARM ITWHSE    $GWHSE  30
+417aACSR                   PARM ITITEM    $GITEM 15
+417aACSR                   PARM ' '       #SITEM 15
+417aACSR                   PARM           #SITYP  1
+417aACSR                   PARM           #SDESC 30
+417aACSR                   PARM           #SPDSC 15
+417aACSR                   PARM           #SRTN  10
+417aACSR                   PARM           #SMSG  60
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UNWLBL   Un-Allocate/Pick WORKLBL records.
+     C*
+     CSR         UNWLBL    BEGSR
+     C*
+     C*  Loop through label records for route.
+     C*
+     CSR         KEYLW     SETLLWORKLBL5
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYLW     READEWORKLBL5                 78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Ignore labels that have already been processed.
+     C*
+     CSR         LWSTAT    IFEQ 'X'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Only work with normal and merge records.
+     C*
+     CSR         LWTYPE    IFNE 'O'
+     CSR         LWTYPE    ANDNE'M'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Only update slot for Merge and Out labels.
+     C*
+     CSR         LWTYPE    IFEQ 'M'
+     CSR         LWASL2    OREQ 'OUT'
+     CSR                   GOTO UPDLBL
+     CSR                   ENDIF
+     C*
+     C*    Get Item Info.
+     C*
+     CSR                   EXSR GETITM
+     C*
+     C*     Get slot record.
+     C*
+     CSR         KEYSL2    CHAINSLOT2                77
+     CSR         *IN77     IFEQ *ON
+     CSR                   GOTO UPDLBL
+     CSR                   ENDIF
+     C*
+     C*  Update slot record.
+     C*
+     CSR                   SELEC
+     C*
+     C*    Record alredy 'Picked'
+     C*
+     CSR         LWSTAT    WHEQ 'P'
+     C*
+     CSR                   SELEC
+     CSR         LWUTYP    WHEQ 'N'
+     CSR                   SUB  LWQPCK    SLPCK1
+     CSR         SLPCK1    IFLT 0
+     CSR                   Z-ADD0         SLPCK1
+     CSR                   ENDIF
+     CSR                   Z-ADDLWQPCK    DIFF1
+     CSR                   Z-ADD0         DIFF2
+     CSR                   Z-ADD0         DIFF3
+     CSR                   EXSR UNALOC
+     C*
+     CSR         LWUTYP    WHEQ '1'
+     CSR                   SUB  LWQPCK    SLPCK2
+     CSR         SLPCK2    IFLT 0
+     CSR                   Z-ADD0         SLPCK2
+     CSR                   ENDIF
+     CSR                   Z-ADD0         DIFF1
+     CSR                   Z-ADDLWQPCK    DIFF2
+     CSR                   Z-ADD0         DIFF3
+     CSR                   EXSR UNALOC
+     C*
+     CSR         LWUTYP    WHEQ '2'
+     CSR                   SUB  LWQPCK    SLPCK3
+     CSR         SLPCK3    IFLT 0
+     CSR                   Z-ADD0         SLPCK3
+     CSR                   ENDIF
+     CSR                   Z-ADD0         DIFF1
+     CSR                   Z-ADD0         DIFF2
+     CSR                   Z-ADDLWQPCK    DIFF3
+     CSR                   EXSR UNALOC
+     C*
+     CSR                   ENDSL
+     C*
+     C*    Record not 'Picked', only allocated.
+     C*
+     CSR                   OTHER
+     C*
+     CSR                   SELEC
+     CSR         LWUTYP    WHEQ 'N'
+     CSR                   SUB  LWQALC    SLALC1
+     CSR         SLALC1    IFLT 0
+     CSR                   Z-ADD0         SLALC1
+     CSR                   ENDIF
+     CSR                   Z-ADDLWQALC    DIFF1
+     CSR                   Z-ADD0         DIFF2
+     CSR                   Z-ADD0         DIFF3
+     CSR                   EXSR UNALOC
+     C*
+     CSR         LWUTYP    WHEQ '1'
+     CSR                   SUB  LWQALC    SLALC2
+     CSR         SLALC2    IFLT 0
+     CSR                   Z-ADD0         SLALC2
+     CSR                   ENDIF
+     CSR                   Z-ADD0         DIFF1
+     CSR                   Z-ADDLWQALC    DIFF2
+     CSR                   Z-ADD0         DIFF3
+     CSR                   EXSR UNALOC
+     C*
+     CSR         LWUTYP    WHEQ '2'
+     CSR                   SUB  LWQALC    SLALC3
+     CSR         SLALC3    IFLT 0
+     CSR                   Z-ADD0         SLALC3
+     CSR                   ENDIF
+     CSR                   Z-ADD0         DIFF1
+     CSR                   Z-ADD0         DIFF2
+     CSR                   Z-ADDLWQALC    DIFF3
+     CSR                   EXSR UNALOC
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   UPDATSLREC
+     C*
+     C*  Update label record.
+     C*
+     CSR         UPDLBL    TAG
+     C*
+     CSR                   MOVE 'X'       LWSTAT
+     CSR                   Z-ADDTODAY     LWSDTE
+     CSR                   TIME           LWSTIM
+     CSR                   UPDATLWREC
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UNALOC  Unallocate quantity from ITEMQTY file.
+     C*
+     C*    Revised to unallocate from Base item when item ordered
+     C*    is an Alias or Same Slot Breakdown item.
+     C*
+     CSR         UNALOC    BEGSR
+     C*
+     CSR                   MOVE '*UNALLOC'$ACMD
+     CSR                   MOVE #PROG     $APRG
+     CSR                   MOVE '*BATCH  '$ATYPE
+     CSR                   Z-ADDLWWHSE    $AWHSE
+     CSR         ITTYPE    IFEQ 'A'
+     CSR         ITTYPE    OREQ 'S'
+417aDC**                   MOVE #BITEM    $AITEM
+417aMCSR                   MOVE #SITEM    $AITEM
+     CSR                   ELSE
+     CSR                   MOVE LWITEM    $AITEM
+     CSR                   ENDIF
+     CSR                   Z-ADDDIFF1     $AQTY1
+     CSR                   Z-ADDDIFF2     $AQTY2
+     CSR                   Z-ADDDIFF3     $AQTY3
+     C*
+     CSR                   CALL 'ADJQTY'
+     CSR                   PARM           $ACMD   8
+     CSR                   PARM           $APRG  10
+     CSR                   PARM           $ATYPE  8
+     CSR                   PARM           $AWHSE  30
+     CSR                   PARM           $AITEM 15
+     CSR                   PARM           $AQTY1  70
+     CSR                   PARM           $AQTY2  70
+     CSR                   PARM           $AQTY3  70
+     CSR                   PARM           $ARTQ1  70
+     CSR                   PARM           $ARTQ2  70
+     CSR                   PARM           $ARTQ3  70
+     CSR                   PARM           $ARTN   8
+     CSR                   PARM           $AERM
+     C*
+     CSR                   ENDSR

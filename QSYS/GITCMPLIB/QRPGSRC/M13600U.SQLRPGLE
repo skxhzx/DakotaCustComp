@@ -1,0 +1,5032 @@
+      /copy *libl/qcopysrc,hspecs
+     H Dftactgrp(*No)
+      *  H Bnddir('QC2LE')
+     *----------------------------------------------------------------
+     *  Binding Directories
+     *----------------------------------------------------------------
+
+     Hbnddir('BFCBND')
+
+     *----------------------------------------------------------------
+     *   Copyright (C) 2014 BFC Software, Inc. - All Rights Reserved
+     *   BFC Software, Inc.
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     *
+     *  FM13600I     Purchase Order Receiving Entry - Init fields
+     *  25 June 2014
+     *  Lynn McMahon
+     *
+     *  Revisions:
+     *
+650 A*    06/25/14  LMC  6.50
+     *      - Created.
+     *      - Returns values for displaying correct fields on entry screen
+700aA*    12/21/15  LMC  7.00a
+     *      - When one date edit check box is set to display,
+     *        non display all other date check boxes.                 reen
+700bA*    12/22/15  LMC  7.00b
+     *      - When bypassedit is sent in, skip edit process.
+     *        This is only seton if the user has clicked the CW Entry.reen
+700cA*    01/18/16  LMC  7.00c - 650t from po232
+     *      - Writes one single UCI record for total weight if NO UCI
+     *        records exist for detail weights.                       reen
+700dA*    02/04/16  LMC  7.00d - Dairyland doesn't allow Cw variance
+     *        override, always non display the variance checkbox.
+     *
+     *----------------------------------------------------------------
+     *  Parameters
+     *
+     *    Input Parameters
+     *      pWhse       Warehouse
+     *      pPO         Purchase Order
+     *      pPOSeq      Sequence
+     *      pPOItem     Item
+     *
+     *    Returned Parameters
+     *
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     * File Specs
+     *----------------------------------------------------------------
+     Fitemdef   if   e           k disk
+     Fdesigsp   if   e           k disk
+     Fslot2     if   e           k disk
+     F                                     rename(slrec:s2rec)
+     Fslot3     if   e           k disk
+     F                                     rename(slrec:s3rec)
+     Fpocwexcp  uf a e           k disk    Prefix(cw_) rename(exrec:cwexrec)
+     Fpoexcp    if   e           k disk
+     Fpoctype   uf a e           k disk
+     Fupclog    if a e           k disk
+     Fupc3      uf a e           k disk
+     Fupc1      if   e           k disk
+     F                                     rename(uprec:u1rec)
+     Fpirhold   uf a e           k disk
+     Flabel2    if   e           k disk    prefix(lb_)
+
+
+     *----------------------------------------------------------------
+     *  Program information data structure
+     *----------------------------------------------------------------
+
+     D/copy qcopysrc,c#pgminfds
+
+     *----------------------------------------------------------------
+     *  Prototypes
+     *----------------------------------------------------------------
+700cAD ucilic#         pr                  extpgm('UCILIC#')
+700cA * Input
+700cAD   unext                       13  0 const
+700cAD   uwhse                        3  0 const
+
+     D calcpti         pr                  extpgm('CALCPTI')
+      * Input
+     D   pGTIN                             like($pgtin)
+     D   pLOT                              like($pbclot)
+     D   pPackDate                         like($pbcProdD)
+     D   pPTI                              like(pppti)
+     D po840           pr                  extpgm('PO840')
+      * Input
+     D   oWhse                             like(pWhse)
+     D   oWhdp                             like($itwhdp)
+     D   oOCode                            like(osscode)
+     D   oPlates                           like(possplates)
+     D   oPrint                            like(ossprint)
+     D   oLcns                       15
+     D   oExpd                             like(expd)
+     D   oStat                        2
+     D   oDev                        10
+     D   oItem                             like($ititem)
+     D   oSTyp                             like($itstyp)
+     D   oItdesc                           like($itdesc)
+
+     D m13700u         pr                  extpgm('M13700U')
+     D  message                      99
+     D  session                      40
+     D  user                         10
+     D  pgm                          20
+     D  whse                          3p 0
+     D  PO                            9
+     D  seq#                          5p 0
+     D  item                         15
+     D  lcns                         15
+     D  qty                           5p 0
+     D  uom                           5
+     D  done                          1
+
+     *----------------------------------------------------------------
+     *  Time variables
+     *----------------------------------------------------------------
+
+     D CurrStamploc    s               z
+     D CurrStampsys    s               z
+     D CurrStampuc     s               z
+     D FromStamp       s               z
+     D ToStamp         s               z
+     D oldeststamp     s               z
+     D ts              s               z
+
+     D Duration        s              7  2
+     D TtlMin          s              5  0
+     D TtlMinSec       s              9  0
+     D TtlSec          s              9  0
+     D RemSec          s              3  0
+
+     D bfcoffset       s              3  0 inz(0)
+
+     *----------------------------------------------------------------
+     *  Standard Variables
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,c#stdvar
+
+
+     *----------------------------------------------------------------
+     * Function prototypes.
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,p.bfcdteti
+      /copy qcopysrc,p.getclien
+
+     *----------------------------------------------------------------
+     *  Table and array definitions
+     *
+     D a10             s              1    dim(10)
+     D a13             s              1    dim(13)
+     D lbl             s             13    dim(4) ctdata perrcd(1)
+     D typ             s             10    dim(1) ctdata perrcd(1)
+     D cwt             s             27    dim(3) ctdata perrcd(1)
+     D $parms1         s             48    dim(20)
+     *----------------------------------------------------------------
+     *  Customer id
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,id#birite
+      /copy qcopysrc,id#cheney
+      /copy qcopysrc,id#finkle
+      /copy qcopysrc,id#renzi
+      /copy qcopysrc,id#saval
+      /copy qcopysrc,id#sgc
+      /copy qcopysrc,id#sofo
+      /copy qcopysrc,id#yhata
+      /copy qcopysrc,id#yhahilo
+      /copy qcopysrc,id#jordano
+      /copy qcopysrc,id#dairyla
+      /copy qcopysrc,id#glazier
+      /copy qcopysrc,id#icb
+
+     *----------------------------------------------------------------
+     *  P/O Detail Misc. /copy mbrs
+     *
+      /copy qcopysrc,podm1_rtx
+      /copy qcopysrc,podm2_rtx
+      /copy qcopysrc,podm3_rtx
+      /copy qcopysrc,podm4_rtx
+      /copy qcopysrc,podm5_rtx
+     *
+     *----------------------------------------------------------------
+     *  Variables
+     *----------------------------------------------------------------
+
+     D pMessage        s             99
+     D psessid         s             40
+     D puser           s             10
+     D ppgm            s             20
+700bAD pbypassedit     s              1
+     D pWhse           s              3p 0
+     D pPo             s              9
+     D pPOSeq          s              5p 0
+     D pPOItem         s             15
+     D  pOutStr        s           1024    varying
+
+     D client          s             10
+     D clientloc       s             10
+
+     Dblanklcns        s             15
+     D xdockkey        s             35
+     D woslot          s             12
+     D woqor           s             15
+     D woostk          s              1
+     D NDFifo          s              1
+     D NDLot           s              1
+     D NDQord          s              1
+     D NDcw            s              1
+     D NDcwex          s              1
+     D NDexpd          s              1
+     D NDMfgd          s              1
+     D NDlive          s              1
+     D NDpti           s              1
+     D NDBrand         s              1
+
+      * these were copies from Po232 - delete what isn't needed
+     D $ldwgt          s              9  2
+     D $lflag          s              1
+     D $lseq           s              5  0
+     D $lum1           s              5
+     D $lum2           s              5
+     D $lum3           s              5
+     D $lven           s             11  0
+     D $lvitm          s             15
+     D $lvnam          s             40
+     D $pw1pti         s              4  0
+     d $prsqt          s              7  0
+     D $swhse          s                   like(pwhse)
+     D $msgf           s             10
+700cAD $unext          s             13  0
+     D #bsu1           s              5
+     D #bsu2           s              5
+     D #bsu3           s              5
+     D #msgid          s              7
+     D #msgtp          s              7
+     D #odesc          s             30
+     D #oitem          s             15
+     D #opdsc          s             15
+     D #osu1           s              5
+     D #osu2           s              5
+     D #osu3           s              5
+     D #oswgt          s              7  2
+     D #oswt2          s              7  2
+     D #oswt3          s              7  2
+     D #otype          s              1
+     D #oum1           s              2
+     D #oum2           s              2
+     D #oum2q          s              3s 0
+     D #oum3           s              2
+     D #oum3q          s              3s 0
+     D #oven#          s             10  0
+     D #sitem          s             15
+     D caltol1         s             11  4
+     D caltol2         s             11  4
+     D caltol1x100     s             13  4
+     D caltol2x100     s             13  4
+     D chk4err         s               n
+     D ckexdt          s              8  0
+     D ckqrc1          s                   like(pdqrc1)
+     D clear           s              5  0
+     D cmdtkn          s              1
+     D CnvWgt          s              9  2
+     D comand          s              5  0
+     D cwcalc          s              1  0
+     D date1           s              8  0
+     D date16          s              6  0
+     D date2           s              8  0
+     D date2o          s              6  0
+     D date26          s              6  0
+     D done            s              1
+     D dtfrmt          s              1  0
+     D e               s              2  0
+     D eof             s              1
+     D exdtj           s              5  0
+     D expdj           s              5  0
+     D exwgt           s              9  2
+     D forevr          s              1
+     D full            s              1
+     D g$date          s              6  0
+     D g$dd            s              2  0
+     D g$dw            s              1  0
+     D g$jd            s              5  0
+     D g$jyd           s              7  0
+     D g$mm            s              2  0
+     D g$mmwk          s              2  0
+     D g$wk7           s              7  0
+     D g$yy            s              2  0
+     D g$yywk          s              3  0
+     D g$yyyy          s              4  0
+     D gmwksv          s              2  0
+     D help            s              5  0
+     D hirng           s              9  2
+     D hivar           s              9  2
+     D hostcw0         s              7  0
+     D hostcwa         s              7
+     D hostcw2dec      s              7  2
+     D hostUnitWgt     s              9  4
+     D hvskp           s              1
+     D iaflag          s              1
+     D iatest          s              1
+     D ihrng           s              9  2
+     D ihvar           s              9  2
+     D ilrng           s              9  2
+     D ilvar           s              9  2
+     D j$date          s              6  0
+     D j$dd            s              2  0
+     D j$jd            s              5  0
+     D j$md            s              3  0
+     D j$mm            s              2  0
+     D j$tst           s              9  9
+     D j$x             s              2  0
+     D j$yd            s              7  0
+     D j$yywk          s              3  0
+     D j$yyyy          s              4  0
+     D kgs2lbs         c                   2.20462262
+     D kyitem          s                   like(slitem)
+     D kypick          s                   like(slpick)
+     D kystat          s                   like(slstat)
+     D ltstd6          s              6  0
+     D ltstd8          s              8  0
+     D glzmfd          s              8  0
+     D lvskp           s              1
+     D lwrng           s              9  2
+     D lwvar           s              9  2
+     D mfdtj           s              5  0
+     D mfgd            s              8  0
+     D netdays         s              3  0
+     D maxqty          s                   like(pdqrc1)
+     D nxtscr          s              3
+     D ocode           s              8
+     D ovrrid          s              1
+     D part            s              1
+     D poppcs          s                   like($lpcs)
+     D prg1c           s              4  3
+     D prg2c           s              4  3
+     d pplot           s             20
+     d pppti           s              4  0
+     d ptinodate       s              6s 0
+     D qtyDiff         s              5  0
+     D qtyord          s              5  0
+     D qtyord1         s              5  0
+     D qtyord2         s              5  0
+     D qtyord3         s              5  0
+     D qtyrcv          s              5  0
+     D qtyrcv1         s              5  0
+     D qtyrcv2         s              5  0
+     D qtyrcv3         s              5  0
+     D rcvpocomplete   s               n
+     D rcvUnitWgt      s             11  4
+     D recv            s              1
+     d rcverr          s                   like(error)
+     D rolldn          s              5  0
+     D rollup          s              5  0
+     D sclear          s              1
+     D sdesig          s              1
+     D ssbflg          s              1
+     D stop            s              1
+     D svcwen          s              1
+     D svcwfr          s              1
+     D svcwtp          s              1
+     D svexck          s              1
+     D svhi            s              2  0
+     D svqrc1          s                   like(pdqrc1)
+     D svqrc2          s                   like(pdqrc2)
+     D svqrc3          s                   like(pdqrc3)
+     D svrupc          s              1
+     D svtie           s              4  0
+     d sprcv           s              1
+     D temp10          s             10
+     D tmpwgt          s              9  2
+     D today           s              8  0
+     D todayo          s              6  0
+     D todyj           s              5  0
+700cAD uciexists       s               n
+700cAD unexta          s             13
+     D uxflag          s              1
+     D vrfycw          s              1
+     D wgtDiff         s             11  4
+     D whse            s              3  0
+     D wkmday          s              3  0
+     D wkwhse          s                   like(pwhse)
+     D woexdt          s              8  0
+     D wofifo          s              8  0
+     D womfdt          s              8  0
+     D work2           s              2
+     D work4           s              4
+     D wotcw           s              9  2
+     D wrttyp          s              1
+     D zmflag          s               n
+     D zmsflag         s               n
+     D $cstr           s             30
+     D wocrcv          s             27
+     D w1note          s             15
+      * screens from entry form
+     d Inupc           s             50
+     d pqty1           s              5p 0
+     d pqty2           s              5p 0
+     d pqty3           s              5p 0
+     d p#plt           s              5p 0
+     d pexmf           s             10
+     d pfifo           s             10
+     d pwgt            s              9p 2
+     d plbskilo        s              1
+     d pavg            s              1
+     d InSlot          s             12
+     d pmfgdt          s              6p 0
+     d plot            s             30
+     d pbrand          s             10
+     d ppti            s              4p 0
+     d $pcmd           s              8
+     d $prtn           s              8
+     d $pupc           s             20
+     d $lexpdat        s              6s 0
+     d $lmfrdat        s              6s 0
+
+     d ulcns           s             15
+     d uqty            s              5p 0
+     d uuom            s              5
+     d udone           s              1
+     d uhodata         s                   like(Hodata)
+     *----------------------------------------------------------------
+     *  Working variables
+     *
+     D rtxall9item     C                   const('9999999999')
+     D digits          c                   const('0123456789')
+     D pos             s              2  0
+     D day             s              2
+     D yr              s              2
+     D wkdate          s              6
+     D pqtchkw         s              1
+     D pqtchk1w        s              1
+     D pdtchkw         s              1
+     D pdtchk2w        s              1
+     D pdtchk3w        s              1
+     D pdtchk4w        s              1
+     D pwtchkw         s              1
+     D pptichkw        s              1
+     D pNDqtchkw       s              1
+     D pNDqtchk1w      s              1
+     D pNDdtchkw       s              1
+     D pNDdtchk2w      s              1
+     D pNDdtchk3w      s              1
+     D pNDdtchk4w      s              1
+     D pNDwtchkw       s              1
+     D pNDptichkw      s              1
+     D pw1stat         s              2
+     D posscode        s              1
+     D possprint       s              1
+     D possplates      s              4  0
+     D possdev         s             10
+     D ppsrusr         s              1
+     D pdecvalue       s             15
+     D pokey           s             50
+
+      /copy qcopysrc,C#PIRHLDPO
+      /copy qcopysrc,C#PIRHLLCN
+     *----------------------------------------------------------------
+     * Data structure
+     *
+     *    OPRUPC  -  Prompt user for Retail UPC during receiving? (Y,N)
+     *    OPRUPS  -  Allow user to skip Retail UPC scan? (Y,N)
+     *    OPRUPF  -  Require Retail UPC on file before receipt? (Y,N)
+     *
+     D*opdata          ds
+     D optionrec       ds
+     D  opstyp                 1      1
+     D  opwhdp                 2      6
+     D  opum1                  7      8
+     D  opdum                  9     23
+     D  opcum                 24     43
+     D  opcdiv                44     52  2
+     D  opcaut                53     53
+     D  opcwrn                54     54
+     D  opcrng                55     57  1
+     D  opwum                 58     72
+     D  opxdsc                73     73
+     D  optend               117    117
+     D  oplpgm                 1     10
+     D  opupct                11     13  0
+     D  oppdef                14     14  0
+     D  oppbld                15     15  0
+     D  oppact                16     16  0
+     D  opfdef                17     17  0
+     D  opfasl                18     18  0
+     D  opfsid                19     19  0
+     D  opflvl                20     20  0
+     D  oppasl                21     21  0
+     D  oppfrc                22     22
+     D  opplcn                23     23
+     D  opexck                28     28
+     D  opcwen                29     29
+     D  opcwtp                30     30
+     D  opcwfr                31     31
+     D  opipck                32     32
+     D  oprupc                33     33
+     D  oprups                34     34
+     D  oprupf                35     35
+     *  *SYSTEM  -  System options.
+     *    OPEPM   -  Using EPM module (Y,N).
+     *    OPRF    -  Using RF module (Y,N).
+     *    OPCAPC  -  Capture catch weights at pick closing (Y,N).
+     *    OPLETD  -  Print letdown labels (Y,N).
+     *    OPWRNC  -  Check CW variance in Truck Builder (N,M,C,B)
+     *    OPRG1C  -  Catch weight low variance percentage.
+     *    OPRG2C  -  Catch weight high variance percentage.
+     *    OPIMPI  -  Import item fields from host.(Y,N).
+     *    OPICW   -  Check CW count in Truck Builder. (N,M,C,B)
+     *    OPMPCK  -  Allow multiple pick slots for fixed items (Y/N).
+     *    OPRCDY  -  Number of days to keep receiving logs.
+     *    OPPKDY  -  Number of days to keep picking logs.
+     *    OPRTHS  -  Number of weeks - exported routes to keep.
+     *    OPCRHS  -  Number of weeks - exported customer rtns to keep.
+     *    OPPOHS  -  Number of weeks - exported p/o's to keep.
+     *    OPIAHS  -  Number of weeks - exported inventory adj. to keep.
+     *    OPMSHS  -  Number of weeks - exported misc. trans. to keep.
+     *    OPTBJQ  -  Run Truck builder on Job Que (Y/N)
+     *    OPISHS  -  Number of weeks to keep history file
+     *    OPUCI   -
+     *    OPWRNCR -  Check CW var during RCV individual Entry
+     *    OPICWR  -  Check CW count during RCV individual Entry
+     *    OPTRAX  -  Using TRAX module (Y/N).
+     *
+     D  opepm                  1      1
+     D  oprf                   2      2
+     D  opcapc                 3      3
+     D  opletd                 4      4
+     D  opwrnc                 5      5
+     D  oprg1c                 6      8  1
+     D  oprg2c                 9     11  1
+     D  opimpi                12     12
+     D  opicw                 13     13
+     D  opmpck                14     14
+     D  oprcdy                15     15  0
+     D  oppkdy                16     16  0
+     D  oprths                17     19  0
+     D  opcrhs                20     22  0
+     D  oppohs                23     25  0
+     D  opiahs                26     28  0
+     D  opmshs                29     31  0
+     D  optbjq                32     32
+     D  opishs                33     35  0
+     D  opishsa               33     35
+     D  opuci                 36     36
+     D  opwrncr               37     37
+     D  opicwr                38     38
+     D  optrax                39     39
+     *----------------------------------------------------------------
+     *  *PICK  -  Picking options
+     *----------------------------------------------------------------
+     *
+     * Fields
+     *
+     *    OPNXTP  -  Next pallet number.
+     *    OPBPCK  -  Bulk pick definition.
+     *    OPPCUB  -  Maximum cube for PIR.
+     *    OPFPAL  -  Pallets on fixed fork lift.
+     *    OPFCUB  -  Maximum cube per fixed pallet.
+     *    OPFSTP  -  Maximum stops per fixed pallet.
+     *    OPINCL  -  Include PIR in fixed cube.
+     *    OPSRCH  -  Number of previous pallets to search for space.
+     *    OPFBLD  -  Fixed pallet building method.
+     *                1 = By piece without concern for splitting stop.
+     *                2 = By stop without splitting stop between plts.
+     *    OPPBRK  -  Break pallets by aisle (Y,N).
+     *    OPMPUT  -  Manual Put away (Y,N).
+     *
+     * Data structure
+     *
+     D optiondrec      ds
+     D  opnxtp                 1      7  0 inz(0)
+     D  oppcub                10     14  2 inz(0)
+     D  opfpal                15     15  0 inz(0)
+     D  opfcub                16     20  2 inz(0)
+     D  opincl                22     22
+     D  opsrch                23     24  0 inz(0)
+     D  opfstp                25     26  0 inz(0)
+     D  opfbld                27     27  0 inz(0)
+     D  opbpck                28     30  0 inz(0)
+     D  oppbrk                31     33
+     D  opmput                34     34
+     D  opdend               117    117
+     *
+     *
+     *----------------------------------------------------------------
+     *  Working fields.
+     *
+     D                 ds
+     D  lottrk                 1      4
+     D  lictrk                 5      8
+
+     *----------------------------------------------------------------
+     *  Data structure for error message parameters
+     *
+     D $mdt            ds
+     D  errmsg                 1     78
+     *
+     D  erwhse                 1      2p 0
+     *
+     D  erfld                  1     30
+     D  erfrom                31     40
+     D  erto                  41     50
+     *
+     D  eritm                  1     15
+     D  erco#                 16     19p 0
+     *
+     D  erdisp                16     27
+     *
+     D  ermday                 1      2p 0
+     D  ermfdt                 3      6p 0
+     D  erexdt                 7     10p 0
+     D  erltst                11     14p 0
+     D  erdday                15     16p 0
+     D  eruday                17     18p 0
+     D  $ec                    1      2p 0
+     *
+     D  erused                 1      4p 0
+     D  erdisd                 5      6p 0
+     D  erusrd                 7      8p 0
+     D  ersell                 9     12p 0
+     *
+     D  ertcwt                 1      5p 2
+     D  erlrng                 6     10p 2
+     D  erhrng                11     15p 2
+     D  errg1c                16     17p 1
+     D  errg2c                18     19p 1
+     D  erexwt                20     24p 2
+     *
+     D  ertcw#                 1      3p 0
+     D  erqpck                 4      6p 0
+     *
+     D  erentd                 1      5p 0
+     D  ertod                  6     10p 0
+     D $cerm           ds
+     D  xcerm                  1     60
+     D  $cmsg                  1      4
+     *----------------------------------------------------------------
+     *  Constants
+     D move1           c                   const('MOVEIN PICK')
+     D move2           c                   const('MOVEIN OVERFLOW')
+     *----------------------------------------------------------------
+     *  Called programs
+     *
+     D @cvtdt          c                   const('CVTDTE')
+     D @getsi          c                   const('GETSLOTITM')
+     D @pwd            c                   const('CHKLIST')
+     D @fmtit          c                   const('FRMTIT')
+     D @crtrcv         c                   const('CRTRCVTRN')
+     *----------------------------------------------------------------
+     *  Called program parameters
+     *
+     D $cvtdt          ds
+     D  $cvcmd                 1      8
+     D  $cvprg                 9     18
+     D  $cvd6i                19     24
+     D  $cvd8i                25     32
+     D  $cvd6o                33     38  0
+     D  $cvd8o                39     46  0
+     D  $cvsto                47     64
+     D  $cvrtn                65     72
+     D  $cverm                73    132
+     D  $cvmsg                73     76
+     *
+     D $lparm          ds
+     D  $lcmd                  1      8
+     D  $lprg                  9     18
+     D  $luky                 19     68
+     D  $lrtn                 69     76
+     D  $lerm                 77    136
+     D  $lmsg                 77     80
+     *   Redefine key
+     D  $lwhse                19     21  0
+     D  $litem                22     36
+     D  $lpo                  37     45
+     D  $lrq1                 46     50  0
+     D  $lrq2                 51     55  0
+     D  $lrq3                 56     60  0
+     D  $lrpal                61     63  0
+     *
+     D  $lwhs2                19     21  0
+     D  $lwhd2                22     26
+     D  $litm2                27     41
+     D  $ldisp                42     53
+     D  $ldesg                54     58
+     D  $lst                  59     60
+     D  $lsdef                61     62
+     D  $lactv                63     64
+     *
+     D  $llot                 37     37
+     D  $lltrk                38     38
+     *
+     D  $lmfr#                22     32  0
+     D  $lmfritem             33     47
+     D  $ldakitem             48     62
+     *
+     D $mparm          ds
+     D  $mcmd                  1      8
+     D  $mprg                  9     18
+     D  $muky                 19     68
+     D  $mrtn                 69     76
+     D  $merm                 77    136
+     D  $mmsg                 77     80
+     *   Redefine key
+     D  $mwhs3                19     20p 0
+     D  $mpo3                 21     29
+     D  $mseq                 30     32p 0
+     D  $mitm3                33     47
+     D  $mqyr1                48     50p 0
+     D  $mqyr2                51     53p 0
+     D  $mqyr3                54     56p 0
+     D  $mcwte                57     59p 0
+     D  $mcwtt                60     64p 2
+     D  $mcwta                65     68p 2
+
+     *----------------------------------------------------------------
+     *  Standard SQL variables and constants
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,c#stdsql
+
+     *----------------------------------------------------------------
+     *  DRI parameters
+     *----------------------------------------------------------------
+      /COPY *libl/qcopysrc,C#DRIPARMS
+
+     *----------------------------------------------------------------
+     *  Data Formats
+     *----------------------------------------------------------------
+      /COPY *libl/qcopysrc,C#ITEM
+700cA /COPY *libl/qcopysrc,C#UCIINFO
+     D savever#        s                   like($itver#)
+     *------------------------------------------------------------------
+     * CLCDUR2 parameters
+     *------------------------------------------------------------------
+
+     D $cdcmd          s              8
+
+     D $cddatein       s              8  0
+     D $cdtimein       s              6  0
+
+     D $cdyears        s              3  0
+     D $cdmonths       s              3  0
+     D $cddays         s              3  0
+     D $cdhours        s              3  0
+     D $cdminutes      s              3  0
+     D $cdseconds      s              3  0
+
+     D $cddateOut      s              8  0
+     D $cdtimeOut      s              6  0
+
+     *
+     *----------------------------------------------------------------
+     *  Files
+     *----------------------------------------------------------------
+
+     D pdrec         E Ds                  Extname(podtl)
+     D pdmrec        E Ds                  Extname(podtlm)
+     D phrec         E Ds                  Extname(pohdr)
+     D oprec         E Ds                  Extname(options)
+     D umrec         E Ds                  Extname(unmesr)
+     D*uprec         E Ds                  Extname(upc)
+     D ossrec        E Ds                  Extname(ossloc)
+     D opdrec        E Ds                  Extname(optiond)
+     D horecreload   E Ds                  Extname(pirhold)
+     *----------------------------------------------------------------
+
+     c     *entry        plist
+     C                   parm                    pMessage
+     C                   parm                    pSessId
+     C                   parm                    pUser
+     C                   parm                    pPgm
+     c                   parm                    pWhse
+     c                   parm                    pPO
+     c                   parm                    pPOSeq
+     c                   parm                    pPOItem
+     c                   parm                    pqty1
+     c                   parm                    pqty2
+     c                   parm                    pqty3
+     c                   parm                    p#plt
+     c                   parm                    pexmf
+     c                   parm                    pfifo
+     c                   parm                    pmfgdt
+     c                   parm                    pwgt
+     c                   parm                    plbskilo
+     c                   parm                    pavg
+     c                   parm                    ppti
+     c                   parm                    plot
+     c                   parm                    pbrand
+     c                   parm                    pqtchkw
+     c                   parm                    pNDqtchkw
+     c                   parm                    pqtchk1w
+     c                   parm                    pNDqtchk1w
+     c                   parm                    pdtchkw
+     c                   parm                    pNDdtchkw
+     c                   parm                    pdtchk2w
+     c                   parm                    pNDdtchk2w
+     c                   parm                    pdtchk3w
+     c                   parm                    pNDdtchk3w
+     c                   parm                    pdtchk4w
+     c                   parm                    pNDdtchk4w
+     c                   parm                    pwtchkw
+     c                   parm                    pNDwtchkw
+     c                   parm                    pptichkw
+     c                   parm                    pNDptichkw
+     c                   parm                    pw1stat
+     c                   parm                    posscode
+     c                   parm                    possprint
+     c                   parm                    possplates
+     c                   parm                    possdev
+     c                   parm                    pdecvalue
+700bAc                   parm                    pbypassedit
+     c                   parm                    ppsrusr
+
+     *----------------------------------------------------------------
+     * Main line
+     *----------------------------------------------------------------
+
+      /free
+         *inlr = *on;
+
+700cA    if pbypassedit <> 'Y';
+         $lsavetrn = savetrn;
+         exsr zzrcvpocheck;
+
+         // initizlize fields from entry form
+         w1upcd = Inupc;
+         w1qrc1 = pqty1;
+         w1qrc2 = pqty2;
+         w1qrc3 = pqty3;
+         w1plts = p#plt;
+         KiloLbs = plbskilo;
+         $ldecvalue = pdecvalue;
+
+         if NDexpd <> 'Y';
+           // need to convert this for expd date field
+           pos = %scan('/':pexmf);
+           if pos > 0;
+             day = %subst(pexmf:pos+1:2);
+             yr  = %subst(pexmf:pos+4:2);
+             pexmf = %replace(day:pexmf:pos:2);
+             pexmf = %replace(yr:pexmf:pos+2:4);
+             wkdate = %trim(pexmf);
+             if wkdate <> ' ';
+               w1exdt= %dec(wkdate:6:0);
+             else;
+               w1exdt = 0;
+             endif;
+           else;
+             w1exdt = 0;
+           endif;
+         endif;
+         // need to convert this for fifo date field
+
+         pos = %scan('/':pfifo);
+         if pos > 0;
+           day = %subst(pfifo:pos+1:2);
+           yr  = %subst(pfifo:pos+4:2);
+           pfifo = %replace(day:pfifo:pos:2);
+           pfifo = %replace(yr:pfifo:pos+2:4);
+           wkdate = %trim(pfifo);
+           if wkdate <> ' ';
+             w1fifo= %dec(wkdate:6:0);
+           else;
+             w1fifo = 0;
+           endif;
+         else;
+           w1fifo = 0;
+         endif;
+
+         w1dwgt = pwgt;
+         w1avg  = pavg;
+         w1slot = InSlot;
+         w1stat = pw1stat;
+         osscode =  posscode;
+         ossprint = possprint;
+         ossplates = possplates;
+         ossdev = possdev;
+         psrusr = ppsrusr;
+
+         if NDmfgd <> 'Y';
+           // need to convert this for mfg date field
+           pos = %scan('/':pexmf);
+           if pos > 0;
+             day = %subst(pexmf:pos+1:2);
+             yr  = %subst(pexmf:pos+4:2);
+             pexmf = %replace(day:pexmf:pos:2);
+             pexmf = %replace(yr:pexmf:pos+2:4);
+             wkdate = %trim(pexmf);
+             if wkdate <> ' ';
+               w1mfdt= %dec(wkdate:6:0);
+             else;
+               w1mfdt = 0;
+             endif;
+           else;
+             w1mfdt = 0;
+           endif;
+         endif;
+
+         w1lotc = plot;
+         w1brand= pbrand;
+         w1pti  = ppti;
+         $PCMD = '*CHANGE ';
+         // execute screen processing
+         exsr sc1;
+
+700cA    endif;
+         // Put together JSON string
+
+         pOutStr = '{'
+                +  '"Err":"'  + %trimr(Errmsg) + '",'
+                +  '"NDFifo":"'  + %trimr(NDFifo) + '",'
+                +  '"NDQord":"'  + %trimr(NDQord) + '",'
+                +  '"NDcw":"'  + %trimr(NDcw) + '",'
+                +  '"NDcwex":"'  + %trimr(NDcwex) + '",'
+                +  '"NDexpd":"'  + %trimr(NDexpd) + '",'
+                +  '"NDmfgd":"'  + %trimr(NDmfgd) + '",'
+                +  '"NDlive":"'  + %trimr(NDlive) + '",'
+                +  '"NDLot":"'  + %trimr(NDLot) + '",'
+                +  '"NDpti":"'  + %trimr(NDpti) + '",'
+                +  '"NDBrand":"'  + %trimr(NDBrand) + '",'
+                +  '"wocrcv":"'  + %trimr(wocrcv) + '",'
+                +  '"w1avg":"'  + %trimr(w1avg) + '",'
+                +  '"woslot":"'  + %trimr(woslot) + '",'
+                +  '"woostk":"'  + %trimr(woostk) + '",'
+                +  '"wolbl":"'  + %trimr(wolbl) + '",'
+                +  '"woitem":"'  + %trimr(woitem) + '",'
+                +  '"w1fifo":"'  + %char(w1fifo) + '",'
+                +  '"w1plts":"'  + %char(w1plts) + '",'
+                +  '"w1note":"'  + %trimr(w1note) + '",'
+                +  '"wositm":"'  + %trimr(wositm) + '",'
+                +  '"wodsc1":"'  + %trimr(wodsc1) + '",'
+                +  '"wodsc2":"'  + %trimr(wodsc2) + '",'
+                +  '"wopdsc":"'  + %trimr(wopdsc) + '",'
+                +  '"woqor":"'  + %trimr(woqor) + '",'
+                +  '"w1um1":"'  + %trimr(w1um1) + '",'
+                +  '"w1um2":"'  + %trimr(w1um2) + '",'
+                +  '"w1um3":"'  + %trimr(w1um3) + '",'
+                +  '"wotie":"'  + %char(wotie) + '",'
+                +  '"wohi":"'  + %char(wohi) + '",'
+                +  '"wolbls":"'  + %trimr(wolbls) + '"';
+
+         // Close off the JSON string
+         pOutStr += '}';
+
+         if pmessage = ' ';
+           // load the reload field, if no erorrs.
+           // This is used if the user backs up from M13700
+           reload = 'Y';
+           uhodata = pirhldpods;
+           pokey = %trim(pPO) + %trim(%editc(pPOSeq:'X')) + %trim(pPOItem);
+           exec sql update pirhold
+                    set hodata  = :uhodata
+             where hosess = :psessid
+               and hotype = 'PODTL'
+               and hokey  = :pokey;
+         endif;
+      /end-free
+
+     *----------------------------------------------------------------
+     *  *INZSR   Initialization subroutine
+     *----------------------------------------------------------------
+
+      /free
+       begsr *INZSR;
+
+
+         getclient(client: clientLoc);
+         exsr zzinz;
+         exsr zzinz2;
+
+       endsr;
+
+      /end-free
+
+     *----------------------------------------------------------------
+     *
+     *  ZZUOM    Get Unit Of Measure Normal, Breakdown1, Breakdown2.
+     *           copied from PO232
+     *
+     C     zzuom         begsr
+     *
+     *   Get Unit of Measures.
+     *    PROTECTBK1 *IN94=Protect & non-display breakdown1 unit of measure
+     *    PROTECTBK2 *IN93=Protect & non-display breakdown2 unit of measure
+     *
+     *
+     C                   eval      wolbl = ' '
+     C                   eval      woitem = ' '
+     C                   eval      wodsc1 = ' '
+     C                   eval      wodsc2 = ' '
+     *
+     C                   eval      ssbflg = *off
+     C                   eval      wolbls = ' '
+     C                   eval      wositm = ' '
+     C                   eval      w1um1 = ' '
+     C                   eval      w1um2 = ' '
+     C                   eval      w1um3 = ' '
+     *
+      * add dri to get data from itemfld
+      /free
+            exsr clr$item;
+
+            $itWhse = pwhse;
+            $ititem = pPoItem;
+
+            $dricommand = '*ITEM';
+            $drisubcmd  = '%GETALL';
+            $drisys2upd = 'D';
+            chk4err = *on;
+            zmflag  = *off;
+            exsr zzzdricop;
+            if error = *on;
+              $ifucicde = ' ';
+              $ifrcvmth = ' ';
+              $ifbrdflg = ' ';
+            endif;
+            if $ifbrdflg = 'Y';
+              NDBrand = ' ';
+            else;
+              NDBrand = 'Y';
+            endif;
+            if $ifsltmth = '3' or
+               $ifucicde <> '1'and $ifrcvmth <> '2';
+              *in73 = *off;
+              NDpti = ' ';
+            else;
+              *in73 = *on;
+              NDpti = 'Y';
+            endif;
+      /end-free
+     C                   if        error = *on
+     C                   eval      $itdesc = *blanks
+     C                   eval      $itpdsc = *blanks
+     C                   eval      $itcwgt = 'N'
+     C                   eval      wopdsc = *blanks
+     C                   eval      wolbl = lbl(4)
+     c                   eval      woitem = '* * INVALID ITEM * *'
+     C     '-'           cat       woitem:1      woitem
+     C     pPOItem       cat       woitem:1      woitem
+     C                   goto      enduom
+     C                   else
+     C*
+     C                   if        client = Renzi
+     C                             or client = Finkle
+     C                             or client = SoFo
+     C                   if        pditem = rtxall9item
+     C                   eval      $itwhdp = rtxdm1_dnwhdp
+     C                   eval      $itdesc = pdmods
+     C                   eval      $itcwgt = rtxdm1_dncwcd
+     C                   eval      $itswgt = rtxdm1_dnwtiw
+     C                   eval      $itcube = rtxdm1_dncbec
+     C                   endif
+     C                   endif
+     C*
+     C                   eval      wopdsc = $itpdsc
+     C                   exsr      zztihi
+     *
+     *  Save information about selected item (Item that was sent in)
+     *
+     C                   eval      #oven# = $itven#
+     C                   eval      #otype = $ittype
+     C                   eval      #oitem = $ititem
+     C                   eval      #odesc = $itdesc
+     C                   eval      #opdsc = $itpdsc
+     C                   eval      #oswgt = $itswgt
+     C                   eval      #oum1 = $itum1
+     C                   eval      #oum2 = $itum2
+     C                   eval      #oum2q = $itumq2
+     C                   eval      #oswt2 = 0
+     C                   if        #oum2q <> 0
+     C     $itswgt       div(h)    #oum2q        #oswt2
+     C                   endif
+     C                   eval      #oum3 = $itum3
+     C                   eval      #oum3q = $itumq3
+     C                   eval      #oswt3 = 0
+     C                   if        #oum3q <> 0
+     C     $itswgt       div(h)    #oum2q        #oswt3
+     C     #oswt3        div(h)    #oum3q        #oswt3
+     C                   endif
+     *
+     C                   if        client = Renzi
+     *   Force standard-wgt catchwgt to non-catchwgt.
+     C                   if        $itcwgt = 'S'
+     C                   eval      $itcwgt = 'N'
+     C                   endif
+     *
+     C                   endif
+     *
+     *   Get short UOM descriptions for selected item.
+     *
+     C                   eval      #osu1 = *blanks
+     C                   eval      #osu2 = *blanks
+     C                   eval      #osu3 = *blanks
+     *
+      /free
+         if $itum1 <> *blanks;
+           exec sql select * into :umrec
+              from unmesr
+              where umcode = :$itum1;
+
+           If sqlstt = sqlSuccess;
+             #osu1 = umshrt;
+           else;
+             #osu1 = %trim($itum1);
+           endif;
+         endif;
+
+         if $itum2 <> *blanks;
+           exec sql select * into :umrec
+              from unmesr
+              where umcode = :$itum2;
+
+           If sqlstt = sqlSuccess;
+             #osu2 = umshrt;
+           else;
+             #osu2 = %trim($itum2);
+           endif;
+         endif;
+
+         if $itum3 <> *blanks;
+           exec sql select * into :umrec
+              from unmesr
+              where umcode = :$itum3;
+
+           If sqlstt = sqlSuccess;
+             #osu3 = umshrt;
+           else;
+             #osu3 = %trim($itum3);
+           endif;
+         endif;
+      /end-free
+     *
+     *   Initialize base information.
+     *
+      /free
+        #bitem = $ititem;
+        #sitem = $ititem;
+        #bityp = $ittype;
+        #bdesc = $itdesc;
+        #bpdsc = $itpdsc;
+        #bum1 = $itum1;
+        #bum2 = $itum2;
+        #bum3 = $itum3;
+        #bsu1 = #osu1;
+        #bsu2 = #osu2;
+        #bsu3 = #osu3;
+      /end-free
+     *
+     *   Get SSB item, if one exists
+     *
+     C                   if        $ittype = ' '
+     C                   call      'GETSSB'
+     C                   parm      $itwhse       $gwhse            3 0
+     C                   parm      $ititem       $gitem           15
+     C                   parm      ' '           #bitem           15
+     C                   parm                    #bdesc           30
+     C                   parm                    #bpdsc           15
+     C                   parm                    #bwhdp            5
+     C                   parm                    #bstyp            1
+     C                   parm                    #bum              2
+     C                   parm                    #bum2             2
+     C                   parm                    #bumq2            3 0
+     C                   parm                    #bum3             2
+     C                   parm                    #bumq3            3 0
+     C                   parm                    #brtn             8
+     *
+     C                   if        #brtn = '*FOUND  '
+     C                   eval      ssbflg = *on
+     C                   eval      #bityp = 'S'
+     C                   endif
+     C                   endif
+     *
+     *  If selected item is a Contract, Alias, SSB or Breakdown item . . .
+     *    Then get corresponding Base item.
+     *
+     C                   if        $ittype = 'C'  or
+     C                             $ittype = 'A'  or
+     C                             $ittype = 'S'  or
+     C                             $ittype = 'B'
+     C                   call      'GETBASE'
+     C                   parm      $itwhse       $gwhse
+     C                   parm      $ititem       $gitem
+     C                   parm      ' '           #bitem
+     C                   parm                    #bityp            1
+     C                   parm                    #bdesc
+     C                   parm                    #bpdsc
+     C                   parm                    #bwhdp
+     C                   parm                    #bstyp
+     C                   parm                    #bum1             2
+     C                   parm                    #bum2
+     C                   parm                    #bumq2
+     C                   parm                    #bum3
+     C                   parm                    #bumq3
+     C                   parm      ' '           #bcitm           15
+     C                   parm                    #bctyp            1
+     C                   parm                    #bcdsc           30
+     C                   parm                    #bcpds           15
+     C                   parm                    #bcwdp            5
+     C                   parm                    #bcstp            1
+     C                   parm                    #bcum1            2
+     C                   parm                    #bcum2            2
+     C                   parm                    #bcuq2            3 0
+     C                   parm                    #bcum3            2
+     C                   parm                    #bcuq3            3 0
+     C                   parm                    #brtn
+     C                   endif
+     *   Get slot item.
+     C                   call      @getsi
+     C                   parm      $itwhse       $gwhse
+     C                   parm      $ititem       $gitem
+     C                   parm      ' '           #sitem           15
+     C                   parm                    #sityp            1
+     C                   parm                    #sdesc           30
+     C                   parm                    #spdsc           15
+     C                   parm                    #srtn            10
+     C                   parm                    #smsg            60
+     *
+     *   Get short UOM descriptions for base item.
+     *
+      /free
+         if #bum1 <> #oum1;
+           exec sql select * into :umrec
+              from unmesr
+              where umcode = :#bum1;
+
+           If sqlstt = sqlSuccess;
+             #bsu1 = umshrt;
+           else;
+             #bsu1 = %trim(#bum1);
+           endif;
+         endif;
+
+         if #bum2 <> #oum2;
+           exec sql select * into :umrec
+              from unmesr
+              where umcode = :#bum2;
+
+           If sqlstt = sqlSuccess;
+             #bsu2 = umshrt;
+           else;
+             #bsu2 = %trim(#bum2);
+           endif;
+         endif;
+
+         if #bum3 <> #oum3;
+           exec sql select * into :umrec
+              from unmesr
+              where umcode = :#bum3;
+
+           If sqlstt = sqlSuccess;
+             #bsu3 = umshrt;
+           else;
+             #bsu3 = %trim(#bum3);
+           endif;
+         endif;
+      /end-free
+
+     *
+     *   Set indicators to protect breakdown quantities.
+     *
+      *   don't need this code for gui - 8/24/15
+     C*                  if        $itflg1 = 'N'  and
+     C*                            ssbflg = *off
+     C*                  endif
+     C*                  if        $itflg2 = 'N'  and
+     C*                            ssbflg = *off  or
+     C*                            $itflg2 = 'N'  and
+     C*                            ssbflg = *on  and
+     C*                            $itum3 = *blanks
+     C*                  endif
+     *
+     *   When dealing with an SSB item, the quantity is actually
+     *   received into the "normal" screen quantity. If a third
+     *   breakdown is allowed, then that will be received into the
+     *   breakdown 1 quantity on the screen. The second breakdown
+     *   screen quantity is always protected for an SSB item.
+     *
+      * this code is not needed for gui 8/24/15
+     C*                  if        $ittype = 'S'  and
+     C*                            $itflg2 = 'Y'
+     c*                  else
+     c*                  if        $ittype = 'S'
+     c*                  endif
+     C*                  endif
+     *
+     C*                  if        $ittype = 'S'
+     C*                  endif
+     *
+     *   Create label for selected item
+     *
+     *     If selected item is a SSB item . . .
+     *        Then display the breakdown 1 UOM.
+     *        Otherwise use the normal UOM.
+     *
+     *     Note: Except for the description, the SSB fields
+     *           should be identical to its Base item's fields.
+     *
+     C                   movea     lbl(1)        a13
+     C                   if        #otype = 'S'
+     C                   movea     #osu2         a13(7)
+     C                   else
+     C                   movea     #osu1         a13(7)
+     C                   endif
+     C                   movea     a13           wolbl
+     C     wolbl         cat       ')':0         wolbl
+     C                   move      ':'           wolbl
+     *
+     *   Create description for selected item
+     *
+     C                   movea     typ(1)        a10
+     C                   movea     #otype        a10(8)
+     C                   movea     a10           temp10
+     *
+     C     #oitem        cat       temp10:1      woitem
+     C     woitem        cat       '-':1         woitem
+     C     woitem        cat       #odesc:1      woitem
+     *
+     *   Create label and description for corresponding item.
+     *
+     C                   select
+     *
+     *     If selected item is a Base item . . .
+     *        Then display its corresponding SSB item (if any)
+     *        Otherwise display nothing.
+     *
+     C                   when      #otype = ' '
+     C                   if        #bityp = 'S'
+     C                   movea     lbl(3)        a13
+     C                   movea     #bsu2         a13(6)
+     C                   movea     a13           wolbls
+     C     wolbls        cat       ')':0         wolbls
+     C                   move      ':'           wolbls
+     *
+     C                   movea     typ(1)        a10
+     C                   movea     #bityp        a10(8)
+     C                   movea     a10           temp10
+     *
+     C     #sitem        cat       temp10:1      wositm
+     C     wositm        cat       '-':1         wositm
+     C     wositm        cat       #bdesc:1      wositm
+     C                   endif
+     *
+     *     If selected item is a Breakdown item . . .
+     *        Then display its corresponding Base item.
+     *             Note: UOM is not applicable in this situation.
+     *
+     C                   when      #otype = 'B'
+     C                   movea     lbl(2)        a13
+     C                   movea     'N/A'         a13(7)
+     C                   movea     a13           wolbls
+     C     wolbls        cat       ')':0         wolbls
+     C                   move      ':'           wolbls
+     *
+     C                   movea     typ(1)        a10
+     C                   movea     #bityp        a10(8)
+     C                   movea     a10           temp10
+     *
+     C     #sitem        cat       temp10:1      wositm
+     C     wositm        cat       '-':1         wositm
+     C     wositm        cat       #bdesc:1      wositm
+     *
+     *     Otherwise . . .
+     *        Then display its corresponding Base item w/UOM.
+     *             Note: UOM of Base should match UOM of selected item.
+     *
+     C                   other
+     C                   movea     lbl(2)        a13
+     C                   movea     #bsu1         a13(7)
+     C                   movea     a13           wolbls
+     C     wolbls        cat       ')':0         wolbls
+     C                   move      ':'           wolbls
+     *
+     C                   movea     typ(1)        a10
+     C                   movea     #bityp        a10(8)
+     C                   movea     a10           temp10
+     *
+     C     #sitem        cat       temp10:1      wositm
+     C     wositm        cat       '-':1         wositm
+     C     wositm        cat       #bdesc:1      wositm
+     *
+     C                   endsl
+     *
+     *   Determine item number going into slot.
+     *
+     C                   if        #otype = ' '  or
+     C                             #otype = 'B'
+     C                   eval      #sitem = #oitem
+     C                   endif
+     *
+     *   Get extend description headings if being used.
+     *
+     C                   if        uxflag = *off
+     C                   else
+     C*
+     C                   if        client = Renzi
+     C                             or client = Finkle
+     C                             or client = SoFo
+     C                   if        pditem = rtxall9item
+     C                   eval      $ixdsc1 = pdmods
+     C                   endif
+     C                   endif
+     C*
+     C                   eval      wodsc1 = $ixdsc1
+     C                   eval      wodsc2 = $ixdsc2
+     C                   endif
+     *
+     *   Initialize unit of measure names for quantity fields.
+     *
+     C                   if        #otype = 'S'
+     C                   eval      w1um1 = #osu2
+     C                   else
+     C                   eval      w1um1 = #osu1
+     C                   endif
+     *
+     C                   if        #otype = 'S'
+     C                   eval      w1um2 = #osu3
+     C                   else
+     C                   eval      w1um2 = #osu2
+     C                   endif
+     *
+     C                   eval      w1um3 = #osu3
+     *
+     *   Determine if this item should be put away into warehouse.
+     *   An '*' in last position of designation says that the item
+     *   will NOT be put away into the warehouse.
+     *
+     C                   move      $itdesg       iatest
+     C                   if        iatest = '*'
+     C                   eval      iaflag = *on
+     C                   eval      *in64 = *off
+     C                   else
+     C                   eval      iaflag = *off
+     C                   eval      *in64 = *on
+     C                   endif
+
+     *  ... Or department isn't live (this overrides iaflag).
+
+     C                   call      'CHKLIVE'
+     C                   parm      pwhse         $swhse
+     C                   parm                    $itwhdp
+     C                   parm                    livestat          8
+
+     C                   if        livestat = '*NOTLIVE'
+     c                   eval      NDLive = ' '
+     C                   eval      iaflag = *off
+     C                   eval      *in64 = *on
+     C                   else
+     c                   eval      NDLive = 'Y'
+     C                   endif
+     *
+     *    The following EndIf is for statment *IN75 IFEQ *ON, which
+     *    comes after the chain to PIRITEM.
+     *
+     C                   endif
+     C     enduom        endsr
+     *----------------------------------------------------------------
+     *  clr$item  Clear $item data structure fields
+     *----------------------------------------------------------------
+
+     C     clr$item      begsr
+     C                   eval      savever# = $itver#
+     C                   clear                   $item
+     C                   clear                   $item2
+     C                   eval      $itver# = savever#
+     C                   endsr
+
+700cA*----------------------------------------------------------------
+700cA*  clr$uciinfo  Clear $uciinfo data structure fields
+700cA*----------------------------------------------------------------
+
+700cAC     clr$uciinfo   begsr
+700cAC                   eval      savever# = $uiver#
+700cAC                   clear                   $uciinfo
+700cAC                   eval      $uiver# = savever#
+700cAC                   eval      $uiaddemp = 0
+700cAC                   eval      $uiaddusr = #curruser
+700cAC                   eval      $uiaddpgm  = #pgm
+700cAC                   eval      $uiaddjob  = #job
+700caC                   eval      $uiaddnbr = #jobnbr
+700cAC                   endsr
+
+700cA*----------------------------------------------------------------
+700cA*
+700cA*  ZZUCIADD Add weight record to uciinfo.
+700cA*
+700cAC     zzuciadd      begsr
+700cA /free
+700cA   exsr clr$uciinfo;
+700cA   $uiWhse = pwhse;
+700cA   $uiItem = ppoitem;
+700cA   $uiuci = %editc(w1twgt:'X');
+700cA   ucilic#($unext: pwhse);
+700cA   unexta = %editc($unext:'X');
+700cA   $uiuciLcns = 'U:' + unexta;
+700cA   $uiLcns = 'T' + ppo + %editc(pposeq:'X');
+700cA   $uiseq = 1;
+700cA   $uiSerial = ' ';
+700cA   $uiwgtlbs = w1twgt;
+700cA   $uiWgtKgs = 0;
+700cA   $uiSelTrn# = 0;
+700cA   $uiSelLbl# = 0;
+700cA   $uiSelOrd = 0;
+700cA   $uiSelSeq = 0;
+700cA   $uiSelCSeq = 0;
+700cA   $uiSelTrax = ' ';
+700cA   $uiCrtBy = '7';
+
+700cA   $dricommand = '*UCIINFO';
+700cA   $drisubcmd  = '%ADD';
+700cA   $drisys2upd = 'D';
+700cA   chk4err = *on;
+700cA   zmflag  = *off;
+700cA   exsr zzzdricop;
+700cA   if error = *on;
+700cA     uciExists = *on;
+700cA     error = *on;
+700cA     leavesr;
+700cA   else;
+700cA     UciExists = *off;
+700cA     error = *off;
+700cA   endif;
+700cA /end-free
+700cAC                   endsr
+700cA*----------------------------------------------------------------
+700cA*
+700cA*  ZZUCI    Delete UCI records.
+700cA*
+700cA /free
+700cA   begsr zzuci;
+700cA     exsr clr$uciinfo;
+700cA     // warehouse
+700cA     $uiWhse = pwhse;
+
+700cA     // This is a temporary catch weight license
+700cA     $uiLcns = 'T' + ppo + %editc(pposeq:'X');
+
+700cA     $dricommand = '*UCIINFO';
+700cA     $drisubcmd  = '%CANCEL';
+700cA     $drisys2upd = 'D';
+700cA     chk4err = *on;
+700cA     zmflag  = *off;
+700cA     exsr zzzdricop;
+700cA   endsr;
+700cA /end-free
+700cA*----------------------------------------------------------------
+700cA*
+700cA*  ZZUCICHK Check to see if UCI's have been entered for CW
+700cA*
+700cA /free
+700cA   begsr zzucichk;
+700cA     exsr clr$uciinfo;
+700cA     // warehouse
+700cA     $uiWhse = pwhse;
+
+700cA     // This is a temporary catch weight license
+700cA     $uiLcns = 'T' + ppo + %editc(pposeq:'X');
+
+700cA     $dricommand = '*UCIINFO';
+700cA     $drisubcmd  = '%GETLICREC';
+700cA     $drisys2upd = 'D';
+700cA     chk4err = *on;
+700cA     zmflag  = *off;
+700cA     exsr zzzdricop;
+700cA     if error = *on;
+700cA       // No detail records in uciinfo for cw
+700cA       // Write one summary record
+700cA       exsr zzuciadd;
+700cA       error = '0';
+700cA     endif;
+700cA   endsr;
+700cA /end-free
+     *----------------------------------------------------------------
+     *  zzzdricop  Call DRICOP
+     *----------------------------------------------------------------
+
+     C     zzzdricop     begsr
+     C                   eval      error = *off
+
+     C                   select
+     C                   when      $dricommand = '*ITEM'
+     C                   eval      $dridata = $item
+     C                   eval      $dridata2 = $item2
+700cAC                   when      $dricommand = '*UCIINFO'
+700cAC                   eval      $dridata = $uciinfo
+     C                   endsl
+
+     C                   if        $dricommand = '*ITEM'
+     C                   call(e)   'DRICOP'
+     C                   parm                    $dricommand
+     C                   parm                    $drisubcmd
+     C                   parm                    $drisys2upd
+     C                   parm      #pgm          $driprogram
+     C                   parm      ' '           $drireturn
+     C                   parm      ' '           $drimessage
+     C                   parm                    $dridata
+     C                   parm                    $dridata2
+     C                   else
+     C                   call(e)   'DRICOP'
+     C                   parm                    $dricommand
+     C                   parm                    $drisubcmd
+     C                   parm                    $drisys2upd
+     C                   parm      #pgm          $driprogram
+     C                   parm      ' '           $drireturn
+     C                   parm      ' '           $drimessage
+     C                   parm                    $dridata
+     C                   endif
+
+     C                   select
+
+     C                   when      chk4err and %error
+     C                   eval      error = *on
+
+     C                   when      chk4err and $drireturn <> '*OK'
+     C                   eval      error = *on
+
+     C                   endsl
+
+     C                   select
+     C                   when      $dricommand = '*ITEM'
+     C                   eval      $item = $dridata
+     C                   eval      $item2 = $dridata2
+700cAC                   when      $dricommand = '*UCIINFO'
+700cAC                   eval      $uciinfo = $dridata
+     C                   endsl
+
+     C                   eval      zmflag = *off
+     C                   eval      zmsflag = *off
+     C                   eval      chk4err = *off
+     C     enddricop     endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZTIHI   Get use Preferred or 1st tie hi record.
+     *
+     C     zztihi        begsr
+     *
+     *  GET TIE HI, PREFERRED OR 1ST RECORD.
+     C                   eval      done = *off
+     C                   eval      wotie = 0
+     C                   eval      wohi = 0
+     C                   eval      svtie = 0
+     C                   eval      svhi = 0
+      /free
+         setll (pwhse: pPOItem) itemdef;
+         dou done = *on;
+           reade (pwhse: pPOItem) itemdef;
+           if %eof(itemdef);
+             done = *on;
+             leave;
+           endif;
+      /end-free
+     C                   if        svtie = 0  and
+     C                             svhi = 0
+     C                   eval      svtie = idtie
+     C                   eval      svhi = idhigh
+     C                   endif
+     C                   if        idpref = 'Y'
+     C                   eval      wotie = idtie
+     C                   eval      wohi = idhigh
+     C                   eval      done = *on
+     C                   endif
+     C                   enddo
+     C                   if        wotie = 0  and
+     C                             wohi = 0
+     C                   eval      wotie = svtie
+     C                   eval      wohi = svhi
+     C                   endif
+     *
+     c                   if        client = finkle
+     C                   eval      *in86 = *on
+     C                   else
+     C                   eval      *in86 = *off
+     C                   endif
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZRCVPOCHECK check for started RCVPO Transaction
+     *
+     C     zzrcvpocheck  begsr
+     *
+     *  See if RCVPO transaction is status 2 - start new if needed
+     *
+     C                   call      @crtrcv
+     C                   parm      '*PO'         $lcmdr           10
+     C                   parm      '*CHECK '     $lsubcmd         10
+     C                   parm      pwhse         @lwhse            3 0
+     C                   parm      0             $lpcs             5 0
+     C                   parm      0             $lpallets         5 0
+     C                   parm                    $lsavetrn         7 0
+     C                   parm                    ppo
+     C                   parm      $itstyp       $litstyp          1
+     C                   parm      $itwhdp       $litwhdp          5
+     C                   parm                    $lrtnr           10
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZINZ2   Program initialization. Called from main line.
+     *
+     C     zzinz2        begsr
+     *
+     *   Initialize error subfile
+     *
+     *
+     *   Set Non Display FIFO flag.
+      /free
+         NDFifo = ' ';
+         exec sql select * into :phrec
+              from pohdr
+              where phwhse = :pWhse
+                and phpo   = :pPO;
+
+         If sqlstt = sqlSuccess;
+           select;
+             when phvnam = 'MOVEIN' or
+                  phvnam = move1  or
+                  phvnam = move2;
+               NDFifo = ' ';
+             other;
+               NDFifo = 'Y';
+           endsl;
+         else;
+           phven = 0;
+           phvnam = *blanks;
+         endif;
+
+         // Remove any existing catchweight entry records.
+         exsr zzdlcw;
+         lflag = *off;
+         exsr zzxopt;
+         exsr zzlcns;
+
+         ocode = '*SYSTEM ';
+         wkwhse = 0;
+         exec sql select * into :oprec
+              from options
+              where opwhse = :wkwhse
+                and opcode = :ocode;
+
+         If sqlstt = sqlSuccess;
+           optionrec = opdata;
+         else;
+           opcapc = 'Y';
+           opwrnc = 'N';
+           oprg1c = 0;
+           oprg2c = 0;
+           opicw = 'N';
+         endif;
+         // get put away option
+         ocode = '*PICK   ';
+         wkwhse = pwhse;
+         exec sql select * into :opdrec
+              from optiond
+              where opdwhs = :wkwhse
+                and opdwdp = :$itwhdp
+                and opdcod = :ocode;
+
+         If sqlstt = sqlSuccess;
+           optiondrec = opddta;
+         else;
+           opmput = 'N';
+         endif;
+      /end-free
+     *
+     *   Select first screen to display.
+     *
+      * temporarily taken out until mrc scanning installed
+     C*                  if        $pupc <> *blanks
+     C*                  eval      *in92 = *on
+     *
+     *    Left adjust UPC for better and easier viewing.
+     C*                  move(p)   $pupc         $cstr
+     C*                  call      'ADJUST'
+     C*                  parm      '*LEFTNOZ'    $ccmd
+     C*                  parm                    $cstr
+     C*                  movel     $cstr         w1upcd
+     C*                  endif
+     *
+     C                   movel     w1upcd        w1upc
+     *
+     C                   exsr      scr01i
+     *
+     *    Confirm Retail UPC on file before continuing with receiving.
+     *
+      ****** this was marked out temporary for first round mrc
+     C                   if        svrupc = 'Y'
+     C*                  exsr      zzrupc
+     C     error         cabeq     *on           endinz
+     C                   endif
+     *
+     C     endinz        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZDLCW   Delete catchweight entry records.
+     *
+     C     zzdlcw        begsr
+     *
+     C                   eval      $mwhs3 = pwhse
+     C                   eval      $mpo3 = pPO
+     C                   eval      $mseq = pPOSeq
+     C                   call      'DELTMPCW'
+     C                   parm                    $mparm
+700cAc                   exsr      zzuci
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZXOPT   Get use extended description option
+     *
+     C     zzxopt        begsr
+     *
+     *   Get extended description option.
+      /free
+        uxflag = *off;
+        ocode = '*ITEMMNT';
+        exec sql select * into :oprec
+             from options
+             where opwhse = :pWhse
+               and opcode = :ocode;
+
+        If sqlstt = sqlSuccess;
+          optionrec = opdata;
+          if opxdsc = 'Y';
+            uxflag = *on;
+          endif;
+        endif;
+      /end-free
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZLCNS   Get use generic license option
+     *
+     C     zzlcns        begsr
+     *
+     *   Get use generic license option.
+      /free
+        lflag = *off;
+        svexck = *on;
+        svcwen = *on;
+        svcwtp = *on;
+        svcwfr = 'N';
+        svrupc = 'N';
+        ocode = '*RCVLBL ';
+        wkwhse = pwhse;
+        exec sql select * into :oprec
+             from options
+             where opwhse = :wkwhse
+               and opcode = :ocode;
+
+        if client = Dairyland;
+          opcwen = '2';
+          opcwtp = '2';
+          opcwfr = 'Y';
+        endif;
+        If sqlstt = sqlSuccess;
+          optionrec = opdata;
+          if opplcn = 'Y';
+            lflag = *on;
+          endif;
+          svexck = opexck;
+          svcwen = opcwen;
+          svcwtp = opcwtp;
+          svcwfr = opcwfr;
+          svrupc = oprupc;
+        endif;
+      /end-free
+     *
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *     Screen initialization and wrap-up routines
+     *
+     *----------------------------------------------------------------
+     *
+     *  Screen 01 initialization
+     *
+     C     scr01i        begsr
+     *
+     *  get existing record(s).
+     *
+      /free
+        *in91 = *on;
+        exsr zzget1;
+        exsr zzfil1;
+        ovrrid = *off;
+      /end-free
+     C     end01i        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZGET1   Get record(s) for screen 1.
+     *
+     C     zzget1        begsr
+     *
+     *   Get record from main file.
+     *
+      /free
+        exec sql select * into :pdrec
+             from podtl
+             where pdwhse = :pWhse
+               and pdpo   = :pPO
+               and pdseq  = :pPOSeq
+               and pditem = :pPOItem;
+        If sqlstt = sqlSuccess;
+        else;
+          error = *on;
+          errmsg = 'Po Sequence does not exist';
+          leavesr;
+        endif;
+        if client = Renzi
+           or client = Finkle
+           or client = SoFo
+           or client = Dairyland;
+          // Retrieve P/O Detail Misc. record.
+          if pditem = rtxall9item
+             or client = Dairyland;
+            exsr zzgtpdm;
+          endif;
+        endif;
+      /end-free
+     C*
+     C     endgt1        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZFIL1   Fill screen 1 fields with info from file.
+     *
+     C     zzfil1        begsr
+     *
+     *    Default FIFO entered date if entry is allowed.
+     *    Retrieve Item Lot/license plate tracking info.
+     C                   eval      $lcmd = *blanks
+     C                   eval      $lprg = #prog
+     C                   eval      $lwhse = pwhse
+     C                   eval      $litem = pPOItem
+     *    Protect,non-display lot code entry field.
+     c                   eval      NDLot = 'Y'
+     C                   call      'GETLLP'
+     C                   parm                    $lparm
+     *
+     C                   select
+     *    Lot/license plate tracking values found.
+     C                   when      $lrtn = '*OK     '
+     C                   if        $llot = 'Y'
+      * temp removed until uci mrc receiving installed
+     c*                            or $plot <> ' '
+     C                   eval      lottrk = '*YES'
+     *    Display lot code entry field.
+     c                   eval      NDLot = ' '
+     C                   else
+     C                   eval      lottrk = '*NO '
+     C                   endif
+     C                   if        $lltrk = 'Y'
+     C                   eval      lictrk = '*YES'
+     C                   else
+     C                   eval      lictrk = '*NO '
+     C                   endif
+     C                   other
+     C                   eval      lottrk = '*NO '
+     C                   eval      lictrk = '*NO '
+     C                   endsl
+     *
+     c                   eval      w1plts = p#plt
+     C                   eval      iatest = *blanks
+     C                   eval      iaflag = *off
+     C                   eval      w1avg = 'N'
+     *
+     *   Get Unit of measure fields
+     *
+     C                   eval      w1um1 = *blanks
+     C                   eval      w1um2 = *blanks
+     C                   eval      w1um3 = *blanks
+     C                   exsr      zzuom
+     *
+     C                   if        client = cheney
+     C     $itdesg       chain     desigsp                            79
+     C                   if        *in79 = *off
+     C                   eval      sdesig = *on
+     C                   else
+     C                   eval      sdesig = *off
+     C                   eval      dsscde = *blanks
+     C                   endif
+     C                   endif
+     C                   if        client = yhata
+     C                   eval      ndqord = ' '
+     C*   Convert quantity to string.
+     C                   eval      $ccmd = '*QTY2STR'
+     C                   eval      $cprg = #prog
+     C                   eval      $cqty1 = pdqor1
+     C                   eval      $cqty2 = pdqor2
+     C                   eval      $cqty3 = pdqor3
+     C                   exsr      zzcvqy
+     C                   eval      woqor = $cqstr
+     C*
+     C                   else
+     C                   eval      ndqord = 'Y'
+     C                   eval      woqor = *blanks
+     C                   endif
+     *
+     *   Enable/Disable catch weight fields.
+     *
+     C                   eval      vrfycw = *off
+     c                   eval      ndcw = ' '
+     *
+     *     First, see if catch weight entry is allowed.
+     *
+     C                   if        ($itcwgt <> 'Y'  and
+     C                              $itcwgt <> 'S') or
+     C                             svcwen = '3'
+     C                   eval      *in95 = *on
+     C                   eval      vrfycw = *off
+     C                   else
+     C                   eval      *in95 = *off
+     C                   eval      vrfycw = *on
+     C                   endif
+     *
+     *     Then see if we should block entry ...
+     *       because catch weight previously entered.
+     *
+     C                   if        svcwen = '2'  and
+     C                             pddwgt <> 0
+     c                   eval      ndcw = 'Y'
+     C                   eval      vrfycw = *off
+     C                   endif
+     *
+     *     Then see what value is to be entered (1=Choice,2=Ttl,3=Avg)
+     *
+     C                   select
+     C                   when      svcwtp = '2'
+     C                   eval      w1avg = 'N'
+     C                   eval      ndcwex= 'Y'
+     C                   eval      wocrcv = cwt(2)
+     C                   when      svcwtp = '3'
+     C                   eval      ndcwex= 'Y'
+     C                   eval      w1avg = 'Y'
+     C                   eval      pavg = 'Y'
+     C                   eval      wocrcv = cwt(3)
+     C                   other
+     C                   eval      *in81 = *off
+     C                   eval      w1avg = 'N'
+     C                   eval      ndcwex= ' '
+     C                   eval      wocrcv = cwt(1)
+     C                   endsl
+     *
+     *   Enable/Disable expiration date fields.
+     *
+     C                   if        $itflgd <> 'Y'
+     C                   eval      NDExpd = 'Y'
+     C                   else
+     C                   eval      NDExpd = ' '
+     C                   endif
+     *
+     *   Get the picking slot for the item.
+     *
+     C                   if        $itstyp = 'P'
+     C                   eval      $scmd = '*LAST'
+     C                   else
+     C                   eval      $scmd = '*FIRST'
+     C                   endif
+     C                   call      'GETPSLT'
+     C                   parm                    $scmd             8
+     C                   parm      $itwhse       $swhse
+     C                   parm                    #sitem
+     C                   parm                    woslot
+     C                   parm      *blanks       $saisl            3
+     C                   parm      *zeros        $sloc             3 0
+     C                   parm      *zeros        $srlvl            2 0
+     C                   parm      *blanks       $shand            2
+     C                   parm                    $srtn             8
+     *
+     * Try to display Special Designation slot.
+     C                   select
+     C                   when      Client = cheney
+     C                   if        woslot = '*NONE*  ' and
+     C                             sdesig = *on
+     C                   eval      woslot = dssdsp
+     C                   endif
+     C                   endsl
+     *
+      /free
+        // see if any stock in overflow slot.
+        wOostk = 'N';
+        kystat = 'A ';
+        kypick = 'N';
+
+        setll (pwhse: $ititem: kystat: kypick) slot3;
+        dow forevr = forevr;
+          reade (pwhse: $ititem: kystat: kypick) slot3;
+          if %eof(slot3);
+            leave;
+          endif;
+
+          if sldesg = 'BFC';
+            iter;
+          endif;
+
+          if slstk1 > 0  or
+             slstk2 > 0  or
+             slstk3 > 0;
+            wOostk = 'Y';
+            leave;
+          endif;
+        enddo;
+        // Enable Mfg date and disable Exp date, if Mfg date flag='Y'
+        if $immflg = 'Y';
+          NDMfgd = ' ';
+          NDExpd = 'Y';
+        else;
+          *in87 = *on;
+          NDMfgd = 'Y';
+        endif;
+      /end-free
+      * This was marked out for first go at receiving in mrc
+      * load up fields from gs1 incoming information
+      * Expiration Date
+     c*                  If        not *in96
+     c*                  if        $pexpdt > 0
+     C*                  move      $pexpdt       $cvd6i
+     C*                  eval      $cvcmd = '*YMDMDY '
+     C*                  call      @cvtdt
+     C*                  parm                    $cvtdt
+     C*                  move      $cvd6o        w1exdt
+     c*                  endif
+     c*                  endif
+      * Manufacturing Date
+     c*                  If        $immflg = 'Y'
+     c*                  if        $pmfgdt > 0
+     C*                  move      $pmfgdt       $cvd6i
+     C*                  eval      $cvcmd = '*YMDMDY '
+     C*                  call      @cvtdt
+     C*                  parm                    $cvtdt
+     C*                  move      $cvd6o        w1mfdt
+     c*                  endif
+     c*                  endif
+      * Lot
+     c*                  If        lottrk = '*YES'
+     c*                  if        $pLot <> ' '
+     c*                  eval      w1lotc = $plot
+     c*                  endif
+     c*                  endif
+      * Catch Weight
+     c*                  If        vrfycw = *on
+     c*                  if        $pwgt > 0
+     c*                  eval      w1dwgt = $pwgt
+     c*                  endif
+     c*                  endif
+      * Quantity
+     c*                  if        $pqty > 0
+     c*                  eval      w1qrc1 = $pqty
+     c*                  endif
+      * # of Pallets
+     c*                  if        $p#pall > 0
+     c*                  eval      w1plts = $p#pall
+     c*                  endif
+      * OSS Receiving
+      /free
+          w1note = ' ';
+      /end-free
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *     ZZCVQY - Convert receive qty's to string for msg display
+     *
+     C     zzcvqy        begsr
+     C                   call      'CVTQTY'
+     C                   parm                    $ccmd             8
+     C                   parm                    $cprg            10
+     C                   parm                    $cqty1            7 0
+     C                   parm                    $cqty2            7 0
+     C                   parm                    $cqty3            7 0
+     C                   parm                    $cum1             2
+     C                   parm                    $cum2             2
+     C                   parm                    $cum3             2
+     C                   parm                    $cqstr           10
+     C                   parm                    $custr           17
+     C                   parm                    $crtn             8
+     C                   parm                    $cerm
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZGTPDM  Get P/O Detail Misc. file
+     *
+     C     ZZGTPDM       Begsr
+     C*
+      /free
+         exec sql select * into :pdmrec
+              from podtlm
+              where pdmwhs = :pWhse
+                and pdmpo  = :pPO
+                and pdmseq = :pPOSeq
+                and pdmitm = :pPOItem;
+         If sqlstt = sqlSuccess;
+           podm1_rtx = pdmms1;
+           podm2_rtx = pdmms2;
+           podm3_rtx = pdmms3;
+           podm4_rtx = pdmms4;
+           podm5_rtx = pdmms5;
+         else;
+           pdmitm = ' ';
+           pdmpom = ' ';
+           pdmods = ' ';
+           pdmms1 = ' ';
+           pdmms2 = ' ';
+           pdmms3 = ' ';
+           pdmms4 = ' ';
+           pdmms5 = ' ';
+           podm1_rtx = ' ';
+           rtxdm1_dnpckm = 0;
+           rtxdm1_dniaov = 'N';
+           rtxdm1_dncwcd = 'N';
+           rtxdm1_dnwtiw = 0;
+           rtxdm1_dncbec = 0;
+           podm2_rtx = ' ';
+           podm3_rtx = ' ';
+           podm4_rtx = ' ';
+           podm5_rtx = ' ';
+         endif;
+      /end-free
+     C*
+     C                   Endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZINZ    Extra program initialization. Called from *INZSR.
+     *
+     C     zzinz         begsr
+     *
+     C                   eval      forevr = *on
+      /free
+         hotype = 'PODTL';
+         pokey = %trim(pPO) + %trim(%editc(pPOSeq:'X')) + %trim(pPOItem);
+         chain(N) (psessid: hotype: pokey) pirhold;
+         if %found(pirhold);
+           pirhldpods = hodata;
+         endif;
+      /end-free
+     *
+     *  Convert today's date into century format.
+     *
+     C                   eval      $cvcmd = '*CURCMD '
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   eval      today = $cvd8o
+     *
+     C                   eval      $cvprg = #prog
+     C                   eval      $rprg = #prog
+     C                   endsr
+     C*
+     *
+     *  SC1  -  Screen 1
+     *
+     C     sc1           begsr
+     *
+     *   Remove any existing catchweight entry records.
+     C                   if        $itcwgt = 'Y'
+     C                             or $itcwgt = 'S'
+     C                   exsr      zzdlcw
+     C                   endif
+     *  Test for override check boxes
+     *
+     C                   exsr      zzcmd1
+     C     cmdtkn        cabeq     *on           endsc1
+     *
+     *     Check input and write/update record.
+     *
+     C                   if        $pcmd = '*ADD    '  or
+     C                             $pcmd = '*CHANGE '
+
+     *     Setup converted weight field.
+     C                   exsr      zzcnvwgt
+
+     C                   exsr      zzchk1
+     C     error         cabeq     *on           endsc1
+     C                   exsr      zzupd1
+     C     error         cabeq     *on           endsc1
+     C                   endif
+     *  If error, then do not update P.O. header file
+     C     $lrtn         cabeq     '*CANCEL '    endsc1
+     C     $lrtn         cabeq     '*EXIT   '    endsc1
+     *
+     C     endsc1        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZCNVWGT  Setup converted weight field.
+     *
+     C     zzcnvwgt      begsr
+     *
+     *    If in kilograms mode, convert into pounds for processing.
+     *
+     C                   if        KiloLbs = 'K'
+     C                   eval(h)   cnvwgt = w1dwgt * kgs2lbs
+     C                   else
+     C                   eval      cnvwgt = w1dwgt
+     C                   endif
+
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZCHK1   Screen 1 error checking.
+     *
+     C     zzchk1        begsr
+     *   OAOVR = Manufacture date override, Caluclated exp date
+     *           comes before existing overflow exp date. (PO13233)
+     *   OBOVR = Manufacture date override, Manufacture date entered
+     *           is greater than today.(PIR1010)
+     *   OCOVR = Expiration date override, Expiration date is greater
+     *           than allowed # of days out. (PO13243)
+     *   ODOVR = Use by date override, Not enough user/dist days to
+     *           sell before expiration date (PO13229)
+     *   OEOVR = Mfg date override, Not enough user/dist days to
+     *           sell before calculated expiration date (PO13228)
+     *   OFOVR = Expiration date override, Expiration date entered
+     *           comes before existing overflow exp date. (PO13231)
+     *   DDCODE= Invalid Date returned from the Decipher progrmas
+     *   CWOVR = Weight error override taken.
+     *   PTIOVR= PTI override taken.
+     *   DTCHK, QTCHK, WTCHK Flags are used to force F20 for each test
+     *   DTCHK2 DTCHK3, DTCHK4,UPCHK2 PTICHK
+     *   QTCHK1
+     *   Values: Flag = 0 Do check.
+     *           Flag = 1 Check was done, ok.
+     *           Flag = 2 Warning condition.
+     *
+      /free
+        error = *off;
+        // user has checked override do not display checkbox again
+        if pNDqtchkw = 'N' and pqtchkw = 'Y';
+          pNDqtchkw = 'Y';
+        endif;
+        if pNDqtchk1w = 'N' and pqtchk1w = 'Y';
+          pNDqtchk1w = 'Y';
+        endif;
+        if pNDdtchkw = 'N' and pdtchkw = 'Y';
+          pNDdtchkw = 'Y';
+        endif;
+        if pNDdtchk2w = 'N' and pdtchk2w = 'Y';
+          pNDdtchk2w = 'Y';
+        endif;
+        if pNDdtchk3w = 'N' and pdtchk3w = 'Y';
+          pNDdtchk3w = 'Y';
+        endif;
+        if pNDdtchk4w = 'N' and pdtchk4w = 'Y';
+          pNDdtchk4w = 'Y';
+        endif;
+        if pNDwtchkw = 'N' and pwtchkw = 'Y';
+          pNDwtchkw = 'Y';
+        endif;
+        if pNDptichkw = 'N' and pptichkw = 'Y';
+          pNDptichkw = 'Y';
+        endif;
+        exsr zzrcvpocheck;
+      /end-free
+     *  Extract UPC code from entered string.
+     *
+     C                   if        w1upcd <> *blanks
+     C                   eval      $cbcmd = '*UPC    '
+     C                   eval      $cbbar = w1upcd
+     *
+     C                   call      'CVTBAR'
+     C                   parm                    $cbcmd            8
+     C                   parm                    $cbbar          100
+     C                   parm                    $cbcod            3 0
+     C                   parm                    $cbdec            1 0
+     C                   parm                    $cbdsc           30
+     C                   parm                    $cbpos            3 0
+     C                   parm                    $cbtyp            1 0
+     C                   parm                    $cbv1            11 3
+     C                   parm                    $cbv2            50
+     C                   parm                    $cbrtn            8
+     C                   parm                    $cberm           60
+     *
+     C                   movel     $cbv2         $cstr
+     C                   call      'ADJUST'
+     C                   parm      '*RIGHT  '    $ccmd             8
+     C                   parm                    $cstr            30
+     C                   eval      w1upc = *blanks
+     C                   move      $cstr         w1upc
+     C                   endif
+      /free
+        // Do UPC Check
+        if w1upcd <> *blanks  and
+           $pupc = *blanks;
+          if svupc <> w1upcd;
+            upchk = *off;
+            upchk2 = *off;
+          endif;
+
+          if client = yhata;
+            if upchk <> '2'  and
+               ovrrid = *on;
+              upchk = *on;
+            endif;
+          else;
+            if upchk <> '2'  and
+               ovrrid = *on  and
+               $cbrtn <> '*INVALID';
+              upchk = *on;
+            endif;
+            // Allow invalid UPC code to be entered.
+            if client = saval;
+              upchk = *on;
+            endif;
+          endif;
+      /end-free
+     *
+     C                   if        upchk <> '1'
+     C                   eval      upchk = *on
+     *
+     *  MOVED CODE TO EXTRACT UPC CODE FROM ENTERED STRING
+
+     C                   select
+     *
+     C                   when      $cbrtn = '*OK'
+     *
+     C                   other
+     C                   eval      error = *on
+     C                   eval      *in26 = *on
+     C                   eval      *in06 = *on
+     C                   movel     $cberm        errmsg
+     C                   endsl
+     *
+      /free
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     *
+     *   Right adjust UPC code.
+     *
+     *   Allow multiple upc for whse/item, must be different vendor.
+     *   No longer need to check if UPC exists for WHSE/ITEM/UPC
+     C                   endif
+     *
+     C                   if        upchk2 = '0'  and
+     C                             ovrrid = *on
+     C                   eval      ovrrid = *off
+     C                   endif
+     C                   if        client = finkle and
+     C                             upchk2 <> '2'  and
+     C                             ovrrid = *on
+     C                   eval      upchk2 = '0'
+     C                   else
+     C                   if        upchk2 <> '2'  and
+     C                             ovrrid = *on
+     C                   eval      upchk2 = *on
+     C                   endif
+     C                   endif
+     *
+      /free
+        if upchk2 <> '1';
+          upchk2 = *on;
+          // error - upc code exists for item/vendor
+          if w1upcd <> *blanks  and $pupc = *blanks;
+            chain (pwhse: pPOitem: phven) upc1;
+            if %found(upc1) and upupc <> w1upc;
+              error = *on;
+              pMessage = '';
+              pMessage = 'UPC exists';
+            endif;
+          endif;
+          if error;
+            exsr zzsave;
+            leavesr;
+          endif;
+        endif;
+      /end-free
+     *
+     *  Verify normal quantity.
+     *
+      /free
+        if w1qrc1 = 0  and
+           w1qrc2 = 0  and
+           w1qrc3 = 0;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Quantity Received must be entered';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+      /free
+        if w1qrc1 < 0  or
+           w1qrc1 > 99999;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Normal Quantity Received must be 0 - 99999';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *  Verify breakdown 1 unit of measure quantity.
+     *
+      /free
+        if w1qrc2 < 0  or
+           w1qrc2 > 99999;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Breakdown 1 quantity Received must be 0 - 99999';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *  Verify breakdown 2 unit of measure quantity.
+     *
+      /free
+        if w1qrc3 < 0  or
+           w1qrc3 > 99999;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Breakdown 2 quantity Received must be 0 - 99999';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *  Verify # of Pallets.
+     *
+      /free
+        // pallet verification is not done on pick slot receiving
+        // pallet verification is not done on directed putaway
+        // pallet verification is not done on cross dock
+        select;
+          when ppsrusr = 'Y';
+          when psrcvreq = 'Y';
+          when xdockflg = 'Y';
+          when directed = 'Y';
+          other;
+            if w1plts <= 0  or w1plts > 999;
+              error = *on;
+              pMessage = '';
+              pMessage = 'Valid range for Number of pallets is 1 to 999';
+              exsr zzsave;
+              leavesr;
+            endif;
+        endsl;
+      /end-free
+     *
+     *  Verify fifo if needed.
+     *
+      /free
+        if NDFifo = ' ' and w1fifo = 0;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Fifo Date must be entered';
+          leavesr;
+        endif;
+        // THIS IS TURNED OFF TEMPORARILY FOR FIRST ROUND MRC RECEIVING
+        // pti check
+            // calculate the PTI.
+            if $pbclot <> ' ' and $pgtin <> ' ' and *in73 = *off;
+              if w1pti = 0;
+                error = *on;
+                pMessage = '';
+                pMessage = 'PTI must be greater than 0';
+              endif;
+            endif;
+      /end-free
+      /free
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *  Verify FIFO (entered) date.
+     *
+     c                   if        NDFifo  = ' ' and
+     C                             w1fifo <> 0
+     C                   eval      $cvcmd = '*MDYEDT '
+     C                   move      w1fifo        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+      /free
+        if $cvrtn = '*PGMQ   ';
+          error = *on;
+          pMessage = '';
+          pMessage = 'Invalid Date Entered';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   eval      w1fifo = $cvd6o
+     C                   endif
+     *
+     *  Verify expiration date.
+     *
+     C                   if        NDexpd = ' ' and
+     C                             w1exdt = 0
+     C                   eval      error = *on
+      /free
+        pMessage = 'Expiration Date is required';
+      /end-free
+     C                   else
+     *  Moved code here to calculate CKEXDT
+     *  Verify Expiration date is within parameter (# of days out)     days)
+     *  Calculate (Today + # days out)  = CHEXDT                       days)
+     *
+
+     C                   if        client = glazier
+     C                   z-add     $itslif       $imoday
+     C                   endif
+     C                   call      'CLCDUR2'
+     C                   parm      '*ADD'        $cdcmd
+     C                   parm      today         $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $imoday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     ckexdt        parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     C                   if        w1exdt <> 0
+     C                   eval      $cvcmd = '*MDYEDT '
+     C                   move      w1exdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   if        $cvrtn = '*PGMQ   '
+     C                   eval      error = *on
+     C                   eval      pMessage = $cvmsg
+      /free
+        exsr zzsave;
+        leavesr;
+      /end-free
+     C                   else
+     C                   eval      w1exdt = $cvd6o
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        expd
+     C                   move      $cvd8o        woexdt
+     *  check expiration date enter to make sure it is greater than today.
+      /free
+        if expd <= today;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Date must be greater than today';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *  Code to calculate CKEXDT was moved from here to above.
+     *
+     *
+     *  Verify Use by date.                                            days)
+     *  Calculate (Today + Dist Days)  = DATE1                         days)
+     *  Calculate  (Use By - User Days) = DATE2                        days)
+     *
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*ADD'        $cdcmd
+     C                   parm      today         $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $imdday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     date1         parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     C                   if        $immflg = 'Y'
+     C                   eval      date2 = expd
+     C                   else
+     C                   if        client = Glazier
+     C                   eval      $imuday = *zeros
+     C                   endif
+     C                   call      'CLCDUR2'
+     C                   parm      '*SUB'        $cdcmd
+     C                   parm      expd          $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $imuday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     date2         parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+     C                   endif
+
+     *
+     C                   move      date2         $cvd8i
+     C                   eval      $cvcmd = '*CMDMDY '
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd6o        date2o
+     *
+     C                   endif
+     C                   endif
+     C                   endif
+     ***
+     *  Verify Expire date and # of days out                           days)
+     *  Allow warning and override                                     days)
+     C                   if        expd <> 0
+      /free
+        if svexdt <> w1exdt;
+          dtchk = *off;
+          ocovr = *off;
+        endif;
+      /end-free
+     *
+     C                   if        dtchk = '2'  and
+     C                             pdtchkw = 'Y'
+     c                   eval      pNDdtchkw = 'Y'
+     C                   if        client = Glazier
+      * taken out client No longer using our software.
+     C*                  exsr      zzpwd
+      /free
+        if $prtn = '*NO';
+          pdtchkw = ' ';
+          error  = *on;
+          exsr zzsave;
+          leavesr;
+        else;
+          error = *on;
+          dtchk = '2';
+          warn = *on;
+          erused = w1exdt;
+          erdisd = $imoday;
+          pMessage = '';
+          pMessage = 'Item cannot be accepted - Expiration date';
+          pNDdtchkw = 'N';
+700aA     // setof all other data check boxes
+700aA     pNDdtchk2w = 'Y';
+700aA     pNDdtchk3w = 'Y';
+700aA     pNDdtchk4w = 'Y';
+          pdtchkw = ' ';
+700aA     exsr zzsave;
+700aA     leavesr;
+        endif;
+      /end-free
+     c                   endif
+     C                   eval      ocovr = *on
+     C                   eval      dtchk = *on
+     C                   endif
+     *
+     C                   if        dtchk <> '1'
+     C                   eval      dtchk = *on
+     *
+     *   If EXPD > /CKEXDT - Reject.
+     *
+      /free
+        if expd > ckexdt;
+          error = *on;
+          dtchk = '2';
+          warn = *on;
+          erused = w1exdt;
+          erdisd = $imoday;
+          if client <> glazier;
+            pMessage = '';
+            pMessage = 'Item cannot be accepted - Expiration date';
+            pNDdtchkw = 'N';
+700aA       // setof all other date check boxes
+700aA       pNDdtchk2w = 'Y';
+700aA       pNDdtchk3w = 'Y';
+700aA       pNDdtchk4w = 'Y';
+          else;
+            erdisd = $itslif;
+            pMessage = '';
+            pMessage = 'Days exceed Total Shelf life';
+            pNDdtchkw = 'N';
+700aA       pNDdtchk2w = 'Y';
+700aA       pNDdtchk3w = 'Y';
+700aA       pNDdtchk4w = 'Y';
+          endif;
+        endif;
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     C                   endif
+     C                   eval      expd = date2
+     C                   endif
+     *
+     *
+     *  Verify Use by date.                                            days)
+     C                   if        expd <> 0
+     C                   if        svexdt <> w1exdt
+     C                   eval      dtchk3 = *off
+     C                   endif
+     *
+     C                   if        dtchk3 = '2'  and
+     C                             pdtchk3w = 'Y'
+     c                   eval      pNDdtchk3w = 'Y'
+     C                   if        client = Glazier
+      * taken out client no longer using our software
+     C*                  exsr      zzpwd
+     C                   if        $prtn = '*NO'
+     C                   eval      pdtchk3w = ' '
+     C                   eval      error  = *on
+     C                   eval      dtchk3 = '2'
+     C                   eval      warn = *on
+     C                   eval      erused = w1exdt
+     C                   eval      erdisd = $imdday
+     C                   eval      erusrd = $imuday
+     C                   eval      ersell = date2o
+      /free
+        pMessage = '';
+        pMessage = 'Item cannot be accepted - Use by date';
+        pNDdtchk3w = 'N';
+700aA   pNDdtchk2w = 'Y';
+700aA   pNDdtchkw = 'Y';
+700aA   pNDdtchk4w = 'Y';
+        exsr zzsave;
+        leavesr;
+      /end-free
+     C                   endif
+     C                   endif
+     C                   eval      odovr = *on
+     C                   eval      dtchk3 = *on
+     C                   endif
+     *
+     C                   if        dtchk3 <> '1'
+     C                   eval      dtchk3 = *on
+     *
+     *   If DATE2 <= Date1 - Reject.
+     *
+      /free
+        if date2 <= date1;
+          error = *on;
+          dtchk3 = '2';
+          warn = *on;
+          erused = w1exdt;
+          erdisd = $imdday;
+          erusrd = $imuday;
+          ersell = date2o;
+          pMessage = '';
+          pMessage = 'Item cannot be accepted - Use by date';
+          pNDdtchk3w = 'N';
+700aA     pNDdtchk2w = 'Y';
+700aA     pNDdtchkw = 'Y';
+700aA     pNDdtchk4w = 'Y';
+        endif;
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     C                   endif
+     C                   eval      expd = date2
+     C                   endif
+     *  Change to use DTCHK4 for override                                  )
+     C                   if        svmfdt <> w1mfdt
+     C                   eval      dtchk4 = *off
+     C                   endif
+     *
+     C                   if        dtchk4 = '2'  and
+     C                             pdtchk4w = 'Y'
+     c                   eval      pNDdtchk4w = 'Y'
+     C                   if        client = Glazier
+      * taken out client no longer using our software
+     C*                  exsr      zzpwd
+      /free
+        if $prtn = '*NO';
+          pdtchk4w = ' ';
+          error  = *on;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     C                   if        mfgd > today
+     C                   eval      obovr = *on
+     C                   endif
+     C                   if        client = yhata  and
+     C                             mfgd = today
+     C                   eval      obovr = *on
+     C                   endif
+     C                   if        today > ltstd8
+     C                   eval      oeovr = *on
+     C                   endif
+     C                   eval      dtchk4 = *on
+     C                   endif
+     C                   if        dtchk4 <> '1'
+     C                   eval      dtchk4 = *on
+     *
+     *
+     *  Verify manufacturing date.
+     *
+     C                   select
+     C                   when      $immflg = 'Y'
+     C                   if        w1mfdt = 0
+     C                   eval      error = *on
+     C                   eval      dtchk4 = *off
+     C                   eval      obovr = *off
+      /free
+        pMessage = '';
+        pMessage = 'Manufacturing Date is required';
+        return;
+      /end-free
+     C                   else
+     C                   if        w1mfdt <> 0
+     C                   eval      $cvcmd = '*MDYEDT '
+     C                   move      w1mfdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   if        $cvrtn = '*PGMQ   '
+     C                   eval      error = *on
+     C                   eval      dtchk4 = *off
+     C                   eval      obovr = *off
+      /free
+        pMessage = '';
+        pMessage = 'Invalid Date Entered';
+        return;
+      /end-free
+      /free
+          exsr zzsave;
+          leavesr;
+      /end-free
+     C                   else
+     C                   eval      w1mfdt = $cvd6o
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        mfgd
+     C                   if        mfgd > today
+     C                   eval      error = *on
+     C                   eval      dtchk4 = *off
+     C                   eval      obovr = *off
+      /free
+        pMessage = '';
+        pMessage = 'Date must be less than or equal to today';
+        return;
+      /end-free
+     C                   endif
+     C                   if        client = yhata  and
+     C                             mfgd = today
+     C                   eval      error = *on
+     C                   eval      dtchk4 = '2'
+     C                   eval      obovr = *off
+      /free
+        pMessage = '';
+        pMessage = 'Date must be less than today';
+        return;
+      /end-free
+     C                   endif
+     C                   endif
+     C                   endif
+     C                   endif
+     *
+      /free
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *  Calculate Expiration date.(Mfg date + Mfg Shelf life days-User days)
+     *
+
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1mfdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        expd
+
+     C                   if        client = Glazier
+     *  Create expiration date mfgdate + mfg shelf life days
+     *      instead of mfgdata + mfg shelf life days - User days
+     C                   eval      $imuday = *zeros
+     C                   endif
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*ADD'        $cdcmd
+     C                   parm      expd          $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $immday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C                   parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*SUB'        $cdcmd
+     C                   parm      $cddateout    $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $imuday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     expd          parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     C                   eval      $cvcmd = '*CMDMDY '
+     C                   move      expd          $cvd8i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd6o        w1exdt
+
+     *
+     *  Find the latest acceptable date.: Exp date -Dist days
+     *
+
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1exdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        ltstd8
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*SUB'        $cdcmd
+     C                   parm      ltstd8        $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $imdday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     ltstd8        parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     C                   eval      $cvcmd = '*CMDMDY '
+     C                   move      ltstd8        $cvd8i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd6o        ltstd6
+
+     *
+     *   If Today's date is > Latest acceptable date - Reject.
+     *
+     C                   if        client = Glazier
+     c                   eval      netdays = $immday - $imdday
+     C                   call      'CLCDUR2'
+     C                   parm      '*SUB'        $cdcmd
+     C                   parm      today         $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      netdays       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     glzmfd        parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+     C                   endif
+     C                   select
+     *   For Glazier mfg date < today - dist days
+     C                   when      client = Glazier and
+     C                             mfgd < glzmfd
+     C                   eval      error = *on
+     C                   eval      oeovr = *off
+     C                   eval      dtchk4 = '2'
+     C                   eval      warn = *on
+     C                   z-add     $immday       ermday
+     C                   z-add     w1mfdt        ermfdt
+     C                   z-add     w1exdt        erexdt
+     C                   z-add     ltstd6        erltst
+     C                   z-add     $imdday       erdday
+     C                   z-add     $imuday       eruday
+      /free
+        pMessage = '';
+        pMessage = 'Not enough Shelf Life Remaining';
+        pNDdtchk4w  = 'N';
+700aA   pNDdtchk2w = 'Y';
+700aA   pNDdtchkw = 'Y';
+700aA   pNDdtchk3w = 'Y';
+      /end-free
+     C                   eval      w1exdt = 0
+     C                   eval      expd = *zeros
+     *   For Glazier today's date is = expiration date
+     C                   when      client = Glazier and
+     C                             today = mfgd
+     *   For Glazier mfg date < today - dist days
+     C                   eval      error = *on
+     C                   eval      oeovr = *off
+     C                   eval      dtchk4 = '2'
+     C                   eval      warn = *on
+     C                   z-add     $immday       ermday
+     C                   z-add     w1mfdt        ermfdt
+     C                   z-add     w1exdt        erexdt
+     C                   z-add     ltstd6        erltst
+     C                   z-add     $imdday       erdday
+     C                   z-add     $imuday       eruday
+      /free
+        pMessage = '';
+        pMessage = 'Production date must be prior to today';
+        pNDdtchk4w  = 'N';
+700aA   pNDdtchk2w = 'Y';
+700aA   pNDdtchkw = 'Y';
+700aA   pNDdtchk3w = 'Y';
+      /end-free
+     C                   eval      w1exdt = 0
+     C                   eval      expd = *zeros
+     C                   when      today > ltstd8
+     C                   eval      error = *on
+     C                   eval      oeovr = *off
+     C                   eval      dtchk4 = '2'
+     C                   eval      warn = *on
+     C                   z-add     $immday       ermday
+     C                   z-add     w1mfdt        ermfdt
+     C                   z-add     w1exdt        erexdt
+     C                   z-add     ltstd6        erltst
+     C                   z-add     $imdday       erdday
+     C                   z-add     $imuday       eruday
+     c                   Select
+     c                   when      client = yhata
+      /free
+        pMessage = '';
+        pMessage = 'Item cannot be accepted - Mfg date';
+        pNDdtchk4w  = 'N';
+700aA   pNDdtchk2w = 'Y';
+700aA   pNDdtchkw = 'Y';
+700aA   pNDdtchk3w = 'Y';
+      /end-free
+     C                   other
+      /free
+        pMessage = '';
+        pMessage = 'Not enough Shelf Life Remaining';
+        pNDdtchk4w  = 'N';
+700aA   pNDdtchk2w = 'Y';
+700aA   pNDdtchkw = 'Y';
+700aA   pNDdtchk3w = 'Y';
+      /end-free
+     C                   endsl
+     C                   eval      w1exdt = 0
+     C                   eval      expd = *zeros
+     C                   endsl
+     C                   endsl
+     *
+      /free
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     *
+     *   Check for ealier expiration dates (optional)                  days)
+     *
+     *     See if we can skip the check.                               days)
+     *
+     C                   if        w1exdt = 0  or
+     C                             svexck <> '2'  and
+     C                             svexck <> '3'
+     C                   goto      skpxck
+     C                   endif
+     *
+     *     Set warning check flag.                                     days)
+     *
+     C                   if        svexdt <> w1exdt
+     C                   eval      dtchk2 = *off
+     C                   eval      oaovr = *off
+     C                   eval      ofovr = *off
+     C                   endif
+     *
+     C                   if        dtchk2 = '2'  and
+     C                             pdtchk2w = 'Y'
+     c                   eval      pNDdtchk2w = 'Y'
+     C                   if        client = Glazier
+      * taken out client no longer using our software.
+     C*                  exsr      zzpwd
+      /free
+        if $prtn = '*NO';
+          error = *on;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     C                   if        $immflg = 'Y'
+     C                   eval      oaovr = *on
+     C                   else
+     C                   eval      ofovr = *on
+     C                   endif
+     C                   eval      dtchk2 = *on
+     C                   goto      skpxck
+     C                   endif
+     *
+     C     dtchk2        cabeq     '1'           skpxck
+     *
+     *     Do actual check                                             days)
+     *
+     C                   eval      dtchk2 = *on
+     *
+     *       Get date range of overflow slots.
+     *
+     C                   call      'GETEXPD'
+     C                   parm      pwhse         $swhse            3 0
+     C                   parm                    #sitem
+     C                   parm                    $dfrom            8 0
+     C                   parm                    $dto              8 0
+     c                   eval      $dtosave = $dto
+     *
+     *       If date comes after end of range
+     *         Then date can be recevied so skip the rest of the check
+     *
+     C                   if        expd >= $dto
+     C                   goto      skpxck
+     C                   endif
+     *
+     *       Otherwise, see if it's an error or warning.
+     *
+     *         '1' = Allow Let it go through
+     *         '2' = Error (not allowed)
+     *         '3' = Warning.
+     *
+     C                   eval      error = *on
+     C                   if        $immflg = 'Y'
+     C                   else
+     C                   endif
+     C                   eval      erentd = expd
+     C                   eval      ertod = $dto
+     C                   select
+     C                   when      svexck = '2'
+     C                   eval      dtchk2 = *off
+      /free
+        if $immflg = 'Y';
+          pMessage = '';
+          pMessage = 'Item cannot be accepted - +
+                      Calculated Expiration Date';
+        else;
+          pMessage = '';
+          pMessage = 'Item cannot be accepted - Expiration date';
+        endif;
+      /end-free
+     C                   when      svexck = '3'
+     C                   eval      dtchk2 = '2'
+     C                   eval      warn = *on
+      /free
+        if $immflg = 'Y';
+          oaovr = *on;
+          pMessage = '';
+          pMessage = 'Warning: Earlier calculated expiration date';
+          pNDdtchk2w = 'N';
+700aA   pNDdtchk4w = 'Y';
+700aA   pNDdtchkw = 'Y';
+700aA   pNDdtchk3w = 'Y';
+        else;
+          ofovr = *on;
+          pMessage = '';
+          pMessage = 'Warning: Earlier expiration date';
+          pNDdtchk2w = 'N';
+700aA     pNDdtchk4w = 'Y';
+700aA     pNDdtchkw = 'Y';
+700aA     pNDdtchk3w = 'Y';
+        endif;
+      /end-free
+     C                   endsl
+     *
+      /free
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     C     skpxck        tag
+      // THIS IS TURNED OFF TEMPORARILY FOR FIRST ROUND MRC RECEIVING
+      * pti check
+      /free
+        // calculate the PTI.
+        if $pbclot <> ' ' and $pgtin <> ' ' and *in73 = *off;
+          pplot  = %subst($pbclot: 1 : 20);
+          calcpti ($pgtin: pplot: $pbcProdD: pppti);
+          if svpti <> w1pti;
+            ptichk = *off;
+          endif;
+          if ptichk = '2' and
+             ovrrid = *on;
+             ptiovr = *on;
+             ptichk = *on;
+          endif;
+          if ptichk <> '1';
+            ptichk = *on;
+            if w1pti <> pppti
+              and ptiovr <> '1';
+              // recalc pti without production date
+              calcpti ($pgtin: pplot: ptinodate: pppti);
+              if w1pti <> pppti;
+                error = *on;
+                ptichk = '2';
+                warn = *on;
+                pMessage = '';
+                pMessage = 'Warning: PTI does not match calculated PTI +
+                          from barcode';
+              endif;
+            endif;
+          endif;
+        endif;
+      /end-free
+      /free
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *
+     *  Always error if catchweight is negative
+     *
+      /free
+        if w1dwgt < 0;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Negative catchweight entered. '
+                   + 'Catchweight must be greater than zero.';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *  See if we need to verify catch weight.
+     *
+     C     vrfycw        cabeq     *off          skipcw
+     *
+     *  CW can't be zero if forced entry is selected.
+     *
+     *    One exception for 'First time only' entry with Avg = 'Y'
+     *
+      /free
+        if svcwfr = 'Y'  and
+           w1dwgt = 0;
+          if svcwen = '1'  or
+             svcwen = '2'  and
+             w1avg <> 'Y';
+            error = *on;
+            pMessage = '';
+            pMessage = 'Catch Weight must be greater than 0';
+            exsr zzsave;
+            leavesr;
+          endif;
+        endif;
+      /end-free
+     *
+     *  Verify Catch weight average  (Y/N).
+     *
+     C                   if        w1avg <> 'Y'  and
+     C                             w1avg <> 'N'
+     C                   eval      error = *on
+     C                   endif
+     *
+     *  When 'First time only' entry with Avg = 'Y'
+     *    Then catch weight must be zero.
+     *
+      /free
+        if svcwen = '2'  and
+           w1avg = 'Y'  and
+           w1dwgt <> 0;
+          error = *on;
+          pMessage = '';
+          pMessage = 'CW must be zero when +
+                     doing average for "First time only" +
+                     CW entry';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *
+     *  When more than one qty is entered, catch weight average must be N
+     *
+     *    One exception for 'First time only' entry with Avg = 'Y'
+     *
+     C                   select
+     C                   when      w1qrc1 <> 0  and
+     C                             w1avg = 'Y'  and
+     C                             svcwen <> '2'
+      /free
+        if w1qrc2 <> 0  or
+           w1qrc3 <> 0;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Catch weight average cannot be checked';
+          return;
+        endif;
+      /end-free
+     *
+     C                   when      w1qrc2 <> 0  and
+     C                             w1avg = 'Y'  and
+     C                             svcwen <> '2'
+      /free
+        if w1qrc1 <> 0  or
+           w1qrc3 <> 0;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Catch weight average cannot be checked';
+          return;
+        endif;
+      /end-free
+     *
+     C                   when      w1qrc3 <> 0  and
+     C                             w1avg = 'Y'  and
+     C                             svcwen <> '2'
+      /free
+        if w1qrc1 <> 0  or
+           w1qrc2 <> 0;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Catch weight average cannot be checked';
+          return;
+        endif;
+      /end-free
+     *
+     C                   endsl
+     *
+     *
+     *  Skip catch weight variance check when ...
+     *    "First time only" entry
+     *
+     C                   if        svcwen = '2'
+     *      Skip variance check once qty has been received for item.
+     C                             and (pdqrc1 > 0
+     C                             or   pdqrc2 > 0
+     C                             or   pdqrc3 > 0)
+     C
+     C                   goto      skipcw
+     C                   endif
+     *
+     *
+     *  Catch weight variance check.
+     C                   if        svdwgt <> w1dwgt
+     C                   eval      wtchk = *off
+     C                   endif
+     *
+     C                   select
+     C                   when      client = Dairyland
+     C                   if        wtchk = '2'  and
+     C                             pwtchkw = 'Y'
+     c                   eval      pNDwtchkw = 'Y'
+     c                   eval      cwovr = *on
+     C                   eval      wtchk = *on
+     C                   endif
+     C                   other
+     C                   if        wtchk = '2'  and
+     C                             pwtchkw = 'Y'
+     c                   eval      pNDwtchkw = 'Y'
+     c                   eval      cwovr = *on
+     C                   eval      wtchk = *on
+     C                   endif
+     C                   endsl
+     *
+     C                   if        wtchk <> '1'
+     C                   eval      wtchk = *on
+     *   If catch weight >0,
+     *     Calculate total expected catch weight,
+     *     Calculate low/high ranges.
+     C                   if        w1dwgt <> 0
+     C                   eval      lwvar = 0
+     C                   eval      hivar = 0
+     C                   eval      lwrng = 0
+     C                   eval      hirng = 0
+     C                   eval      exwgt = 0
+     C                   eval      ilvar = 0
+     C                   eval      ihvar = 0
+     C                   eval      ilrng = 0
+     C                   eval      ihrng = 0
+     C                   eval      hostcw0 = 0
+     C                   eval      hostcw2dec = 0
+     *
+     C                   if        w1avg = 'Y'
+     C                   eval      exwgt = $itswgt
+     C                   eval      wotcw = cnvwgt
+     C                   else
+     C                   if        svcwen = '2'
+     C     pdqor1        mult      $itswgt       exwgt
+
+     * If specific client, use imported c/w value for variance checking if
+     * it's numeric, otherwise, use standard comparison tests.
+
+     C                   eval      hostUnitWgt  = 0
+     C                   eval      rcvUnitWgt  = 0
+
+     C                   select
+     C                   when      client = Dairyland
+     C                   eval      hostcwa = %subst(pdmms1:9:7)
+     C     digits        check     hostcwa                                68
+     C                   if        *in68 = *off
+     C                   eval      hostcw0 = %dec(%subst(pdmms1:9:7):7:0)
+     C                   move      hostcw0       hostcw2dec
+
+     C                   eval      qtyord  = 0
+     C                   eval      qtyord1 = 0
+     C                   eval      qtyord2 = 0
+     C                   eval      qtyord3 = 0
+
+     C                   if        pdqor1 > 0
+     C                   eval      qtyord1 = pdqor1
+     C                   if        $itumq2 > 0
+     C                   eval      qtyord1 = qtyord1 * $itumq2
+     C                   endif
+     C                   if        $itumq3 > 0
+     C                   eval      qtyord1 = qtyord1 * $itumq3
+     C                   endif
+     C                   endif
+
+     C                   if        pdqor2 > 0
+     C                   eval      qtyord2 = pdqor2
+     C                   if        $itumq3 > 0
+     C                   eval      qtyord2 = qtyord2 * $itumq3
+     C                   endif
+     C                   endif
+
+     C                   if        pdqor3 > 0
+     C                   eval      qtyord3 = pdqor3
+     C                   endif
+
+     C                   eval      qtyord = qtyord1 + qtyord2 + qtyord3
+
+     C                   eval      exwgt = 0
+     C                   eval      qtyrcv = 0
+     C                   eval      qtyrcv1 = 0
+     C                   eval      qtyrcv2 = 0
+     C                   eval      qtyrcv3 = 0
+
+     C                   if        w1qrc1 > 0
+     C                   eval      qtyrcv1 = w1qrc1
+     C                   if        $itumq2 > 0
+     C                   eval      qtyrcv1 = qtyrcv1 * $itumq2
+     C                   endif
+     C                   if        $itumq3 > 0
+     C                   eval      qtyrcv1 = qtyrcv1 * $itumq3
+     C                   endif
+     C                   endif
+
+     C                   if        w1qrc2 > 0
+     C                   eval      qtyrcv2 = w1qrc2
+     C                   if        $itumq3 > 0
+     C                   eval      qtyrcv2 = qtyrcv2 * $itumq3
+     C                   endif
+     C                   endif
+
+     C                   if        w1qrc3 > 0
+     C                   eval      qtyrcv3 = w1qrc3
+     C                   endif
+
+     C                   eval      qtyrcv = qtyrcv1 + qtyrcv2 + qtyrcv3
+
+     C                   eval      hostUnitWgt = hostcw2dec / qtyord
+     C                   eval      rcvUnitWgt = w1dwgt / qtyrcv
+     C                   eval      wgtDiff = hostUnitWgt - rcvUnitWgt
+     C                   eval      caltol1 = %abs(wgtDiff) / hostUnitWgt
+
+     C                   if           pdqor2 > 0 or pdqor3 > 0
+     C                             or w1qrc2 > 0 or w1qrc3 > 0
+     C                   eval      qtyDiff  = qtyord - qtyrcv
+     C                   eval      caltol2  = %abs(qtyDiff) / qtyord
+     C                   endif
+
+     C                   else
+     C     w1qrc1        mult      $itswgt       exwgt
+     C                   endif
+     C                   endsl
+
+     C                   else
+     C     w1qrc1        mult      $itswgt       exwgt
+     C                   endif
+     C                   eval      wotcw = cnvwgt
+     C                   endif
+     *
+     **   Iniz. flag used to skip variance check if = *ON.
+     C                   eval      lvskp = *off
+     C                   eval      hvskp = *off
+     *
+     **   Iniz. fields used to hold low/high variance.
+     C                   eval      prg1c = 0
+     C                   eval      prg2c = 0
+     **   Use item variance % if it exists
+     *
+     C                   if        $imrg1c <> 0
+     C     $imrg1c       div       100           prg1c
+     C                   if        $imrg1c = 99
+     C                   eval      lvskp = *on
+     C                   endif
+     C                   endif
+     *
+     C                   if        $imrg2c <> 0
+     C     $imrg2c       div       100           prg2c
+     C                   if        $imrg2c = 99
+     C                   eval      hvskp = *on
+     C                   endif
+     C                   endif
+     *
+     *
+     C                   if        prg1c = 0
+     C     oprg1c        div       100           prg1c
+     C                   endif
+     C                   if        prg2c = 0
+     C     oprg2c        div       100           prg2c
+     C                   endif
+     *
+     *     Don't do following extended weight calcs if you're using
+     *     Dairyland's imported c/w method for comparing wgt tolerance.
+     C                   select
+     C                   when      hostcw2dec = 0
+     *
+     C                   if        prg1c > 0
+     C     exwgt         mult      prg1c         lwvar
+     C                   eval      ilvar = $itswgt * prg1c
+     C                   endif
+     C                   eval      lwrng = exwgt - lwvar
+     C                   eval      ilrng = $itswgt - ilvar
+     C                   if        prg2c > 0
+     C     exwgt         mult      prg2c         hivar
+     C                   eval      ihvar = $itswgt * prg2c
+     C                   endif
+     C     exwgt         add       hivar         hirng
+     C     $itswgt       add       ihvar         ihrng
+     *
+     C                   endsl
+     C                   endif
+     *
+     *     Check CW variance if CW > 0
+     C                   if        w1dwgt > 0
+     C                   if        hostcw2dec > 0
+     *     Use Dairyland's tests for comparing wgt and qty tolerances.
+     C                   exsr      zzchkt1
+     C                   else
+     C                   exsr      zzchkt
+     C                   endif
+     C                   endif
+      /free
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     *
+     C     skipcw        tag
+     *
+     *
+     *    Make sure slot is valid.
+     *
+     C                   if        w1slot <> *blanks
+      /free
+        chain (pwhse: $itwhdp: w1slot) slot2;
+        // Slot Doesn't exist
+        if not %found(slot2);
+          error = *on;
+          pMessage = '';
+          pMessage = 'Slot does not exist';
+          exsr zzsave;
+          leavesr;
+         endif;
+      /end-free
+     *
+     *      Slot occupied by different item.
+     *
+      /free
+        if slstat <> 'Z'  and
+           slitem <> ' '  and
+           slitem <> pPOitem;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Slot is occupied with different item';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *      Slot is a zero slot.
+     *
+      /free
+        if slstat = 'Z';
+          error = *on;
+          pMessage = '';
+          pMessage = 'Slot is a zero slot. It must be verified first';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     *
+     *      Status is not allowed can't be A,V or Z
+     *
+      /free
+        if w1stat =  'A '  or
+           w1stat = 'V '   or
+           w1stat = 'Z ';
+          error = *on;
+          pMessage = '';
+          pMessage = 'Status, cannot be A, V, or Z';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+     *      Print oss license valid only if oss code is sent
+     *
+      /free
+        if osscode = ' '  and
+           ossprint = 'Y';
+          error = *on;
+          pMessage = '';
+          pMessage ='Outside storage must be selected to print Licenses';
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     *
+      /free
+        if pNDqtchk1w <> 'Y';
+          pNDqtchk1w = ' ';
+        endif;
+      /end-free
+     C                   if        client = sgc
+     C*  Error if pallet qty > tie/hi qty.
+     C                   z-add     0             maxqty
+     C     $imtie        mult      $imhigh       maxqty
+     C                   if        w1qrc1 > 0
+     C     w1qrc1        div       w1plts        ckqrc1
+     C                   endif
+     C                   if        w1qrc2 > 0
+     C     w1qrc2        div       w1plts        ckqrc1
+     C                   endif
+     C                   if        svckq1 <> ckqrc1
+     C                   eval      qtchk1 = *off
+     C                   endif
+     *
+     C                   if        qtchk1 = '2'  and
+     C                             pqtchk1w = 'Y'
+     c                   eval      pNDqtchk1w = 'Y'
+     C                   eval      qtchk1 = *on
+     C                   endif
+     *
+     C                   if        qtchk1 <> '1'
+     C                   eval      qtchk1 = *on
+      /free
+        if ckqrc1 > maxqty
+           and maxqty > 0;
+          qtchk1 = '2';
+          warn = *on;
+          error = *on;
+          pMessage = '';
+          pMessage = 'Valid range for Tie/Hi Qty on Pallet is 1 to ' +
+                      %char(maxqty) ;
+          pNDqtchk1w  = 'N';
+          pqtchk1w  = 'N';
+        endif;
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     C                   endif
+     *
+     *  Warning:
+     *
+      /free
+        if pNDqtchkw <> 'Y';
+          pNDqtchkw = ' ';
+        endif;
+      /end-free
+     C     w1qrc1        add       pdqrc1        svqrc1
+     C     w1qrc2        add       pdqrc2        svqrc2
+     C     w1qrc3        add       pdqrc3        svqrc3
+     *
+     *    Accumulate total exceptions to include in qty test.
+     C                   exsr      zzttle
+     *  Quantity.
+      /free
+        if sdqrc1 <> w1qrc1  or
+           sdqrc2 <> w1qrc2  or
+           sdqrc3 <> w1qrc3;
+          qtchk = *off;
+          // turn off qtchk parms - edits occur once qty is changed
+          pdtchkw = ' ';
+          pNDdtchkw = 'Y';
+        endif;
+      /end-free
+     *
+     C                   if        qtchk = '2'  and
+     C                             pqtchkw = 'Y'
+     c                   eval      pNDqtchkw = 'Y'
+     C                   eval      qtchk = *on
+     C                   endif
+     *
+     C                   if        qtchk <> '1'
+     C                   eval      qtchk = *on
+     *
+      /free
+        if svqrc1 < pdqor1  or
+           svqrc2 < pdqor2  or
+           svqrc3 < pdqor3;
+          warn = *on;
+          error = *on;
+          qtchk = '2';
+          pMessage = '';
+          pMessage = 'Warning, Quantity Received is not equal to +
+                      Quantity ordered';
+          pNDqtchkw  = 'N';
+        endif;
+        if svqrc1 > pdqor1  or
+           svqrc2 > pdqor2  or
+           svqrc3 > pdqor3;
+          warn = *on;
+          error = *on;
+          qtchk = '2';
+          pMessage = '';
+          pMessage = 'Warning: Quantity received is greater than +
+                     quantity ordered';
+          pNDqtchkw  = 'N';
+        endif;
+        if error;
+          exsr zzsave;
+          leavesr;
+        endif;
+      /end-free
+     C                   endif
+     *
+         // offsite storage print
+      /free
+         if osscode <> ' ';
+           po840 (pWhse: $itwhdp: posscode: possplates: possprint:
+                  blanklcns: Expd: w1stat: possdev: ppoitem: $itstyp:
+                  $itdesc);
+         endif;
+      /end-free
+     C     enderr        tag
+     *
+     *   Save screen fields.
+     C                   eval      svdwgt = w1dwgt
+     C                   eval      sdqrc1 = w1qrc1
+     C                   eval      sdqrc2 = w1qrc2
+     C                   eval      sdqrc3 = w1qrc3
+     C                   eval      svmfdt = w1mfdt
+     C                   eval      svexdt = w1exdt
+     C                   eval      svupc = w1upcd
+     C                   eval      svckq1 = ckqrc1
+     C                   eval      svpti  = w1pti
+      /free
+         hotype = 'PODTL';
+         pokey = %trim(pPO) + %trim(%editc(pPOSeq:'X')) + %trim(pPOItem);
+         chain (psessid: hotype: pokey) pirhold;
+         hodata = pirhldpods;
+         if %found(pirhold);
+           update horec;
+         else;
+           exsr getcurrstamp;
+           hoaddts = currstampsys;
+           hoadduc = currstampuc;
+           hosess = psessid;
+           hokey = pokey;
+           write horec;
+         endif;
+      /end-free
+     C     endck1        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZTTLE   Accumlate total exception quantity.
+     *
+     C     zzttle        begsr
+     *
+      /free
+        setll (pwhse: pPO: pPOseq: pPOItem) poexcp;
+        dow forevr = forevr;
+          reade (pwhse: pPO: pPOseq: pPOItem) poexcp;
+          select;
+            When %eof(poexcp);
+              leave;
+            other;
+              eval svqrc1 = svqrc1 + peqex1;
+              eval svqrc2 = svqrc2 + peqex2;
+              eval svqrc3 = svqrc3 + peqex3;
+          endsl;
+        enddo;
+      /end-free
+     C                   endsr
+     *
+     *----------------------------------------------------------------
+     *
+     *  ZZCHKT   Screen 3 error check totals
+     *
+     C     zzchkt        begsr
+     *
+     *
+     *     Check # of entrys if individual catchweight entry = Y
+     *
+     *     Compare total catchweight to expected catchweight
+     *
+     *
+     C                   if        lvskp = *off
+     C                             and wotcw < lwrng
+     C                             and opwrncr = 'Y'
+     C                   eval      error = *on
+     C                   eval      wtchk = '2'
+     C                   eval      warn = *on
+     C                   eval      *in25 = *on
+     C                   eval      *in05 = *on
+     C                   eval      errmsg = *blanks
+     C                   eval      ertcwt = wotcw
+     C                   eval      erlrng = lwrng
+     C                   eval      CW_exrngl = erlrng
+     C                   if        hvskp = *on
+     C                   eval      erhrng = 0
+     C                   eval      CW_exrngh = erhrng
+     C                   else
+     C                   eval      erhrng = hirng
+     C                   eval      CW_exrngh = erhrng
+     C                   endif
+     C     prg1c         mult      100           errg1c
+     C     prg2c         mult      100           errg2c
+     C                   eval      erexwt = exwgt
+      /free
+        select;
+          when client = Dairyland;
+            pMessage = '';
+700dD       //pMessage = 'Warning: Tot c/w ' + %char(WOTCW) +
+700dM       pMessage = 'Error: Tot c/w ' + %char(WOTCW) +
+                       ' is not within -/+ range of ' + %char(CW_EXRNGL) +
+                       ' / ' + %char(CW_EXRNGH);
+700dD       //pNDwtchkw  = 'N';
+700dM       pNDwtchkw  = 'Y';
+          other;
+            pMessage = '';
+            pMessage = 'Warning: Tot c/w ' + %char(WOTCW) +
+                       ' is not within -/+ range of ' + %char(CW_EXRNGL) +
+                       ' / ' + %char(CW_EXRNGH);
+            pNDwtchkw  = 'N';
+        endsl;
+      /end-free
+     C                   endif
+     *
+     C                   if        hvskp = *off
+     C                             and wotcw > hirng
+     C                             and opwrncr = 'Y'
+     C                   eval      error = *on
+     C                   eval      wtchk = '2'
+     C                   eval      warn = *on
+     C                   eval      *in25 = *on
+     C                   eval      *in05 = *on
+     C                   eval      errmsg = *blanks
+     C                   eval      ertcwt = wotcw
+     C                   if        lvskp = *on
+     C                   eval      erlrng = 0
+     C                   eval      CW_exrngl = erlrng
+     C                   else
+     C                   eval      erlrng = lwrng
+     C                   eval      CW_exrngl = erlrng
+     C                   endif
+     C                   eval      erhrng = hirng
+     C                   eval      CW_exrngh = erhrng
+     C     prg1c         mult      100           errg1c
+     C     prg2c         mult      100           errg2c
+     C                   eval      erexwt = exwgt
+      /free
+        select;
+          when client = Dairyland;
+            pMessage = '';
+700dD       //pMessage = 'Warning: Tot c/w ' + %char(WOTCW) +
+700dM       pMessage = 'Error: Tot c/w ' + %char(WOTCW) +
+                       ' is not within -/+ range of ' + %char(CW_EXRNGL) +
+                       ' / ' + %char(CW_EXRNGH);
+700dD       //pNDwtchkw  = 'N';
+700dM       pNDwtchkw  = 'Y';
+          other;
+            pMessage = '';
+            pMessage = 'Warning: Tot c/w ' + %char(WOTCW) +
+                       ' is not within -/+ range of ' + %char(CW_EXRNGL) +
+                       ' / ' + %char(CW_EXRNGH);
+            pNDwtchkw  = 'N';
+        endsl;
+      /end-free
+     C                   endif
+     *
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZCHKT1  Screen 3 error checks:
+     *           1. Compare imported cw to entered cw.
+     *           2. Compare ordered qty to received qty.
+     *
+     C     zzchkt1       begsr
+     *
+     C                   if        hvskp = *off
+     C                             and opwrncr = 'Y'
+     C                             and caltol1 >= prg2c
+     C                   eval      error = *on
+     C                   eval      wtchk = '2'
+     C                   eval      warn = *on
+     C                   eval      errmsg = *blanks
+     C                   eval      CW_exrngl = 0
+     C                   eval      CW_exrngh = caltol1
+     C                   eval      caltol1x100 = caltol1 * 100
+     C                   eval      errg2c = prg2c * 100
+
+     C                   eval      pMessage = 'Wgt tol% '
+     C                                      + %triml(%editc(caltol1x100:'3'))
+     C                                      + ' >= var% '
+     C                                      + %triml(%editc(errg2c:'3'))
+     C                   goto      endckt1
+     C                   endif
+
+     C                   if        hvskp = *off
+     C                             and opwrncr = 'Y'
+     C                             and caltol2 >= prg2c
+     C                   eval      error = *on
+     C                   eval      wtchk = '2'
+     C                   eval      warn = *on
+     C                   eval      errmsg = *blanks
+     C                   eval      CW_exrngl = 0
+     C                   eval      CW_exrngh = caltol2
+     C                   eval      caltol2x100 = caltol2 * 100
+     C                   eval      errg2c = prg2c * 100
+
+     C                   eval      pMessage = 'Qty tol% '
+     C                                      + %triml(%editc(caltol2x100:'3'))
+     C                                      + ' >= var% '
+     C                                      + %triml(%editc(errg2c:'3'))
+     C                   goto      endckt1
+     C                   endif
+
+     C     endckt1       endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZCMD1   User defined command keys for screen 1.
+     *
+     C     zzcmd1        begsr
+     C                   eval      cmdtkn = *off
+     *
+     C     endcm1        endsr
+     *----------------------------------------------------------------
+     *  getcurrstamp  Get current timestamps
+     *----------------------------------------------------------------
+
+      /free
+       begsr getCurrStamp;
+
+         getmicrotime(currstampuc:currstampsys);
+         currstamploc = currstampsys + %hours(bfcoffset);
+
+       endsr;
+      /end-free
+     *----------------------------------------------------------------
+     *
+     *  ZZUPD1   Update record.
+     *
+     C     zzupd1        begsr
+     C                   eval      error = *off
+     c                   if        $ldecvalue = ' '
+     c                   exsr      zzmfrdates
+     c                   endif
+     *
+     C                   if        $immflg = 'Y'
+     *
+     *  Calculate Expiration date.(Mfg date + Mfg Shelf life days-User days)
+     *
+
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1mfdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        expd
+     C                   move      $cvd8o        womfdt
+
+     C                   if        client = Glazier
+     C                   eval      $imuday = *zeros
+     C                   endif
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*ADD'        $cdcmd
+     C                   parm      expd          $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $immday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C                   parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*SUB'        $cdcmd
+     C                   parm      $cddateout    $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $imuday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     expd          parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     C                   eval      $cvcmd = '*CMDMDY '
+     C                   move      expd          $cvd8i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd6o        w1exdt
+
+     *
+     C                   endif
+     C                   if        w1upcd <> *blanks  and
+     C                             w1upc <> *blanks
+      /free
+        chain (pwhse: pPOitem: w1upc: phven) upc3;
+        if not %found(upc3);
+          *in79 = *on;
+        else;
+          *in79 = *off;
+        endif;
+      /end-free
+     C                   if        *in79
+     C                   eval      upwhse = pWhse
+     C                   eval      upitem = pPOItem
+     C                   eval      upupc = w1upc
+     C                   eval      upven = phven
+     C                   eval      upvnam = phvnam
+     C                   eval      upvitm = pdvitm
+     C                   eval      upbran = *blanks
+     *
+     *   Add record
+     *
+     C                   write     uprec                                78
+     C                   if        *in78
+     C                   eval      error = *on
+      /free
+        pMessage = '';
+          pMessage = 'Record was not added to the UPC file';
+      /end-free
+     C                   goto      endup1
+     C                   endif
+     C                   endif
+     c                   if        client = birite
+     c                   exsr      outlog
+     c                   endif
+     C                   endif
+     *
+     C                   eval      $rven = phven
+     C                   eval      $rvnam = phvnam
+     *
+     *   Call receiving program, if this is a replenishment type
+     *   of transfer.(Customer order# blank)
+     *
+     C                   if        w1exdt = 0
+     C                   eval      $rexpd = 0
+     C                   else
+     C                   eval      $rexpd = expd
+     C                   endif
+     *
+     C                   exsr      zzzcw
+700cAC                   if        w1twgt <> 0 and $ifrcvmth <> '2'
+700cAC                   exsr      zzucichk
+700cAC                   endif
+     *
+     *   If not a FSWMS item, don't put away only update PODTL
+     *
+     C                   if        iaflag = *on
+     C                   eval      $rpo = ppo
+     C                   eval      $rseq = pPOSeq
+     C                   eval      $rslot = w1slot
+     *
+     C                   call      'RC161'
+     C                   parm      '*RECEIVE'    $rcmd             8
+     C                   parm                    $rprg            10
+     C                   parm      '*INTER  '    $rtype            8
+     C                   parm                    pwhse
+     C                   parm                    pPOitem
+     C                   parm      w1qrc1        $rqrc1            5 0
+     C                   parm      w1qrc2        $rqrc2            5 0
+     C                   parm      w1qrc3        $rqrc3            5 0
+     C                   parm                    $rpo              9
+     C                   parm                    $rven            11 0
+     C                   parm                    $rvnam           40
+     C                   parm                    w2vitm           15
+     C                   parm      0             $rord             7 0
+     C                   parm      *blanks       $rrcod            2
+     C                   parm      *blanks       $rrmem           30
+     C                   parm      $rexpd        $expd             8 0
+     C                   parm                    $pdev            10
+     C                   parm                    $pform           10
+     C                   parm                    $rslot           12
+     C                   parm                    $rseq             5 0
+     C                   parm                    $rrpck            1
+     C                   parm                    $rplbl            1
+     C                   parm      w1twgt        $rtwgt            9 2
+     C                   parm                    $rrq1             5 0
+     C                   parm                    $rrq2             5 0
+     C                   parm                    $rrq3             5 0
+     C                   parm                    $rrpal            3 0
+     C                   parm                    $rrtn             8
+     C                   parm                    $rmsg             4
+     C                   if        $rrtn = '*PGMQ   '
+     C                   eval      error = *on
+     C                   eval      *in21 = *on
+     C                   eval      *in01 = *on
+     C                   goto      endup1
+     C                   endif
+     C                   goto      jmpup1
+     C                   endif
+     *
+      * special receiving situations
+      /free
+        sprcv = '0';
+        select;
+          when PSRcvReq = 'Y';
+            sprcv = '1';
+            exsr SpecialRCV;
+          when Psrusr = 'Y';
+            sprcv = '1';
+            exsr SpecialRCV;
+          when directed = 'Y';
+            exsr SpecialRCV;
+            if $rrtn = '*PGMQ   ';
+              error = *on;
+413aA         rcverr = *on;
+            endif;
+        endsl;
+      /end-free
+     C                   eval      $lord = $rord
+     *    Lot tracking item - Pass single char flag to license entry pgm
+     C                   if        lottrk = '*YES'
+     C                   eval      $llott = 'Y'
+     C                   else
+     C                   eval      $llott = 'N'
+     C                   endif
+     *    Lic.tracking item - Pass single char flag to license entry pgm
+     C                   if        lictrk = '*YES'
+     C                   eval      $llict = 'Y'
+     C                   else
+     C                   eval      $llict = 'N'
+     C                   endif
+     *    Convert fifo date into yyyymmdd.
+     C                   if        w1fifo = 0
+     C                   eval      wofifo = 0
+     C                   else
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1fifo        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        wofifo
+     C                   endif
+     * Move mfg or expire or fifo date to keyed in date field
+     * to send to PO236
+     C                   eval      woindt = 0
+     C                   select
+     C                   when      w1fifo <> 0
+     C                   eval      woindt = wofifo
+     C                   when      w1mfdt <> 0
+     C                   eval      woindt = womfdt
+     C                   other
+     C                   eval      woindt = woexdt
+     C                   endsl
+      /free
+         hotype = 'PODTL';
+         pokey = %trim(pPO) + %trim(%editc(pPOSeq:'X')) + %trim(pPOItem);
+         chain (psessid: hotype: pokey) pirhold;
+         hodata = pirhldpods;
+         if %found(pirhold);
+           update horec;
+         else;
+           exsr getcurrstamp;
+           hoaddts = currstampsys;
+           hoadduc = currstampuc;
+           hosess = psessid;
+           hokey = pokey;
+           write horec;
+         endif;
+      /end-free
+     *
+     *    Write records to POMFR file.
+     *    Note: RC160 returns batch number in $RORD field which is
+     *          used as first part of the LBKEY.
+     *
+      * load new file pocwexcp
+      /free
+        ///cw_exwhse = lbwhse;
+        ///cw_expo = lbpo;
+        ///cw_exseq = lbseq;
+        ///cw_exitem = lbitem;
+        ///cw_extrn# = lbtrn#;
+        ///cw_exlbl# = lblbl#;
+        ///cw_exwgt = W1DWGT;
+        ///cw_exgdte = lbsdte;
+        ///cw_exgtim = lbstim;
+        ///cw_exrg1c = prg1c * 100;
+        ///cw_exrg2c = prg2c * 100;
+        ///cw_exswgt = exwgt;
+        ///select;
+          ///when imrg1c > 0;
+            ///cw_exrg1w = 'I';
+          ///when oprg1c > 0;
+            ///cw_exrg1w = 'S';
+          ///other;
+            ///cw_exrg1w = 'P';
+        ///endsl;
+        ///select;
+          ///when imrg2c > 0;
+            ///cw_exrg2w = 'I';
+          ///when oprg2c > 0;
+            ///cw_exrg2w = 'S';
+          ///other;
+            ///cw_exrg2w = 'P';
+        ///endsl;
+          ///write cwexrec;
+      /end-free
+     *
+     *   Need to deal with x-dock or pick slot receiving
+     *
+      /free
+        // write out lcns record to pirhold so M13700U can process
+        // write one record for each uom
+        blanklcns = ' ';
+        xdockkey  = ' ';
+        if pdspcl = 'XD' or sprcv = '1';
+          if w1qrc3 > 0;
+            select;
+              when pdspcl = 'XD';
+                xdockkey = 'XDOCK' + w1um3;
+              when sprcv = '1';
+                xdockkey = 'SPRCV' + w1um3;
+            endsl;
+            hotype = 'POLCNS';
+            pokey = blanklcns + xdockkey;
+            chain (psessid: hotype: pokey) pirhold;
+            select;
+              when pdspcl = 'XD';
+                h1xdk = 'Y';
+                h1PSR = ' ';
+              when sprcv = '1';
+                h1xdk = ' ';
+                h1PSR = 'Y';
+              other;
+                h1xdk = ' ';
+                h1PSR = ' ';
+            endsl;
+            h1qty = w1qrc3;
+            h1uom = w1um3;
+            h1umt = '2';
+            exsr getlabel2;
+            hodata = pirhllcnds;
+            if %found(pirhold);
+              error = *on;
+              pmessage = 'License is already in file';
+              return;
+            else;
+              exsr getcurrstamp;
+              hoaddts = currstampsys;
+              hoadduc = currstampuc;
+              hosess = psessid;
+              hokey = pokey;
+              write horec;
+            endif;
+          endif;
+          blanklcns = ' ';
+          xdockkey  = ' ';
+          if w1qrc2  > 0;
+            select;
+              when pdspcl = 'XD';
+                xdockkey = 'XDOCK' + w1um2;
+              when sprcv = '1';
+                xdockkey = 'SPRCV' + w1um2;
+            endsl;
+            hotype = 'POLCNS';
+            pokey = blanklcns + xdockkey;
+            chain (psessid: hotype: pokey) pirhold;
+            select;
+              when pdspcl = 'XD';
+                h1xdk = 'Y';
+                h1PSR = ' ';
+              when sprcv = '1';
+                h1xdk = ' ';
+                h1PSR = 'Y';
+              other;
+                h1xdk = ' ';
+                h1PSR = ' ';
+            endsl;
+            h1qty = w1qrc2;
+            h1uom = w1um2;
+            h1umt = '1';
+            exsr getlabel2;
+            hodata = pirhllcnds;
+            if %found(pirhold);
+              error = *on;
+              pmessage = 'License is already in file';
+              return;
+            else;
+              exsr getcurrstamp;
+              hoaddts = currstampsys;
+              hoadduc = currstampuc;
+              hosess = psessid;
+              hokey = pokey;
+              write horec;
+            endif;
+          endif;
+          blanklcns = ' ';
+          xdockkey  = ' ';
+          if w1qrc1 > 0;
+            select;
+              when pdspcl = 'XD';
+                xdockkey = 'XDOCK' + w1um1;
+              when sprcv = '1';
+                xdockkey = 'SPRCV' + w1um1;
+            endsl;
+            hotype = 'POLCNS';
+            pokey = blanklcns + xdockkey;
+            chain (psessid: hotype: pokey) pirhold;
+            select;
+              when pdspcl = 'XD';
+                h1xdk = 'Y';
+                h1PSR = ' ';
+              when sprcv = '1';
+                h1xdk = ' ';
+                h1PSR = 'Y';
+              other;
+                h1xdk = ' ';
+                h1PSR = ' ';
+            endsl;
+            h1qty = w1qrc1;
+            h1uom = w1um1;
+            h1umt = 'N';
+            exsr getlabel2;
+            hodata = pirhllcnds;
+            if %found(pirhold);
+              error = *on;
+              pmessage = 'License is already in file';
+              return;
+            else;
+              exsr getcurrstamp;
+              hoaddts = currstampsys;
+              hoadduc = currstampuc;
+              hosess = psessid;
+              hokey = pokey;
+              write horec;
+            endif;
+          endif;
+          // call the update program M13700U
+          ulcns    = ' ';
+          uqty     = 0;
+          uuom     = ' ';
+          udone    = 'Y';
+          m13700u(pmessage :
+                  psessid :
+                  puser :
+                  ppgm :
+                  pwhse :
+                  pPO :
+                  pposeq :
+                  ppoitem :
+                  ulcns :
+                  uqty  :
+                  uuom  :
+                  udone );
+        endif;
+      /end-free
+     *
+     *   Move key values to parameters
+     *
+     C     jmpup1        tag
+     C     endup1        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZmfrdates  Set manufactures dates
+     *
+     C     zzmfrdates    begsr
+     c                   select
+     c                   when      $lmfrdat > 0 and $ldecvalue > ' '
+     *
+     *  Calculate Mfg Exp    date.(Mfg date + Mfg Shelf life days)
+     *
+
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      $lmfrdat      $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        mfgdte
+
+     *  Create mfg expiration date mfgdate + mfg shelf life days
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*ADD'        $cdcmd
+     C                   parm      mfgdte        $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $immday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     mexpd         parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+
+     *
+     *  Calculate Mfg date if mfg exp date is entered
+     *
+     c                   when      $lexpdat > 0 and $ldecvalue > ' '
+
+     *
+     *  Calculate Mfg date.(Mfg exp date - Mfg Shelf life days)
+     *
+
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      $lexpdat      $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        mexpd
+     C                   eval      wkmday = $immday
+     *  Use By date -1 to be used as mfg shelf life days
+     C                   if        client = yhata
+     C                   if        $immday = 0
+     C                             and $imoday > 0
+     C                   eval      wkmday = $imoday - 1
+     C                   endif
+     C                   endif
+
+     *  Create mfg date - date mfg exp date - mfg shelf life days
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*SUB'        $cdcmd
+     C                   parm      mexpd         $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      wkmday        $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     mfgdte        parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+     c                   if        wkmday = 0
+     c                   eval      mfgdte = 0
+     c                   endif
+
+     c                   when      w1mfdt > 0 and $itflgd = 'Y'
+     *
+     *  Calculate Mfg Exp    date.(Mfg date + Mfg Shelf life days)
+     *
+
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1mfdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        mfgdte
+
+     *  Create mfg expiration date mfgdate + mfg shelf life days
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*ADD'        $cdcmd
+     C                   parm      mfgdte        $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      $immday       $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     mexpd         parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     c                   when      w1exdt > 0
+
+     *
+     *  Calculate Mfg date.(Mfg exp date - Mfg Shelf life days)
+     *
+
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1exdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        mexpd
+     C                   eval      wkmday = $immday
+     *  Use By date -1 to be used as mfg shelf life days
+     C                   if        client = yhata
+     C                   if        $immday = 0
+     C                             and $imoday > 0
+     C                   eval      wkmday = $imoday - 1
+     C                   endif
+     C                   endif
+
+     *  Create mfg date - date mfg exp date - mfg shelf life days
+
+     C                   call      'CLCDUR2'
+     C                   parm      '*SUB'        $cdcmd
+     C                   parm      mexpd         $cddatein
+     C                   parm      0             $cdtimein
+     C                   parm      0             $cdyears
+     C                   parm      0             $cdmonths
+     C                   parm      wkmday        $cddays
+     C                   parm      0             $cdhours
+     C                   parm      0             $cdminutes
+     C                   parm      0             $cdseconds
+     C     mfgdte        parm      0             $cddateout
+     C                   parm      0             $cdtimeout
+
+     c                   if        wkmday = 0
+     c                   eval      mfgdte = 0
+     c                   endif
+
+     c                   endsl
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  Outlog - Write UPCLOG Record for BiRite.
+     *
+     c     outlog        begsr
+     *
+      /free
+        chain (pwhse: pPOitem: w1upc: phven) upclog;
+      /end-free
+     c                   if        Not %Found(upclog)
+     *
+     c                   eval      ulwhse = pWhse
+     c                   eval      ulitem = pPOItem
+     c                   eval      ulupc  = w1upc
+     c                   eval      ulven  = phven
+     c                   eval      ulvnam = upvnam
+     c                   eval      ulvitm = upvitm
+     c                   eval      ulbran = upbran
+     c                   eval      ulpo   = ppo
+     c                   eval      ulposq = pPOSeq
+     c                   eval      uladte = today
+     c                   time                    ulatim
+     c                   eval      uluser = #user
+     c                   eval      uljob  = #job
+     c                   eval      uljob# = #jobn
+     c                   write     ulrec
+     *
+     c                   endif
+     *
+     c                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZZCW    Calculate catch weight
+     *
+     *
+     *  Action Table
+     *
+     *   VRFYCW  SVCWEN  SVCWTP  W1AVG  POCTYP  Action
+     *   ------  ------  ------  -----  ------  --------------------
+     *     Y       1       1       N       -    CW = Calc1
+     *
+     *     Y       1       1       Y       -    CW = Calc2
+     *
+     *     Y       1       2       -       -    CW = Calc1
+     *
+     *     Y       1       3       -       -    CW = Calc2
+     *
+     *     Y       2       1       N       -    CW = Calc1
+     *                                          Write POCTYP = 'T'
+     *
+     *     Y       2       1       Y       -    CW = Calc3
+     *                                          Write POCTYP = 'A'
+     *
+     *     Y       2       2       -       -    CW = Calc1
+     *                                          Write POCTYP = 'T'
+     *
+     *     Y       2       3       -       -    Not allowed
+     *
+     *     N       1       -       -       -    Not allowed
+     *
+     *     N       2       -       -       T    None
+     *
+     *     N       2       -       -       A    CW = Calc3
+     *
+     *     N       3       -       -       -    None
+     *
+     *  Keys:
+     *
+     *   SVCWEN - 1=Every time, 2=First time only, 3=Never
+     *   SVCWTP - 1=Choice, 2=Total, 3=Average
+     *   Calc1  - Entered weight
+     *   Calc2  - Qty * Entered weight
+     *   Calc3  - Qty * Item weight
+     *
+     *----------------------------------------------------------------
+     C     zzzcw         begsr
+     *
+     C                   eval      w1twgt = 0
+     C                   eval      avgwt1 = 0
+     C                   eval      avgwt2 = 0
+     C                   eval      avgwt3 = 0
+     C                   eval      cwcalc = 0
+     C                   eval      wrttyp = ' '
+     *
+     *   Get POCTYPE record.
+     *
+     C                   if        svcwen = '2'
+      /free
+        chain(n) (pwhse: pPO: pPOseq) poctype;
+        if not %found(poctype);
+          poctyp = 'T';
+        endif;
+      /end-free
+     C                   endif
+     *
+     *   Determine what needs to be done based on table.
+     *
+     C                   select
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '1'  and
+     C                             svcwtp = '1'  and
+     C                             w1avg = 'N'
+     C                   eval      cwcalc = 1
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '1'  and
+     C                             svcwtp = '1'  and
+     C                             w1avg = 'Y'
+     C                   eval      cwcalc = 2
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '1'  and
+     C                             svcwtp = '2'
+     C                   eval      cwcalc = 1
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '1'  and
+     C                             svcwtp = '3'
+     C                   eval      cwcalc = 2
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '2'  and
+     C                             svcwtp = '1'  and
+     C                             w1avg = 'N'
+     C                   eval      cwcalc = 1
+     C                   eval      wrttyp = 'T'
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '2'  and
+     C                             svcwtp = '1'  and
+     C                             w1avg = 'Y'
+     C                   eval      cwcalc = 3
+     C                   eval      wrttyp = 'A'
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '2'  and
+     C                             svcwtp = '2'
+     C                   eval      cwcalc = 1
+     C                   eval      wrttyp = 'T'
+     *
+     C                   when      vrfycw = *on  and
+     C                             svcwen = '2'  and
+     C                             svcwtp = '3'
+     *
+     C                   when      vrfycw = *off  and
+     C                             svcwen = '1'
+     *
+     C                   when      vrfycw = *off  and
+     C                             svcwen = '2'  and
+     C                             poctyp = 'T'
+     *
+     C                   when      vrfycw = *off  and
+     C                             svcwen = '2'  and
+     C                             poctyp = 'A'
+     C                   eval      cwcalc = 3
+     *
+     C                   when      vrfycw = *off  and
+     C                             svcwen = '3'
+     *
+     C                   endsl
+     *
+     *   Calculate catch weight.
+     *
+     C                   select
+     *
+     *     Straight total.
+     *
+     C                   when      cwcalc = 1
+     C                   eval      w1twgt = cnvwgt
+     C                   select
+     C                   when      w1qrc1 > 0
+     C     cnvwgt        div       w1qrc1        avgwt1
+     C                   when      w1qrc2 > 0
+     C     cnvwgt        div       w1qrc2        avgwt1
+     C                   when      w1qrc3 > 0
+     C     cnvwgt        div       w1qrc3        avgwt1
+     C                   endsl
+     *
+     *     Entered quantity * Entered weight.
+     *
+     C                   when      cwcalc = 2
+     C                   select
+     C                   when      w1qrc1 > 0
+     C     cnvwgt        mult      w1qrc1        w1twgt
+     C                   when      w1qrc2 > 0
+     C     cnvwgt        mult      w1qrc2        w1twgt
+     C                   when      w1qrc3 > 0
+     C     cnvwgt        mult      w1qrc3        w1twgt
+     C                   endsl
+     C                   z-add     cnvwgt        avgwt1
+     *
+     *     Entered quantity * Item weight.
+     *
+     C                   when      cwcalc = 3
+     *
+     *       Normal qty for non-SSB items.
+     *
+     C                   if        w1qrc1 > 0  and
+     C                             #otype <> 'S'
+     C     #oswgt        mult      w1qrc1        w1twgt
+     C                   eval      avgwt1 = #oswgt
+     C                   endif
+     *
+     *       Normal qty for SSB items.
+     *
+     C                   if        w1qrc1 > 0  and
+     C                             #otype = 'S'
+     C     #oswt2        mult      w1qrc1        w1twgt
+     C                   eval      avgwt1 = #oswt2
+     C                   endif
+     *
+     *       Brk1 qty for non-SSB items.
+     *
+     C                   if        w1qrc2 > 0  and
+     C                             #otype <> 'S'
+     C     #oswt2        mult      w1qrc2        tmpwgt
+     C                   add       tmpwgt        w1twgt
+     C                   eval      avgwt2 = #oswt2
+     C                   endif
+     *
+     *       Brk1 qty for SSB items.
+     *
+     C                   if        w1qrc2 > 0  and
+     C                             #otype = 'S'
+     C     #oswt3        mult      w1qrc2        tmpwgt
+     C                   add       tmpwgt        w1twgt
+     C                   eval      avgwt2 = #oswt3
+     C                   endif
+     *
+     *       Brk2 qty for non-SSB items.
+     *
+     C                   if        w1qrc3 > 0  and
+     C                             #otype <> 'S'
+     C     #oswt3        mult      w1qrc3        tmpwgt
+     C                   add       tmpwgt        w1twgt
+     C                   eval      avgwt3 = #oswt3
+     C                   endif
+     *
+     C                   endsl
+     *
+     *   Write POCTYPE record.
+     *
+      /free
+        if wrttyp <> ' ';
+          chain (pwhse: pPO: pPOseq) poctype;
+          if %found(poctype);
+            poctyp = wrttyp;
+            update pocrec;
+          else;
+            pocwhs = pWhse;
+            pocpo = ppo;
+            pocseq = pPOSeq;
+            poctyp = wrttyp;
+            write pocrec;
+          endif;
+        endif;
+      /end-free
+     *
+     C                   endsr
+     *
+     *----------------------------------------------------------------
+     *
+     *  ZZsave   Save all the data in pirhold
+     *
+     C     zzsave        begsr
+     *
+     *   Save screen fields.
+      /free
+        svdwgt = w1dwgt;
+        sdqrc1 = w1qrc1;
+        sdqrc2 = w1qrc2;
+        sdqrc3 = w1qrc3;
+        svmfdt = w1mfdt;
+        svexdt = w1exdt;
+        svupc = w1upcd;
+        svckq1 = ckqrc1;
+        svpti  = w1pti;
+        hotype = 'PODTL';
+        pokey = %trim(pPO) + %trim(%editc(pPOSeq:'X')) + %trim(pPOItem);
+        chain (psessid: hotype: pokey) pirhold;
+        hodata = pirhldpods;
+        if %found(pirhold);
+          update horec;
+        else;
+          exsr getcurrstamp;
+          hoaddts = currstampsys;
+          hoadduc = currstampuc;
+          hosess = psessid;
+          hokey = pokey;
+          write horec;
+        endif;
+      /end-free
+     C                   endsr
+     *
+     *----------------------------------------------------------------
+     *
+     *  SpecialRCV  - Special receiving processing
+     *
+     C     SpecialRcv    begsr
+     *   Try to put-away the item received.
+     *
+     C                   eval      $rpo = ppo
+219 AC                   eval      $rseq = pPOSeq
+TMP AC                   eval      $rslot = w1slot
+413aAC                   eval      rcverr = *off
+     *
+417pA*   Set command to send.
+417pAC                   select
+417pAC                   when      phvnam = 'MOVEIN'
+417pAC                   eval      $rcmd = '*RECEIVE'
+417pAC                   eval      $rfifo = wofifo
+417pAC                   when      phvnam = move1
+417pAC                   eval      $rcmd = '*MOVEINP'
+417pAC                   eval      $rfifo = wofifo
+417pAC                   when      phvnam = move2
+417pAC                   eval      $rcmd = '*MOVEINO'
+417pAC                   eval      $rfifo = wofifo
+500bAC                   when      sprcv = '1'
+500bAC                   eval      $rcmd = '*SPRECV '
+500bAC                   eval      $rfifo = 0
+417pAC                   other
+417pAC                   eval      $rcmd = '*RECEIVE'
+417pAC                   eval      $rfifo = 0
+417pAC                   endsl
+
+     C                   call      'RC160'
+417pMC                   parm                    $rcmd
+     C                   parm                    $rprg
+     C                   parm      '*INTER  '    $rtype
+     C                   parm                    pwhse
+     C                   parm                    ppoitem
+     C                   parm      w1qrc1        $rqrc1
+     C                   parm      w1qrc2        $rqrc2
+     C                   parm      w1qrc3        $rqrc3
+     C                   parm                    $rpo
+     C                   parm                    $rven
+     C                   parm                    $rvnam
+221 MC                   parm                    w2vitm
+     C                   parm      0             $rord
+     C                   parm      *blanks       $rrcod
+     C                   parm      *blanks       $rrmem
+     C                   parm      $rexpd        $expd
+417p C                   parm                    $rfifo            8 0
+     C                   parm                    $pdev
+     C                   parm                    $pform
+214 AC                   parm                    $rslot
+219 MC                   parm                    $rseq
+218 AC                   parm                    $rrpck
+218 AC                   parm                    $rplbl
+219 AC                   parm      w1twgt        $rtwgt            9 2
+     C                   parm                    $rrq1
+     C                   parm                    $rrq2
+     C                   parm                    $rrq3
+     C                   parm                    $rrpal
+     C                   parm                    $rrtn
+     C                   parm                    $rmsg
+     *  If error, then do not update transfer order file.
+     C                   if        $rrtn = '*PGMQ   '
+     C                   eval      error = *on
+413aAC                   eval      rcverr = *on
+     C                   eval      *in21 = *on
+     C                   eval      *in01 = *on
+     C*t                 goto      endup1
+     C                   else
+222 AC                   add       $rrq1         $prsqt
+222 AC                   add       $rrq2         $prsqt
+222 AC                   add       $rrq3         $prsqt
+     *
+500cAC                   eval      $lflag = lflag
+500cAC                   if        lflag = *off
+500cAC                   eval      $lcmd = '*LICONLY'
+500cAC                   else
+221 AC                   eval      $lcmd = '*CHANGE '
+500cAC                   endif
+500fAC                   if        sprcv = *on
+500fAC                   eval      $lcmd = '*STUFFIT'
+500fAC                   endif
+221 AC                   eval      $lwhse = pwhse
+221 AC                   eval      $lpo = ppo
+221 AC                   eval      $litem = pPOItem
+221 AC                   eval      $lrq1 = $rrq1
+221 AC                   eval      $lrq2 = $rrq2
+221 AC                   eval      $lrq3 = $rrq3
+221 AC                   eval      $lrpal = $rrpal
+221 AC                   eval      $lum1 = w1um1
+221 AC                   eval      $lum2 = w1um2
+221 AC                   eval      $lum3 = w1um3
+     c                   endif
+     C                   endsr
+
+     *
+     *----------------------------------------------------------------
+     *
+     *  GetLabel2   - Get the label record
+     *
+     C     GetLabel2     begsr
+      /free
+        // need to get the correct label/tran# to load to POLCNS re    cord
+        setll ($lord) label2;
+        dow not %eof(label2);
+          reade ($lord) label2;
+          if %eof(label2);
+            leave;
+          endif;
+          if lb_lbutyp = h1umt;
+            h1lbl = lb_lblbl#;
+            h1trn = lb_lbtrn#;
+            leave;
+          else;
+            iter;
+          endif;
+        enddo;
+      /end-free
+     C                   endsr
+**
+Item (
+Base (
+SSB (
+Item  . . . .
+**
+(Type ' ')
+**
+Catch weight (Ttl or Avg)
+Catch weight (Total)
+Catch weight (Average)

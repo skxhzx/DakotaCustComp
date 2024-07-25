@@ -1,0 +1,170 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  LOADR8F: Update LOADERF file (output from Clp: Loadhcl2 - Qry:
+     F*           Rtesumm11).
+     F*
+     F*  March 13, 2008
+     F*  Jose Duque
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FLDRHHDR IF  E           K        DISK
+     FPIRUSER IF  E           K        DISK
+     FPIRUSER1IF  E           K        DISK
+     F            USREC                             KRENAMEUSREC2
+     F*
+     FRTES10F IF  E                    DISK
+     F            RTES10F                           KRENAMEOUTFIL
+     F*
+     FLDRFILE O   E           K        DISK
+     F*
+     E*----------------------------------------------------------------
+      *
+     C           USRKEY    KLIST
+     C                     KFLD           DTLEMP
+      *
+     C           HDRKEY    KLIST
+     C                     KFLD           WHSE
+     C                     KFLD           LHHRTE
+     C                     KFLD           LHHRTI
+     C*>                   KFLD           LHHSTD
+     C*>                   KFLD           LHHSTT
+      *
+     *----------------------------------------------------------------
+      * Reads accumulated Loader/Cases info for a given shift.
+      *
+     C                     READ RTES10F                  LR
+      *
+      * Nine thousand employee # series identifies the
+      * loader employee using scanner to load cases on
+      * trucks. If the emp # being read does not fall
+      * within the range defined bellow, it means that
+      * the employee # is the original number(outside
+      * the 9000 series).
+      *
+     C           DTLEMP    IFLT 9000
+     C           DTLEMP    ORGT 9999
+     C                     Z-ADDDTLEMP    SAVEMP  50       Save Emp#
+     C                     EXSR ZZOUT
+     C                     GOTO READ1
+     C                     ENDIF
+      *
+      * If the above is not true then the nine thousand emp #
+      * series is used to find the employee's first and last
+      * names this two values are matched against the employee
+      * file and if found, it means that the emp # provided
+      * by the match is the original emp # (a none nine
+      * thousand series number).
+      *
+     C           *INLR     DOWEQ*OFF
+      *
+     C                     Z-ADDDTLEMP    SAVEMP           Save Emp#
+     C                     MOVE *BLANKS   FIRSTN 15
+     C                     MOVE *BLANKS   LASTN  20
+      *
+     C           USRKEY    CHAINPIRUSER1             78
+     C           *IN78     IFEQ *OFF
+     C                     MOVELUSFNAM    FIRSTN
+     C                     MOVELUSLNAM    LASTN
+     C                     ELSE
+     C                     EXSR ZZOUT
+     C                     GOTO READ1
+     C                     ENDIF
+      *
+      * Find original loader employee # thru matching
+      * first and last names found thru the chain
+      * command above.
+      *
+     C           *LOVAL    SETLLPIRUSER
+     C                     READ PIRUSER                  78
+      *
+     C           *IN78     DOWEQ*OFF
+      *
+     C           USFNAM    IFEQ FIRSTN
+     C           USLNAM    ANDEQLASTN
+     C           USEMP#    IFLT 9000
+     C           USEMP#    ORGT 9999
+     C                     Z-ADDUSEMP#    DTLEMP           OrigEmp#Found
+     C                     EXSR ZZOUT
+     C                     LEAVE
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C                     READ PIRUSER                  78
+     C                     ENDDO
+      *
+     C           *IN78     IFEQ *ON                        OrigEmp#
+     C                     EXSR ZZOUT                      No found
+     C                     ENDIF                           Use9000Emp#
+      *
+     C           READ1     TAG
+     C                     READ RTES10F                  LR
+     C                     ENDDO
+      *
+     C*---------------------------------------------------------------
+     C*  ZZOUT    Write output record.
+     C*---------------------------------------------------------------
+     C           ZZOUT     BEGSR
+      *
+      *  Load out record.
+      *
+     C                     CLEARLDFREC
+     C                     Z-ADDWHSE      LDFWHS           Whse
+     C                     Z-ADDDTLEMP    LDFEMP           Emp #
+     C                     MOVE *ZEROS    LDFRTE           Route #
+      *
+     C           ' '       SCAN LHHRTE    POS     30
+     C           POS       IFGT 1
+     C           POS       SUB  1         LEN     30
+     C           LEN       SUBSTLHHRTE:1  HLDRTE  3
+     C                     MOVE HLDRTE    LDFRTE           Route #
+     C                     ENDIF
+      *
+     C                     Z-ADDLHHSTD    LDFSTD           Start Date
+     C                     Z-ADDLHHSTT    LDFSTT           Start Time
+     C                     Z-ADDPIECES    LDFPCS           Pcs Loaded
+      *
+      * Find whether the loader being processed is the
+      * primary truck loader or a helper loader. If
+      * the emp # read in is found in the loader header
+      * history file (LDRHHDR) under the route being
+      * processed then the loader is the primary loader
+      * otherwise the loader is a helper.
+      *
+     C           LHHRTE    IFEQ '375'
+     C                     MOVE 'Y'       YES     1
+     C                     ENDIF
+      *
+      *
+      * Moving of route starting date is reloaded below because
+      * it was not showing in some of LDRFILE records.
+      *
+     C           HDRKEY    CHAINLDRHHDR              79
+     C           *IN79     IFEQ *OFF
+     C                     Z-ADDLHHSTT    LDFSTT           Start Time
+     C           SAVEMP    IFEQ LHHEMP
+     C                     MOVE 'P'       LDPOH            PrimaryLoadr
+     C           PRVRTE    IFNE LHHRTE
+     C                     MOVELLHHRTE    PRVRTE  5
+     C                     MOVELLHHRTI    PRVRTI  5
+     C                     Z-ADDDTLEMP    PRVEMP  50
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE 'H'       LDPOH            HelperLoader
+     C                     ENDIF
+     C                     GOTO WRITE
+     C                     ENDIF
+      *
+     C           LHHRTE    IFEQ PRVRTE
+     C           DTLEMP    IFEQ PRVEMP
+     C                     MOVE 'P'       LDPOH            PrimaryLoadr
+     C                     ELSE
+     C                     MOVE 'H'       LDPOH            HelperLoader
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           WRITE     TAG
+     C                     WRITELDFREC
+      *
+     C                     ENDSR

@@ -1,0 +1,390 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2000 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  LDI155    Create test p.o.'s from std item import files
+     F*  24 February 2000
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*----------------------------------------------------------------
+     F*
+     F*  Notes
+     F*
+     F*    - The screen for this program must be compiled with
+     F*      defer write equal to *NO.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  21 - 30   Field input error (reverse display)
+     F*  90        View mode (protect all fields)
+     F*  91        Change mode (protect key fields)
+     F*  97        Alawys on (used for SFLEND keyword)
+     F*  98        Error on screen (sound alarm)
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FLDI155FMCF  E                    WORKSTN                        UC
+     F                                              KINFDS INFDS
+     FLAYSTDI IF  E           K        DISK                           UC
+     FLAYSTDI2IF  E           K        DISK                           UC
+     FPIRITEM IF  E           K        DISK
+     FPOHDR   UF  E           K        DISK                      A
+     FPODTL   UF  E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A40        40  1
+     E                    PO      1   1  9
+     E                    VNAME   1   3 40
+     I*----------------------------------------------------------------
+     I*  P.O. data structure.
+     I*
+     I              100                   C         MAXOCR
+     IPOOCUR      DS                        100
+     I                                        1   9 DSPO
+     I                                    P  10  120DSSEQ
+     I                                    P  13  180DSVEN
+     I                                       19  58 DSVNAM
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse
+     C*      $PVER   Import file version (1,2)
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PJTYP  1
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PVER   1
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*
+     C*  Loop through standard item import file.
+     C*
+     C           FOREVR    DOWEQFOREVR
+     C           $PVER     IFEQ '2'
+     C                     READ LSI2REC                  79
+     C                     ELSE
+     C                     READ LSIREC                   79
+     C                     ENDIF
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C                     MOVE LSISOH    NUMSOH  50
+     C           KEYIT     CHAINPIRITEM              78
+     C           *IN78     IFEQ *ON
+     C                     ADD  1         W1NF
+     C                     EXSR NOTFND
+     C                     ELSE
+     C           NUMSOH    IFLE 0
+     C                     ADD  1         W1NS
+     C                     EXSR NOSTK
+     C                     ELSE
+     C                     ADD  1         W1STK
+     C                     EXSR STKOH
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C                     ADD  1         COUNT2  30
+     C           $PJTYP    IFEQ *ON
+     C           COUNT2    ANDEQ100
+     C                     Z-ADD0         COUNT2
+     C                     WRITESCREEN1
+     C                     ENDIF
+     C                     ENDDO
+     C*
+     C           $PJTYP    IFEQ *ON
+     C                     WRITESCREEN1
+     C                     ENDIF
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize variables
+     C*
+     CSR                   MOVE *ON       FOREVR  1
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+     C*   Define keys
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           LSIITM
+     C*
+     CSR         KEYPH     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           DSPO
+     C*
+     CSR         KEYPD     KLIST
+     CSR                   KFLD           PHWHSE
+     CSR                   KFLD           PHPO
+     C*
+     C*   Open appropriate standard item import file.
+     C*
+     CSR         $PVER     IFEQ '2'
+     CSR                   OPEN LAYSTDI2
+     CSR                   ELSE
+     CSR                   OPEN LAYSTDI
+     CSR                   ENDIF
+     C*
+     C*   Open display file if this program is being run interactively.
+     C*
+     CSR         $PJTYP    IFEQ *ON
+     CSR                   OPEN LDI155FM
+     CSR                   ENDIF
+     C*
+     C*   Fool the compiler.
+     C*
+     CSR                   MOVE *BLANKS   DUMMY   1
+     CSR         DUMMY     IFNE *BLANKS
+     CSR                   READ LDI155FM                 50
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE #PROG     $PPRG  10
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CRTPD   Create P.O. detail record.
+     C*
+     CSR         CRTPD     BEGSR
+     C*
+     C*   Create PODTL record
+     C*
+     CSR                   CLEARPDREC
+     CSR                   Z-ADD$PWHSE    PDWHSE
+     CSR                   MOVE PHPO      PDPO
+     CSR                   ADD  DSSEQ     PDSEQ
+     CSR                   MOVELLSIITM    PDITEM    P
+     CSR                   Z-ADDNUMSOH    PDQOR1
+     CSR                   WRITEPDREC                  77
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  DELPO   Delete existing PO import records.
+     C*
+     CSR         DELPO     BEGSR
+     C*
+     C*   Delete POHDR records.
+     C*
+     CSR         KEYPH     SETLLPOHDR
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYPH     READEPOHDR                    78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*      Delete PODTL records.
+     C*
+     CSR         KEYPD     SETLLPODTL
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYPD     READEPODTL                    77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   DELETPDREC
+     CSR                   ENDDO
+     C*
+     CSR                   DELETPHREC
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETPO   Get P.O. from data structure.
+     C*
+     CSR         GETPO     BEGSR
+     C*
+     CSR                   MOVE *OFF      FOUND   1
+     C*
+     C*   Search for existing occurance for PO
+     C*
+     CSR                   Z-ADD1         OCUR#   30
+     CSR         OCUR#     DOWLELSTOCR
+     CSR         OCUR#     OCUR POOCUR
+     CSR         PHPO      IFEQ DSPO
+     CSR                   MOVE *ON       FOUND
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   ADD  1         OCUR#
+     CSR                   ENDDO
+     C*
+     C*   If not found, start a new occurance.
+     C*
+     CSR         FOUND     IFEQ *OFF
+     CSR         OCUR#     ANDLEMAXOCR
+     CSR                   MOVE PHPO      DSPO
+     CSR                   Z-ADD0         DSSEQ
+     CSR                   Z-ADDOCUR#     DSVEN
+     CSR                   MOVE *BLANKS   DSVNAM
+     CSR                   MOVE *ON       FOUND
+     CSR                   Z-ADDOCUR#     LSTOCR  30
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  NOSTK   Add record to ZRO P.O.
+     C*
+     CSR         NOSTK     BEGSR
+     C*
+     C*  Create PO number.
+     C*
+     CSR                   MOVE *BLANKS   PHPO
+     CSR         'ZRO'     CAT  ITWHDP:0  PHPO
+     CSR         PHPO      CAT  ITSTYP:0  PHPO
+     C*
+     C*  Get/Create occurance for PO.
+     C*
+     CSR                   EXSR GETPO
+     CSR         FOUND     CABEQ*OFF      ENDNS
+     C*
+     C*  If one just created, create PO header record.
+     C*
+     CSR         DSVNAM    IFEQ *BLANKS
+     CSR                   EXSR DELPO
+     CSR                   MOVEAVNAME,3   A40,1
+     CSR                   MOVEAITWHDP    A40,1
+     CSR         ITSTYP    IFEQ 'P'
+     CSR                   MOVEA'PIR  '   A40,7
+     CSR                   ELSE
+     CSR                   MOVEA'FIXED'   A40,7
+     CSR                   ENDIF
+     CSR                   MOVEAA40,1     DSVNAM
+     CSR                   Z-ADD$PWHSE    PHWHSE
+     CSR                   Z-ADDDSVEN     PHVEN
+     CSR                   MOVE DSVNAM    PHVNAM
+     CSR                   WRITEPHREC                  77
+     CSR                   ENDIF
+     C*
+     C*  Create detail record.
+     C*
+     CSR                   EXSR CRTPD
+     C*
+     CSR         ENDNS     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  NOTFND  Add record to ZZZNOTFND P.O.
+     C*
+     CSR         NOTFND    BEGSR
+     C*
+     C*  Get/Create occurance for PO.
+     C*
+     CSR                   MOVE PO,1      PHPO
+     CSR                   EXSR GETPO
+     CSR         FOUND     CABEQ*OFF      ENDNF
+     C*
+     C*  If one just created, create PO header record.
+     C*
+     CSR         DSVNAM    IFEQ *BLANKS
+     CSR                   EXSR DELPO
+     CSR                   MOVE VNAME,1   DSVNAM
+     CSR                   Z-ADD$PWHSE    PHWHSE
+     CSR                   Z-ADDDSVEN     PHVEN
+     CSR                   MOVE DSVNAM    PHVNAM
+     CSR                   WRITEPHREC                  77
+     CSR                   ENDIF
+     C*
+     C*  Create detail record.
+     C*
+     CSR                   EXSR CRTPD
+     C*
+     CSR         ENDNF     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  STKOH   Add record to STK P.O.
+     C*
+     CSR         STKOH     BEGSR
+     C*
+     C*  Create PO number.
+     C*
+     CSR                   MOVE *BLANKS   PHPO
+     CSR         'STK'     CAT  ITWHDP:0  PHPO
+     CSR         PHPO      CAT  ITSTYP:0  PHPO
+     C*
+     C*  Get/Create occurance for PO.
+     C*
+     CSR                   EXSR GETPO
+     CSR         FOUND     CABEQ*OFF      ENDSTK
+     C*
+     C*  If one just created, create PO header record.
+     C*
+     CSR         DSVNAM    IFEQ *BLANKS
+     CSR                   EXSR DELPO
+     CSR                   MOVEAVNAME,2   A40,1
+     CSR                   MOVEAITWHDP    A40,1
+     CSR         ITSTYP    IFEQ 'P'
+     CSR                   MOVEA'PIR  '   A40,7
+     CSR                   ELSE
+     CSR                   MOVEA'FIXED'   A40,7
+     CSR                   ENDIF
+     CSR                   MOVEAA40,1     DSVNAM
+     CSR                   Z-ADD$PWHSE    PHWHSE
+     CSR                   Z-ADDDSVEN     PHVEN
+     CSR                   MOVE DSVNAM    PHVNAM
+     CSR                   WRITEPHREC                  77
+     CSR                   ENDIF
+     C*
+     C*  Create detail record.
+     C*
+     CSR                   EXSR CRTPD
+     C*
+     CSR         ENDSTK    ENDSR
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**  PO
+ZZZNOTFND
+**  VNAME
+Items Not Found
+XXXXX XXXXX Items with stock on hand
+XXXXX XXXXX Items without stock on hand

@@ -1,0 +1,273 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PCK210CL  Create test orders for warehouse 900                   */
+/*  17 July 1997                                                     */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*  Revisions:                                                       */
+/*                                                                   */
+/*    09/05/97  DAS  4.04                                            */
+/*      - Added order type.                                          */
+/*                                                                   */
+/*    09/17/97  DAS  4.05                                            */
+/*      - Added cross dock option.                                   */
+/*                                                                   */
+/*    07/17/02  DAS  4.16                                            */
+/*      - Added ftp option.                                          */
+/*                                                                   */
+/*    11/09/03  DAS  4.17                                            */
+/*      - Added MONMSG after DLTOVR                                  */
+/*                                                                   */
+/*    07/21/11  DAS  6.40a                                           */
+/*      - Added Batch pick option                                    */
+/*      - Revised to use OI280 '4' files.                            */
+/*      - Added IMPFORDDM file.                                      */
+/*                                                                   */
+/*    09/07/12  DAS  6.40b                                           */
+/*      - Added Pre pick option                                      */
+/*                                                                   */
+/*    09/29/12  DAS  6.40c                                           */
+/*      - Automatically call OI280CL to do import.                   */
+/*                                                                   */
+/*    02/08/13  DAS  6.50a                                           */
+/*      - Revised to not do automatic call for Staging               */
+/*                                                                   */
+/*    01/30/16  DAS  7.00a                                           */
+/*      - Added AMP pick option                                      */
+/*                                                                   */
+/*    11/14/19  DAS  7.30                                            */
+/*      - Made warehouse an option field                             */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ PCK210CL:   PGM        PARM(&YNOPTS &ORDTYPE &XDOCK &FTP &BPCK &PPCK +
+                          &APCK &ACOD &WHSEA) /* 730aM  */
+                          /* 404 Added &ORDTYPE */
+                          /* 405 Added &XDOCK   */
+                          /* 406 Added &FTP     */
+                          /* 640a Added &BPCK    */
+                          /* 640b Added &PPCK    */
+                          /* 700a Added &APCK, &ACOD */
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(PCK210CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(PCK210)
+
+  /* Informational messages */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Create test orders for warehouse 900')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Creating test orders for warehouse 900')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&APCK)       TYPE(*CHAR) LEN(1)   /* 700aA */
+             DCL        VAR(&ACOD)       TYPE(*CHAR) LEN(3)   /* 700aA */
+             DCL        VAR(&EXIST)      TYPE(*LGL)           /* 416 A */
+             DCL        VAR(&FTP)        TYPE(*CHAR) LEN(1)   /* 416 A */
+             DCL        VAR(&BPCK)       TYPE(*CHAR) LEN(1)   /* 640aA */
+             DCL        VAR(&PPCK)       TYPE(*CHAR) LEN(1)   /* 640bA */
+             DCL        VAR(&ORDTYPE)    TYPE(*CHAR) LEN(1)   /* 404 A */
+             DCL        VAR(&OTYPE)      TYPE(*CHAR) LEN(8)   /* 640cA */
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&XDOCK)      TYPE(*CHAR) LEN(1)   /* 405 A */
+             DCL        VAR(&YNOPTS)     TYPE(*CHAR) LEN(20)
+             DCL        VAR(&WHSEA)      TYPE(*CHAR) LEN(3) /* 730aA */
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Don't get options if being run from JOBQ. */
+
+             RTVJOBA    TYPE(&TYPE)
+             IF (&TYPE = '0') THEN(GOTO SKIP1)
+
+/*  Get report options. */
+
+             CALL       PGM(&OPTPGM) PARM(&YNOPTS &ORDTYPE &XDOCK &FTP +
+                          &BPCK &PPCK &APCK &ACOD &WHSEA &RETURN) /* +
+                          730aM */
+
+/*  See if user wants to proceed. */
+
+             IF         COND((&RETURN *EQ '*CANCEL') *OR (&RETURN +
+                          *EQ '*EXIT')) THEN(DO)
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+
+/*  See if user wants to put report on JOBQ. */
+
+             IF (&RETURN *EQ '*JOBQ') THEN(DO)
+                SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&YNOPTS &ORDTYPE +
+                             &XDOCK &FTP &BPCK &PPCK &APCK &ACOD &WHSEA)) +
+                             JOB(&SBMPGM) /* 730aM */
+               GOTO    CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+ SKIP1:
+
+/*  If not using FTP then skip member stuff */
+
+             IF (&FTP *NE 'F') THEN(GOTO SKIPMBR)
+
+/*  See if header member exists (1=EXIST) */
+
+             CHGVAR     VAR(&EXIST) VALUE('1')
+             CHKOBJ     OBJ(IMPFORDH4) OBJTYPE(*FILE) MBR(PCKTEST)
+             MONMSG     MSGID(CPF9815) EXEC(CHGVAR VAR(&EXIST) +
+                          VALUE('0'))
+
+/*  If header member does not exist then create it */
+
+             IF (*NOT &EXIST) DO
+                ADDPFM FILE(IMPFORDH4) MBR(PCKTEST) +
+                       TEXT('Created by PCK210CL')
+             ENDDO
+
+/*  If header member exists then clear it */
+
+             IF (&EXIST) DO
+                CLRPFM FILE(IMPFORDH4) MBR(PCKTEST)
+             ENDDO
+
+/*  See if header misc member exists (1=EXIST) */
+
+             CHGVAR     VAR(&EXIST) VALUE('1')
+             CHKOBJ     OBJ(IMPFORDHM) OBJTYPE(*FILE) MBR(PCKTEST)
+             MONMSG     MSGID(CPF9815) EXEC(CHGVAR VAR(&EXIST) +
+                          VALUE('0'))
+
+/*  If header misc member does not exist then create it */
+
+             IF (*NOT &EXIST) DO
+                ADDPFM FILE(IMPFORDHM) MBR(PCKTEST) +
+                       TEXT('Created by PCK210CL')
+             ENDDO
+
+/*  If header misc member exists then clear it */
+
+             IF (&EXIST) DO
+                CLRPFM FILE(IMPFORDHM) MBR(PCKTEST)
+             ENDDO
+
+/*  See if detail member exists (1=EXIST) */
+
+             CHGVAR     VAR(&EXIST) VALUE('1')
+             CHKOBJ     OBJ(IMPFORDD4) OBJTYPE(*FILE) MBR(PCKTEST)
+             MONMSG     MSGID(CPF9815) EXEC(CHGVAR VAR(&EXIST) +
+                          VALUE('0'))
+
+/*  If detail member does not exist then create it */
+
+             IF (*NOT &EXIST) DO
+                ADDPFM FILE(IMPFORDD4) MBR(PCKTEST) +
+                       TEXT('Created by PCK210CL')
+             ENDDO
+
+/*  If detail member exists then clear it */
+
+             IF (&EXIST) DO
+                CLRPFM FILE(IMPFORDD4) MBR(PCKTEST)
+             ENDDO
+
+/*  See if detail misc member exists (1=EXIST) */
+
+             CHGVAR     VAR(&EXIST) VALUE('1')
+             CHKOBJ     OBJ(IMPFORDDM) OBJTYPE(*FILE) MBR(PCKTEST)
+             MONMSG     MSGID(CPF9815) EXEC(CHGVAR VAR(&EXIST) +
+                          VALUE('0'))
+
+/*  If detail misc member does not exist then create it */
+
+             IF (*NOT &EXIST) DO
+                ADDPFM FILE(IMPFORDDM) MBR(PCKTEST) +
+                       TEXT('Created by PCK210CL')
+             ENDDO
+
+/*  If detail misc member exists then clear it */
+
+             IF (&EXIST) DO
+                CLRPFM FILE(IMPFORDDM) MBR(PCKTEST)
+             ENDDO
+
+/*  Override files to use correct memeber */
+
+             OVRDBF     FILE(IMPFORDH4) MBR(PCKTEST)
+             OVRDBF     FILE(IMPFORDHM) MBR(PCKTEST)
+             OVRDBF     FILE(IMPFORDD4) MBR(PCKTEST)
+             OVRDBF     FILE(IMPFORDDM) MBR(PCKTEST)
+
+ SKIPMBR:
+
+/* Get printer device to use and then execute print program. */
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+             CALL       PGM(PCK215) PARM(&TYPE &ORDTYPE &XDOCK &FTP &BPCK +
+                          &PPCK &APCK &ACOD &YNOPTS &WHSEA) /* 730aM */
+
+/* Automacially call import program   640cA */
+
+             IF (&FTP *EQ 'F') DO                   /* 650aA  */
+
+               CHGVAR     VAR(&OTYPE) VALUE(' ')
+               IF (&ORDTYPE *EQ 'W') +
+                 THEN(CHGVAR VAR(&OTYPE) VALUE('*WILL4'))
+               IF (&ORDTYPE *EQ 'S') +
+                 THEN(CHGVAR VAR(&OTYPE) VALUE('*SINGLE4'))
+
+               CALL       PGM(OI280CL) PARM('PCKTEST' &OTYPE '' '' '')
+
+             ENDDO                                  /* 650aA  */
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             IF (&FTP *EQ 'F') DO
+               DLTOVR FILE(IMPFORDH4 IMPFORDHM IMPFORDD4 IMPFORDDM)
+               MONMSG MSGID(CPF0000)
+             ENDDO
+
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

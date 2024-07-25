@@ -1,0 +1,38 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  QDTRANRCV   Recover tran records from journal.
+     F*  18 May 2005
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     FJRNTRAN   IP   E             DISK    prefix(jr_)
+     FPIRTRAN   UF   E           K DISK
+
+     C*----------------------------------------------------------------
+     C* Main line
+     C*
+     C                   if        jr_jopgm =  'QDTRANRCV'
+     C                             and jr_joentt =  'UB'
+     C                             and jr_jotime <  '181700'
+
+     C     jr_pttrn#     chain     pirtran
+     C                   if        %found
+     C                   if        jr_ptedte > ptedte
+     C                             or jr_ptedte = ptedte
+     C                             and jr_ptetim > ptetim
+     C                   eval      ptstat = jr_ptstat
+     C                   eval      ptedte = jr_ptedte
+     C                   eval      ptetim = jr_ptetim
+     C                   eval      ptcdte = jr_ptcdte
+     C                   eval      ptctim = jr_ptctim
+     C                   update    ptrec
+     C                   endif
+     C                   endif
+
+     C                   endif
+
+     C     bottom        tag

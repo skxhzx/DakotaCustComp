@@ -1,0 +1,328 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  UPD218B   Convert POH & POD to POHDR, PODTL, POHHDR, POHDTL
+     F*  05 February 1997
+     F*  Roxanne Harrison
+     F*
+     F*  Note:  Convert POH & POD to POHDR & PODTL if export date is blank
+     F*         otherwise write to POHHDR & POHDTL (history files)
+     F*
+     F*  Revisions
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPOH     IP  E           K        DISK
+     F            PHREC                             KRENAMEPHNREC
+     FPOD     IF  E           K        DISK
+     F            PDREC                             KRENAMEPDNREC
+     FPOHDR   O   E           K        DISK                      A
+     FPODTL   O   E           K        DISK                      A
+     FPOHHDR  O   E           K        DISK                      A
+     FPOHDTL  O   E           K        DISK                      A
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  30 ERFLD
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      None
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*
+     C*  If export date is blank update POHDR & PODTL (po files)
+     C*     else update POHHDR & POHDTL (history po files)
+     C*
+     C           PHUDTE    IFEQ 0
+     C                     EXSR ZZREG
+     C                     ELSE
+     C                     EXSR ZZHST
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE '0'       ERROR   1
+     C*
+     C*  Define partial key for POD  file.
+     C*
+     CSR         PARTKY    KLIST
+     CSR                   KFLD           PHWHSE
+     CSR                   KFLD           PHPO
+     C*
+     C*
+     C*  Initialize message handling
+     C*
+     CSR                   EXSR ZMIMSG
+     C*
+     C*   Call user added initialization routine.
+     C*
+     CSR                   EXSR ZZINZ
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     C**                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C**                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*   PIR7971  Error in writing a record.
+     C*
+     CSR         ZM71      BEGSR
+     CSR                   MOVE 'PIR7971' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7972  Error in updating a record.
+     C*
+     CSR         ZM72      BEGSR
+     CSR                   MOVE 'PIR7972' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     C*
+     CSR                   MOVE #PROG     $PPRG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZHST    Update PO History files.
+     C*
+     CSR         ZZHST     BEGSR
+     C*
+     CSR                   MOVE '1'       PHHSTA
+     CSR                   Z-ADDPHWHSE    PHHWHS
+     CSR                   MOVE PHPO      PHHPO
+     CSR                   Z-ADDPHVEN     PHHVEN
+     CSR                   MOVE PHVNAM    PHHVNA
+     CSR                   MOVE PHVAD1    PHHVA1
+     CSR                   MOVE PHVAD2    PHHVA2
+     CSR                   MOVE PHVCTY    PHHVCT
+     CSR                   MOVE PHVST     PHHVST
+     CSR                   MOVE PHVZP1    PHHVZP
+     CSR                   Z-ADDPHDATE    PHHDTE
+     CSR                   Z-ADDPHTIME    PHHTIM
+     CSR                   MOVE PHAMPM    PHHAMP
+     CSR                   Z-ADD0         PHHUDT
+     CSR                   Z-ADD0         PHHUTI
+     CSR                   Z-ADDPHUDTE    PHHEDT
+     CSR                   Z-ADDPHUTIM    PHHETI
+     CSR                   WRITEPHHREC                 78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM71
+     CSR                   ENDIF
+     C*   Update PO history detail file.
+     CSR         PARTKY    SETLLPOD                  79
+     CSR                   MOVE *IN79     EOF     1
+     CSR         EOF       DOWEQ*OFF
+     CSR         PARTKY    READEPOD                      79
+     CSR                   MOVE *IN79     EOF
+     CSR         *IN79     IFEQ *OFF
+     CSR                   Z-ADDPDWHSE    PHDWHS
+     CSR                   MOVE PDPO      PHDPO
+     CSR                   Z-ADDPDSEQ     PHDSEQ
+     CSR                   MOVE PDITEM    PHDITM
+     CSR                   MOVE PDVITM    PHDVIT
+     CSR                   MOVE PDSPCL    PHDSPC
+     CSR                   Z-ADDPDQOR1    PHDQO1
+     CSR                   Z-ADDPDQOR2    PHDQO2
+     CSR                   Z-ADDPDQOR3    PHDQO3
+     CSR                   Z-ADDPDQRC1    PHDQR1
+     CSR                   Z-ADDPDQRC2    PHDQR2
+     CSR                   Z-ADDPDQRC3    PHDQR3
+     CSR                   Z-ADDPDDWGT    PHDWGT
+     CSR                   Z-ADDPHUDTE    PHDEDT
+     CSR                   Z-ADDPHUTIM    PHDETI
+     CSR                   WRITEPHDREC                 78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM71
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR         ENDHST    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZREG    Update PO files.
+     C*
+     CSR         ZZREG     BEGSR
+     C*
+     CSR                   MOVE '1'       PHSTAT
+     CSR                   WRITEPHREC                  78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM71
+     CSR                   ENDIF
+     C*   Update PO detail file.
+     CSR         PARTKY    SETLLPOD                  79
+     CSR                   MOVE *IN79     EOF     1
+     CSR         EOF       DOWEQ*OFF
+     CSR         PARTKY    READEPOD                      79
+     CSR                   MOVE *IN79     EOF
+     CSR         *IN79     IFEQ *OFF
+     CSR                   WRITEPDREC                  78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM71
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR         ENDREG    ENDSR

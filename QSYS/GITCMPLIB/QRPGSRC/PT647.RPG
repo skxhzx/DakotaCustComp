@@ -1,0 +1,471 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2003 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  PT647     Host pick Will Call Exception report.
+     F*  06 April 2000
+     F*  Max Blacknik
+     F*
+     F*  Revisions:
+     F*
+414 AF*    04/06/00  MLB  4.14
+     F*      - Created.
+     F*
+414aAF*    09/18/00  DAS  4.14a
+     F*      - Revised routine ZZSTAT to always call RH251, which
+     F*        uses the standard export files. Routine ZZSTAT then
+     F*        turns around and deletes the records from the export
+     F*        files because there is no reason to send them back to
+     F*        the host.
+     F*
+417 AF*    02/13/03  MLB  4.17
+     F*      - Fix: Revised ZZCLSE to call new routine ZZENDI to close
+     F*        any open(inuse) Indirect tasks before closing current
+     F*        direct task.  Having Indirect tasks still open while
+     F*        closing the current task was causing the direct task
+     F*        to be updated with negative direct minutes.
+417aAF*    07/08/03  RH   4.17a
+    AA*      - ORDT file changed, Re-compile only.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  77        Not on file/End of file indicator
+     F*  78        Not on file/End of file indicator
+     F*  79        Not on file/End of file indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FEXPORDH UF  E           K        DISK
+     FEXPORDD UF  E           K        DISK
+     FEXPORDT UF  E           K        DISK
+     FLABEL8  IF  E           K        DISK
+     FOPTIONS IF  E           K        DISK
+     FPIRTRAN4IF  E           K        DISK
+     FRTEHED  IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     I*----------------------------------------------------------------
+     I*  Data structure for FKEY and UKEY
+     I*
+     I            DS
+     I                                        1  50 DSFKEY
+     I*                                       1  50 DSUKEY
+     I I            0                         1   30PTWHSE
+     I                                        4   4 PTGRP1
+     I                                        5   5 PTGRP2
+     I                                        6  14 PTRTPO
+     I I            0                        15  210PTTRN#
+     I            DS
+     I                                        1  50 DSUKEY
+     I I            0                         1   30L8WHSE
+     I                                        4   8 L8RTE
+     I                                        9  17 L8PO
+     I I            0                        18  240L8TRN#
+     I*----------------------------------------------------------------
+     I*  *FTP      -  FTP options
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPFTP   -  Use FTP for exporting (Y,N)
+     I*    OPSRVR  -  FTP Server name
+     I*    OPUSER  -  FTP User id
+     I*    OPPWD   -  FTP Password
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPFTP
+     I                                        2  33 OPSRVR
+     I                                       34  48 OPUSER
+     I                                       49  63 OPPWD
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+417 AI              'ADJTRAN  '           C         @ADJTR
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I                                       81  88 $PTYPE
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$CERM       DS
+     I                                        1  60 XCERM
+     I                                        1   4 $CMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $CMD    Not referenced
+     C*      $WHSE   Warehouse number.
+     C*      $RTID   Route id.
+     C*
+     C*    Returned Parameters
+     C*      $RTN    blank    - No problem encountered.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $CMD    8
+     C                     PARM           $WHSE   3
+     C                     PARM           $RTID   5
+     C                     PARM           $RTN    8
+     C*----------------------------------------------------------------
+     C*
+     C           KEYL8     SETLLLABEL8
+     C           FOREVR    DOWEQFOREVR
+     C           KEYL8     READELABEL8                   79
+     C                     SELEC
+     C           *IN79     WHEQ *ON
+     C                     LEAVE
+     C*
+     C                     OTHER
+     C*
+     C                     EXSR ZZCLSE
+     C*
+     C                     ENDSL
+     C                     ENDDO
+     C*
+     C                     EXSR ZZSTAT
+     C*
+     C                     MOVE *ON       *INLR
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*    Partial key for file EXPORDD.
+     C*
+     CSR         KEYEXD    KLIST
+     CSR                   KFLD           OEHWHS
+     CSR                   KFLD           OEHORD
+     C*
+     C*    Partial key for file LABEL8.
+     C*
+     CSR         *LIKE     DEFN L8PO      KYPO
+     CSR         KEYL8     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYPO
+     C*
+     C*    Define key for file OIPTIONS.
+     C*
+     CSR         *LIKE     DEFN OPWHSE    KYWHSE
+     CSR         *LIKE     DEFN OPCODE    KYCODE
+     CSR         KEYOP     KLIST
+     CSR                   KFLD           KYWHSE
+     CSR                   KFLD           KYCODE
+     C*
+     C*    Get FTP options from file OPTIONS.
+     C*
+     CSR                   MOVE *ZEROS    KYWHSE
+     CSR                   MOVE '*FTP    'KYCODE
+     CSR         KEYOP     CHAINOPTIONS              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE 'N'       OPFTP
+     CSR                   ENDIF
+     C*
+     C*    Define partial key for PIRTRAN4.
+     C*
+     CSR         *LIKE     DEFN PTGRP2    KYGRP2
+     CSR         *LIKE     DEFN PTRTPO    KYRTPO
+     CSR                   MOVE 'W'       KYGRP2
+     CSR         KEYPT4    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           KYGRP2
+     CSR                   KFLD           KYRTPO
+     C*
+     C*    Define partial key for RTEHED file.
+     C*
+     CSR         KEYRH     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     C*
+     CSR                   MOVE $WHSE     $PWHSE  30
+     CSR                   MOVE $RTID     $PRTID  5
+     CSR                   MOVEL$RTID     KYRTPO
+     C*
+     CSR                   MOVE *ON       CLOSE   1
+     CSR                   MOVE *ON       FOREVR  1
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  INZPAR   Initialize parameters for calling add/chg/del program
+     C*
+     CSR         INZPAR    BEGSR
+     CSR                   CLEAR$PARMS
+     CSR                   MOVE #PROG     $PPRG
+     CSR                   MOVE '*INTER  '$PTYPE
+     CSR                   MOVE DSUKEY    $PUKY
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCLSE  Close all Will Call transactions.
+     C*
+     CSR         ZZCLSE    BEGSR
+     C*
+     CSR                   EXSR INZPAR
+417 AC*
+417 AC*    Close any open(Inuse) Indirect tasks.
+417 ACSR                   EXSR ZZENDI
+417 AC*
+     CSR                   MOVE '*CLOSE  '$PCMD
+     CSR                   CALL 'PT132'
+     CSR                   PARM           $PARMS
+     C*
+     C*     Error occured - Error message sent back
+     C*
+     CSR         $PRTN     IFEQ '*ERROR  '
+     C*R                   MOVE '1'       ERROR
+     C*R                   MOVE '1'       CANCEL
+     C*R                   MOVE '1'       STOP
+     C*R                   MOVEL$PERM     ERRMSG
+     C*R                   EXSR ZM0105
+     CSR                   ELSE
+     C*
+     C*     Error occured - Error message sent to program msgq
+     C*
+     CSR         $PRTN     IFEQ '*PGMQ   '
+     C*R                   MOVE '1'       ERROR
+     C*R                   MOVE '1'       CANCEL
+     C*R                   MOVE '1'       STOP
+     C*R                   MOVE $PMSG     #MSGK
+     C*R                   EXSR ZMQMSG
+     CSR                   ELSE
+     C*
+     C*     Close canceled.
+     C*
+     CSR         $PRTN     IFEQ '*CANCEL '
+     C*R                   MOVE '1'       CANCEL
+     C*R                   MOVE '1'       STOP
+     CSR                   ELSE
+     C*
+     C*     Close was successful.
+     C*
+     CSR         $PRTN     IFEQ '*OK     '
+     C*R                   MOVE $PMSG     #MSGK
+     C*R                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+417 AC*
+417 AC*----------------------------------------------------------------
+417 AC*
+417 AC*  ZZENDI  End current Indirect task.
+417 AC*
+417 ACSR         ZZENDI    BEGSR
+417 AC*
+417 AC*    Send currect Direct transaction number to ensure that this
+417 AC*    transaction doesn't get closed by mistake.
+417 ACSR                   Z-ADDPTTRN#    @PTRN#
+417 AC*
+417 ACSR                   CALL @ADJTR
+417 ACSR                   PARM '*CLOSEI '@PCMD   8
+417 ACSR                   PARM           #JOB
+417 ACSR                   PARM           @PTRN#  70
+417 ACSR                   PARM *BLANKS   @PTASK  6
+417 ACSR                   PARM $PWHSE    @PWHSE  30
+417 ACSR                   PARM *BLANKS   @PWHDP  5
+417 ACSR                   PARM *BLANKS   @PSTYP  1
+417 ACSR                   PARM 0         @PCUBE  93
+417 ACSR                   PARM 0         @PSWGT  92
+417 ACSR                   PARM 0         @PPCS   50
+417 ACSR                   PARM 0         @PAISL  50
+417 ACSR                   PARM 0         @PQTY1  50
+417 ACSR                   PARM 0         @PQTY2  50
+417 ACSR                   PARM 0         @PQTY3  50
+417 ACSR                   PARM '0'       @PRTE   5
+417 ACSR                   PARM ' '       @PPO    9
+417 ACSR                   PARM ' '       @PGRP1  1
+417 ACSR                   PARM ' '       @PGRP2  1
+417 ACSR                   PARM ' '       @PRTN   8
+417 ACSR                   PARM ' '       @PMSG   4
+417 AC*
+417 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZRMV    Remove exported records from files.
+     C*
+     CSR         ZZRMV     BEGSR
+     C*
+     C*
+     C*    Remove all records from export files.
+     C*
+     CSR         $PWHSE    SETLLEXPORDH
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         $PWHSE    READEEXPORDH                  79
+     CSR                   SELEC
+     CSR         *IN79     WHEQ *ON
+     CSR                   LEAVE
+     C*
+     C*    Processing right batch.
+     C*
+     CSR         OEHPBT    WHEQ RHPBAT
+     C*
+     CSR                   DELETOEHREC
+     C*
+     CSR         KEYEXD    SETLLEXPORDD
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYEXD    READEEXPORDD                  78
+     CSR                   SELEC
+     CSR         *IN78     WHEQ *ON
+     CSR                   LEAVE
+     C*
+     CSR                   OTHER
+     CSR                   DELETOEDREC
+     CSR                   ENDSL
+     CSR                   ENDDO                           EXPORDD file
+     C*
+     C*    Remove item transaction records.
+     C*
+     CSR         KEYEXD    SETLLEXPORDT
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYEXD    READEEXPORDT                  77
+     CSR                   SELEC
+     CSR         *IN77     WHEQ *ON
+     CSR                   LEAVE
+     CSR                   OTHER
+     CSR                   DELETOETREC
+     CSR                   ENDSL
+     CSR                   ENDDO                           EXPORDT file
+     C*
+     CSR                   ENDSL
+     CSR                   ENDDO                           EXPORDH file
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZSTAT   Status check.
+     C*           When all transactions have been closed export route
+     C*           and changed RTEHED status to '6'.
+     C*
+     CSR         ZZSTAT    BEGSR
+     C*
+     C*    Loop through all the transaction for route.
+     C*
+     CSR                   MOVE *ON       CLOSE
+     CSR         KEYPT4    SETLLPIRTRAN4
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYPT4    READEPIRTRAN4                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     If not a selection or letdown record then loop.
+     C*
+     CSR         PTGRP1    IFNE 'S'
+     CSR         PTGRP1    ANDNE'L'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     If transaction is not closed, we're done.
+     C*
+     CSR         PTSTAT    IFLT '4'
+     CSR                   MOVE *OFF      CLOSE
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     C*    If all transactions were closed, export and update status.
+     C*
+     CSR         CLOSE     IFEQ *ON
+     C*
+     C*  4.11 Notes
+     C*
+     C*    The call to RH151 has been left alone, except to include
+     C*    it in the new select statement. Notice, that RH151 will
+     C*    never display an error because it does not use $PRTN.
+     C*
+     CSR         KEYRH     CHAINRTEHED               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   RHRTE
+     CSR                   MOVE *ZEROS    RHPBAT
+     CSR                   ENDIF
+     C*
+414aDC**                   SELEC
+414aDC**         OPFTP     WHEQ 'Y'
+414aDC**                   CALL 'RH255CL'
+414aDC**                   PARM #PROG     $BPGM  10
+414aDC**                   PARM $PWHSE    $BRWHS  30
+414aDC**                   PARM $PRTID    $BRTID  5
+414aDC**                   PARM RHRTE     $BTRTE  5
+414aDC**                   PARM ' '       $RTNCD  8
+414aDC**                   PARM ' '       $MSGID  7
+414aDC**                   OTHER
+     CSR                   CALL 'RH251'
+     CSR                   PARM $PWHSE    $BRWHS  30
+     CSR                   PARM $PRTID    $BRTID  5
+     CSR                   PARM RHRTE     $BTRTE  5
+     CSR                   PARM ' '       $BRTN   8
+     C*
+     CSR                   EXSR ZZRMV
+414aDC**                   ENDSL
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *

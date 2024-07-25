@@ -1,0 +1,4663 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1997 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  PLBL43    Truck build picking labels - 3-Up
+     F*  26 June 1997
+     F*  Dave Sommerville
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions
+     F*
+     F*    06/21/97  DAS  4.00
+     F*      -  Major revisions for truck build process.  This program
+     F*         based on PLMB03.  Old revisions were removed to clean
+     F*         up program.
+     F*      - Initial revisions have not be marked with the version.
+     F*      - A new route id field is used to uniquely identify routes.
+     F*      - Options are now tied to zones, not departments.
+     F*        Therefore, file OPTIONS has been replaced with OPTIONZ.
+     F*        There are no override options anymore. Options are now
+     F*        passed into this program. (OPZDTA)
+     F*      - Each zone can have a different label printing program.
+     F*        Therefore, this program has been modified to only
+     F*        print the labels for one zone.
+     F*
+402 AF*    07/18/97  DAS  4.02
+     F*      -  Revise PRTSEL to set *OFF COMBO flag.
+     F*
+402 AF*    07/27/97  DAS  4.02
+     F*      -  Added pallet id to file PLTSTP1.
+     F*      -  Added pallet id to key KYPSS1.
+     F*
+403 AF*    08/01/97  HNK  4.03
+     F*      -  Added pallet # on Zone pickup label.
+     F*      -  Weight field corrected on Set Summary label.
+     F*      -  Revised SETEND routine to call zone pickup header
+     F*         routine when zone changes.
+     F*
+404 AF*    08/05/97  DAS  4.04
+     F*      -  Revised routine SETEND to initialize W1 variables.
+     F*      -  Added transaction number to zone pickup and set sum labels.
+     F*      -  Changed Disc. label to use LSTTRN instead of LBTRN#.
+     F*      -  Changed key to PLTSUM3 file.
+     F*      -  Revised mainline to reposition to PLTSUM3 record after
+     F*         returning from PRTSEL routine.
+     F*
+404 AF*    08/06/97  HNK  4.04
+     F*      -  Route number added to Pick and Bulk pick labels.
+     F*
+404 AF*    08/08/97  HNK  4.04
+     F*      -  Revised method of getting pallet number to print.
+404 AF*    09/03/97  RH   4.04
+     F*      -  Print cross dock labels after normal selection labels,
+     F*         before discrepency labels with a warning label.
+     F*      -  Create PRTXDK to print cross dock selection labels.
+     F*
+405 AF*    09/10/97  DAS  4.05
+     F*      -  Added option to skip printing of letdown labels.
+     F*
+405 AF*    09/11/97  DAS  4.05
+     F*      -  Revised zone pickup label to print every item.
+     F*
+405 AF*    09/16/97  HNK  4.05
+     F*      -  Revised to print PSPAL# instead of PAL# for Bulk label.
+     F*
+405 AF*    09/17/97  HNK  4.05
+     F*      -  Revised SETEND routine to only force the printing of a
+     F*         zone pickup label if there were merge records.
+     F*
+406 AF*    09/18/97  HNK  4.06
+     F*      -  Fixed extra label printing problem. Field 'S'
+     F*         initialized to zero.
+411 AF*    06/21/99  RH
+     F*      - Recompiled - ITEMLNK file changed.
+     F*
+413 AF*    10/07/99  DAS 4.13
+     F*      - Revised PRTBLK to ignore extra PLTSUM3 and PLTSTP3 recs.
+     F*        Note: PLTSUM3 can have multiple bulk picks on a single
+     F*        pallet which then causes PLTSTP3 to create duplicate
+     F*        join records for a single label record because the files
+     F*        are only joined by pallet id.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*  90        Overflow indicator for exception report
+     F*  91        Overflow indicator for catch weight report
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPLTSUM3 IF  E           K        DISK
+     FPLTSTP1 IF  E           K        DISK
+     FLABEL31 IF  E           K        DISK
+     FLABEL32 IF  E           K        DISK
+     FLABEL33 IF  E           K        DISK
+213 AFPIRITEM IF  E           K        DISK
+213 AFITEMLNK IF  E           K        DISK
+405 AFOPTIONS IF  E           K        DISK
+     FPLBL43PRO   E             90     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A80        80  1
+     E                    A58        58  1
+     E                    STP         9  2 0
+     E                    CH1        12 10
+     E                    CH2        12 10
+     E                    OVRPRT  1   2 80
+405 AI*----------------------------------------------------------------
+405 AI*  *SYSTEM  -  System options.
+405 AI*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPEPM   -  Using EPM module (Y,N).
+     I*    OPRF    -  Using RF module (Y,N).
+     I*    OPCAPC  -  Capture catch weights at pick closing (Y,N).
+     I*    OPLETD  -  Print letdown labels (Y,N).
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPEPM
+     I                                        2   2 OPRF
+     I                                        3   3 OPCAPC
+     I                                        4   4 OPLETD
+     I                                      117 117 OPTEN2
+     I*----------------------------------------------------------------
+     I*  General Data structure.
+     I*
+     I*  Line 1 data structure.
+     I*
+     IDSL1        DS
+     I                                        1  58 LINE1
+     I                                       15  45 STAR1
+     I*   Bulk + Pick
+     I                                        1  12 SL1
+     I                                       23  27 QT1
+     I                                       31  35 UM1
+     I*          Pick
+     I                                       15  19 QT11
+     I                                       21  22 OF11
+     I                                       24  28 QT12
+     I                                       20  22 TOT11
+     I*   Bulk + Repl1 + Repl2
+     I                                       45  49 CN1
+     I                                       51  57 TN1
+404 AI*   Cross Dock
+404 AI                                        1  58 XDK1
+     I*
+     I*  Line 2 data structure.
+     I*
+     IDSL2        DS
+     I                                        1  58 LINE2
+     I*   Bulk + Pick
+     I                                        9  15 CM2
+     I                                       21  24 TI2
+     I                                       25  25 SH2
+     I                                       26  27 HG2
+     I                                       38  46 ST11
+     I                                       49  57 ST21
+     I*   PIRSUMH + SETSUMH
+     I                                        2   5 S22
+     I                                        7  12 C22
+     I                                       16  19 U22
+     I                                       23  28 W22
+     I                                       30  37 R22
+405 AI                                       14  17 I22
+405 AI                                       54  57 P22
+     I*   CATCH WEIGHT + COMBO LABEL
+     I                                        1   4 IT24
+     I                                        6  20 ITM24
+     I                                       22  46 ITD24
+     I                                       48  57 ITP24
+     I*   Transfer
+     I                                       38  40 TFR
+     I*
+     I*  Line 3 data structure.
+     I*
+     IDSL3        DS
+     I                                        1  58 LINE3
+     I*   Bulk + Pick
+     I                                       10  24 PD3
+     I                                       38  46 ST12
+     I                                       49  57 ST22
+     I*   MISC
+     I                                       10  41 CN31
+     I                                       16  47 CN32
+     I*   SETHEAD/PALSUMH/PALSUMD
+     I                                        1  15 CN3
+400 DI*                                      17  23 BT3
+     I                                       17  19 WH3
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S33
+     I                                        7  11 C33
+     I                                       13  19 U33
+     I                                       21  28 W33
+     I                                       30  58 R33
+405 AI                                       14  50 I33
+405 AI                                       51  57 P33
+     I*   PIRSUMT + SETSUMT
+     I                                        5  11 CT33
+     I                                       13  21 UT33
+     I                                       23  32 WT33
+     I*   CATCH WEIGHT
+     I                                        2   5 IT34
+     I                                       21  26 WT34
+     I*   DISCREPANCIES
+     I                                        2   5 S23
+     I                                       15  18 I23
+     I                                       30  39 Q23
+     I*   Transfer
+     I                                       37  39 TFR3
+     I*
+     I*  Line 4 data structure.
+     I*
+     IDSL4        DS
+     I                                        1  58 LINE4
+     I*   Route head
+     I                                        1  15 CN4
+400 DI*                                      17  23 BT4
+     I                                       17  19 WH4
+     I*   Begining bulk head
+     I                                       23  32 CN41
+     I*   Bulk + Pick
+     I                                        1  30 DE4
+     I                                       38  46 ST13
+     I                                       49  57 ST23
+     I*   Begining Replenishments
+     I                                       23  36 CN42
+     I*   Replenishments 1
+     I                                        1   5 FM43
+     I                                        7  18 FS43
+     I                                       33  35 TO43
+     I                                       37  48 TS43
+     I*   SETHEAD/PALSUMH/PALSUMD
+     I                                        1  15 CN44
+400 DI*                                      17  190WH44
+     I                                       17  21 RT44
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S44
+     I                                        7  11 C44
+     I                                       13  19 U44
+     I                                       21  28 W44
+     I                                       30  58 R44
+405 AI                                       14  50 I44
+405 AI                                       51  57 P44
+     I*   PIRSUMT
+     I                                        5  11 CT44
+     I                                       13  21 UT44
+     I                                       23  32 WT44
+     I*   MISC
+     I                                       45  57 AR44
+     I*   DISCREPANCIES
+     I                                        2   5 S43
+     I                                       15  18 I43
+     I                                       30  39 Q43
+     I*   Transfer
+     I                                       37  39 TFR4
+     I*
+     I*  Line 5 data structure.
+     I*
+     IDSL5        DS
+     I                                        1  58 LINE5
+     I*   Route head
+     I                                        1  15 CN5
+400 DI*                                      17  190WH5
+     I                                       17  21 RT5
+     I*   Bulk + Pick
+     I                                       38  46 ST14
+     I                                       49  57 ST24
+     I*   MISC
+     I                                       38  55 CN51
+     I                                       45  57 AR55
+     I*   SETHEAD/PALSUMH/PALSUMD
+     I                                        1  15 CN55
+400 DI*                                      17  21 RT55
+     I                                       17  17 CP55
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S55
+     I                                        7  11 C55
+     I                                       13  19 U55
+     I                                       21  28 W55
+     I                                       30  58 R55
+405 AI                                       14  50 I55
+405 AI                                       51  57 P55
+     I*   PIRSUMT
+     I                                        5  11 CT55
+     I                                       13  21 UT55
+     I                                       23  32 WT55
+     I*   Transfer
+     I                                       37  39 TFR5
+     I*
+     I*  Line 6 data structure.
+     I*
+     IDSL6        DS
+     I                                        1  58 LINE6
+     I*   Route head
+     I                                        1  15 CN6
+400 DI*                                      17  21 RT6
+     I                                       17  17 CP6
+     I*   Bulk + Pick
+     I                                        1  15 IT6
+     I                                       17  21 OR6
+     I                                       23  29 ON6
+     I                                       38  46 ST15
+     I                                       49  57 ST25
+     I*   Replenishments 1 + 2
+     I                                        1   4 QT61
+     I                                        6  11 QN61
+     I                                       13  14 OF61
+     I                                       16  21 QV61
+     I                                       23  28 UM61
+     I                                       31  39 TH61
+     I                                       41  44 TI61
+     I                                       45  45 SH61
+     I                                       46  47 HG61
+     I*
+     I                                       31  34 QT62
+     I                                       36  41 QN62
+     I                                       43  47 UM62
+     I*   MISC
+     I                                       38  55 CN61
+     I                                       37  56 CN62
+     I                                       45  57 AR66
+     I*   SETHEAD/PALSUMH/PALSUMD
+     I                                        1  15 CN63
+400 DI*                                      17  21 SC63
+     I                                       17  22 ZN63
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S66
+     I                                        7  11 C66
+     I                                       13  19 U66
+     I                                       21  28 W66
+     I                                       30  58 R66
+405 AI                                       14  50 I66
+405 AI                                       51  57 P66
+     I*   PIRSUMT
+     I                                        5  11 CT66
+     I                                       13  21 UT66
+     I                                       23  32 WT66
+     I*   Transfer
+     I                                       37  39 TFR6
+     I*
+     I*  Line 7 data structure.
+     I*
+     IDSL7        DS
+     I                                        1  58 LINE7
+     I*   Route head
+     I                                        1  15 CN7
+400 DI*                                      17  21 SC7
+     I                                       17  22 ZN7
+     I*   Bulk + Pick
+     I                                        7  14 CS7
+     I                                       16  26 CSN7
+     I                                       38  46 ST16
+     I                                       49  57 ST26
+     I*   MISC
+     I                                       38  55 CN71
+     I                                       36  57 CN72
+     I                                       45  57 AR77
+     I*   SETHEAD/PALSUMH/PALSUMD
+     I                                        1  15 CN73
+400 DI*                                      17  21 DP73
+     I                                       17  21 TP73
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S77
+     I                                        7  11 C77
+     I                                       13  19 U77
+     I                                       21  28 W77
+     I                                       30  58 R77
+405 AI                                       14  50 I77
+405 AI                                       51  57 P77
+     I*   PIRSUMT
+     I                                        5  11 CT77
+     I                                       13  21 UT77
+     I                                       23  32 WT77
+     I*   Transfer
+     I                                       37  39 TFR7
+     I*
+     I*  Line 8 data structure.
+     I*
+     IDSL8        DS
+     I                                        1  58 LINE8
+     I*   Bulk + Pick
+     I                                       11  12 MN8
+     I                                       13  13 SH8
+     I                                       14  15 DY8
+     I                                       20  29 TK8
+     I                                       38  46 ST17
+     I                                       49  57 ST27
+     I*   Replenishments 1 + 2
+     I                                        1   5 IT81
+     I                                        7  21 IM81
+     I                                       22  31 PD81
+     I*
+     I                                       33  37 IT82
+     I                                       39  53 IM82
+     I*   MISC
+     I                                       38  55 CN81
+     I                                       45  57 AR88
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S88
+     I                                        7  11 C88
+     I                                       13  19 U88
+     I                                       21  28 W88
+     I                                       30  58 R88
+405 AI                                       14  50 I88
+405 AI                                       51  57 P88
+     I*   PIRSUMT
+     I                                        5  11 CT88
+     I                                       13  21 UT88
+     I                                       23  32 WT88
+     I*   Transfer
+     I                                       37  39 TFR8
+     I*
+     I*  Line 9 data structure.
+     I*
+     IDSL9        DS
+     I                                        1  58 LINE9
+     I*   Bulk + Pick
+     I                                        1  32 CM9
+     I                                       38  46 ST18
+     I                                       49  57 ST28
+     I*   Replenishments 1 + 2
+     I                                        1  30 DS91
+     I*
+     I                                       33  58 DS92
+     I*   MISC
+     I                                       38  55 CN91
+     I                                       36  57 CN92
+     I*   PALSUMH
+     I                                        5  10 PL93
+     I                                       16  20 ST93
+     I                                       24  29 PC93
+     I                                       35  38 CU93
+     I                                       43  48 WG93
+     I*   PIRSUMD  + PIRSUL
+     I                                        2   3 S99
+     I                                        7  11 C99
+     I                                       13  19 U99
+     I                                       21  28 W99
+     I                                       30  58 R99
+405 AI                                       14  50 I99
+405 AI                                       51  57 P99
+     I*   PIRSUMT
+     I                                        5  11 CT99
+     I                                       13  21 UT99
+     I                                       23  32 WT99
+     I*   Transfer
+     I                                       37  39 TFR9
+     I*
+     I*  Line 10 data structure.
+     I*
+     IDSL10       DS
+     I                                        1  58 LINE10
+     I*   Bulk + Pick
+     I                                        1  32 CM10
+     I                                       38  46 ST19
+     I                                       49  57 ST29
+     I*   MISC
+     I                                       38  55 CN10
+     I                                       37  56 CN12
+     I*   PALSUMD
+     I                                        5  11 P10
+     I                                       16  18 S10
+     I                                       24  28 C10
+     I                                       32  38 U10
+     I                                       42  48 W10
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S00
+     I                                        7  11 C00
+     I                                       13  19 U00
+     I                                       21  28 W00
+     I                                       30  58 R00
+405 AI                                       14  50 I00
+405 AI                                       51  57 P00
+     I*   PIRSUMT
+     I                                        5  11 CT00
+     I                                       13  21 UT00
+     I                                       23  32 WT00
+     I*   Transfer
+     I                                       37  39 TFR10
+     I*
+     I*  Line 11 data structure.
+     I*
+     IDSL11       DS
+     I                                        1  58 LINE11
+     I*   Bulk + Pick
+     I                                        1  20 CT11
+     I                                       23  24 STT11
+     I                                       27  32 ZIP11
+404 AI                                       34  37 RT11
+404 AI                                       39  43 RTN11
+     I                                       47  50 PL11
+     I                                       51  57 PLN11
+     I*   MISC
+     I                                       38  55 CN11
+     I*   PALSUMD
+     I                                        5  11 P11
+     I                                       16  18 S11
+     I                                       24  28 C11
+     I                                       32  38 U11
+     I                                       42  48 W11
+     I*   PIRSUMD + PIRSUL
+     I                                        2   3 S111
+     I                                        7  11 C111
+     I                                       13  19 U111
+     I                                       21  28 W111
+     I                                       30  58 R111
+405 AI                                       14  50 I111
+405 AI                                       51  57 P111
+     I*   PIRSUMT
+     I                                        5  11 CT111
+     I                                       13  21 UT111
+     I                                       23  32 WT111
+     I*  Data structure for label 1.
+     I*
+     IDS1         DS                         11
+     I                                        1  58 LBL1
+     I*
+     I*  Data structure for label 2.
+     I*
+     IDS2         DS                         11
+     I                                        1  58 LBL2
+     I*
+     I*  Data structure for label 3.
+     I*
+     IDS3         DS                         11
+     I                                        1  58 LBL3
+     I*----------------------------------------------------------------
+     I* Standard API error data structure.
+     I*----------------------------------------------------------------
+     IAPIERR      DS
+     I                                    B   1   40AEBYPR
+     I                                    B   5   80AEBYAV
+     I                                        9  15 AEEXID
+     I                                       16  16 AERESV
+     I                                       17 116 AEEXDT
+     I*----------------------------------------------------------------
+     I* Standard parameters for QECCVTEC (convert edit code) API
+     I*----------------------------------------------------------------
+     IECPARM      DS
+     I                                        1 256 ECMASK
+     I                                    B 257 2600ECMSKL
+     I                                    B 261 2640ECRCVL
+     I                                      265 265 ECZBAL
+     I                                      266 266 ECEDCD
+     I                                      267 267 ECFILL
+     I                                    B 268 2710ECSPRC
+     I                                    B 272 2750ECSDEC
+     I*----------------------------------------------------------------
+     I* Standard parameters for QECEDT (edit) API
+     I*----------------------------------------------------------------
+     IEDPARM      DS
+     I                                    B   1   40EDRCVL
+     I                                        5  14 EDSCLS
+     I                                    B  15  180EDSPRC
+     I                                    B  19  220EDMSKL
+     I                                       23  23 EDZBAL
+     I*----------------------------------------------------------------
+     I*  Medium stop number data structures.
+     I*
+     I            DS
+     I                                        1 120 CH1
+     I                                        1  10 STP11
+     I                                       11  20 STP12
+     I                                       21  30 STP13
+     I                                       31  40 STP14
+     I                                       41  50 STP15
+     I                                       51  60 STP16
+     I                                       61  70 STP17
+     I                                       71  80 STP18
+     I                                       81  90 STP19
+     I                                       91 100 STP110
+     I                                      101 110 STP111
+     I                                      101 120 STP112
+     I            DS
+     I                                        1 120 CH2
+     I                                        1  10 STP21
+     I                                       11  20 STP22
+     I                                       21  30 STP23
+     I                                       31  40 STP24
+     I                                       41  50 STP25
+     I                                       51  60 STP26
+     I                                       61  70 STP27
+     I                                       71  80 STP28
+     I                                       81  90 STP29
+     I                                       91 100 STP210
+     I                                      101 110 STP211
+     I                                      101 120 STP212
+     I*----------------------------------------------------------------
+     I*  Stop summary data structure for one set of labels.
+     I*  Maximum of 9 stops on one pallet, for fixed section items.
+213 MI*  Maximum of 99 stops on one pallet, for PIR section items.
+     I*
+213 MISTPSUM      DS                         99
+     I                                        1   20DSSSTP
+     I                                        3   83DSSCUB
+     I                                        9  152DSSWGT
+     I                                       16  180DSSPCS
+     I                                       19  58 DSSCNM
+     I*----------------------------------------------------------------
+     I*  Pallet summary data structure for one set of labels.
+     I*
+     IPALSUM      DS                          9
+     I                                        1   70DSPPAL
+     I                                        8   90DSPSTP
+     I                                       10  153DSPCUB
+     I                                       16  222DSPWGT
+     I                                       23  250DSPPCS
+     I                                       26  43 STP
+404 AI                                       44  500DSPPLI
+     I*----------------------------------------------------------------
+     I*  PIR stop summary data structure for route.
+     I*
+213 MIPIRSUM      DS                         99
+     I                                        1   20DSRSTP
+     I                                        3   83DSRCUB
+     I                                        9  152DSRWGT
+     I                                       16  180DSRPCS
+     I                                       19  23 DSRWDP
+     I                                       24  63 DSRCNM
+     I                                       64  64 DSRFLG
+     I*----------------------------------------------------------------
+     I*  *PICKLBL  -  Picking label options
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPCLVL  -  Qty level for combined labels.
+     I*    OPCWRB  -  Print combined label warning before.
+     I*    OPCWRA  -  Print combined label warning after.
+     I*    OPUWRB  -  Print unit of measure warning before.
+     I*    OPUWRA  -  Print unit of measure warning after.
+     I*    OPTEXT  -  Text for last line of label.
+     I*    OPERR   -  Error label ratio.
+     I*    OPCWGT  -  Catch weight label ratio.
+     I*    OPLPGM  -  Picking label program.
+     I*    OPPDEV  -  Printer device.
+     I*    OPPFRM  -  Printer form.
+     I*
+     I* Data structure
+     I*
+     IOPZDTA      DS
+     I                                        1   30OPCLVL
+     I                                        4   4 OPCWRA
+     I                                        5   5 OPCWRB
+     I                                        6   6 OPUWRA
+     I                                        7   7 OPUWRB
+     I                                        8  50 OPTEXT
+     I                                       51  520OPERR
+     I                                       53  540OPCWGT
+     I                                       55  64 OPLPGM
+     I                                       65  74 OPPDEV
+     I                                       75  84 OPPFRM
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Other constants
+     I*
+     I              '   Batch      :'     C         CNST1
+     I              '   Warehouse  :'     C         CNST2
+     I              '   Route      :'     C         CNST3
+     I              '   Section    :'     C         CNST4
+     I              '   Department :'     C         CNST5
+     I              'Bulk Picks'          C         CNST6
+     I              'Tran#'               C         CNST7
+     I              'Order'               C         CNST8
+     I              'Customer'            C         CNST9
+     I              'Pal#'                C         CNST10
+400 DI*             'Replenishments'      C         CNST11
+     I              'Letdowns'            C         CNST11
+     I              'From:'               C         CNST12
+     I              'To:'                 C         CNST13
+     I              'Qty:'                C         CNST14
+     I              'Tie/High:'           C         CNST15
+     I              'Item:'               C         CNST16
+     I              'COMBINED LABEL IS NE-C         CNST17
+     I              'XT'
+     I              'COMBINED LABEL IS BE-C         CNST18
+     I              'FORE'
+     I              'UNIT OF MEASURE CHAN-C         CNST19
+     I              'GE IS NEXT'
+     I              'UNIT OF MEASURE CHAN-C         CNST20
+     I              'GE IS BEFORE'
+     I*             '*        *       *'  C         CNST21
+     I*             '* * *    * * *   * *-C         CNST22
+     I*             ' *'
+     I*             '* *      * *     * *'C         CNST23
+     I*
+     I              'Pallet'              C         CNST24
+     I              'Stops'               C         CNST25
+     I              'Pieces'              C         CNST26
+     I              'Cube'                C         CNST27
+403 MI              'Weight'              C         CNST28
+     I              'Stop'                C         CNST29
+     I              'Slot'                C         CNST30
+     I              'Item'                C         CNST31
+     I              'Qty picked'          C         CNST32
+     I              '***Pallet Summary***'C         CNST33
+     I              '---------------------C         CNST34
+     I              ' PIR SUMMARY --------
+     I              '--------------------'
+     I              '---------------------C         CNST35
+     I              ' SET SUMMARY --------
+405 MI              '-----               '
+405 DI*             '--------------------'
+     I              '---------------------C         CNST36
+     I              ' DESCREPANCIES ------
+     I              '-----'
+     I              '---------------------C         CNST37
+     I              ' CATCH WEIGHTS ------
+     I              '-----'
+     I              '********************-C         CNST38
+     I              '***** ZONE HEAD ****-
+     I              '********************-
+     I              '***'
+     I*
+     I              '  *          '       C         CNST39
+     I              ' *           '       C         CNST40
+     I              '* * * * * * *'       C         CNST41
+     I              ' *           '       C         CNST42
+     I              '  *          '       C         CNST43
+     I*
+     I              '          *  '       C         CNST44
+     I              '           * '       C         CNST45
+     I              '* * * * * * *'       C         CNST46
+     I              '           * '       C         CNST47
+     I              '          *  '       C         CNST48
+     I              '   Compartment:'     C         CNST49
+     I              '   Zone       :'     C         CNST50
+     I              '   Type       :'     C         CNST51
+     I              '------------------ Z-C         CNST52
+     I              'one Pickup: xxxxxx --
+405 MI              '---              '
+405 DI*             '-----------------'
+404 AI              'Rte:'                C         CNST53
+404 AI              '--------------- Cros-C         CNST54
+404 AI              's Dock Labels are ne-
+404 AI              'xt --------------'
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Command
+     C*      $PWHSE  Warehouse
+     C*      $PRTID  Route Id
+     C*      $PCOMP  Compartment
+     C*      $PTZON  Truck zone
+     C*      $PGEN   Generation
+     C*      $PSZON  Slot zone
+     C*      $PTRUK  Truck
+     C*      $PRTE   Route
+     C*      OPZDTA  Picking label options
+     C*      $PTRN#  Transaction number for reprints
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PRTID  5
+     C                     PARM           $PCOMP  1
+     C                     PARM           $PTZON  6
+     C                     PARM           $PGEN   10
+     C                     PARM           $PSZON  6
+     C                     PARM           $PTRUK 10
+     C                     PARM           $PRTE   5
+     C                     PARM           OPZDTA
+     C                     PARM           $PTRN#  70
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C* Open printer file for zone.
+     C*
+     C                     EXSR OPNPRT
+     C*
+     C* Print zone heading label.
+     C*
+     C                     EXSR ZONHED
+     C*
+     C* Print letdowns for zone.
+     C*
+405 AC           OPLETD    IFEQ 'Y'
+     C                     EXSR PRTRPL
+405 AC                     ENDIF
+     C*
+     C* Print bulk picks for zone.
+     C*
+     C                     EXSR PRTBLK
+     C*
+     C* Print selection labels for zone.
+     C*
+     C*    Note: First the pallet summary records will be read
+     C*          and the information saved.  Then, when the
+     C*          transaction number changes, we go and print
+     C*          the labels for the previous transacton
+     C*          number (LSTTRN).
+     C*
+     C*    Loop through truck pallets for zone.
+     C*
+     C                     MOVE *ON       FIRST   1
+     C*
+     C                     MOVE 'O'       KYTYPE
+     C           KEYPS3    SETLLPLTSUM3
+     C           FOREVR    DOUNEFOREVR
+     C           KEYPS3    READEPLTSUM3                  79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*     Skip pallet if nothing was picked.
+     C*
+     C           PSPCS     IFEQ 0
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*     First time through initialization.
+     C*
+     C           FIRST     IFEQ *ON
+     C                     Z-ADDPSTRN#    LSTTRN
+     C                     Z-ADD0         PALCNT  20
+     C                     MOVE *OFF      FIRST
+     C                     ENDIF
+     C*
+     C*     If transaction number changed, go and print the detail
+     C*       for the previous transaction (LSTTRN).
+     C*
+     C           PSTRN#    IFNE LSTTRN
+404 AC                     Z-ADDPSUNLD    CURUNL
+404 AC                     Z-ADDPSROW     CURROW
+404 AC                     Z-ADDPSCOL     CURCOL
+     C                     EXSR PRTSEL
+404 AC           KEYPS     SETLLPLTSUM3
+404 AC                     READ PLTSUM3                  79
+     C                     Z-ADDPSTRN#    LSTTRN
+     C                     Z-ADD0         PALCNT
+     C                     ENDIF
+     C*
+     C*     Add pallet info to pallet summary data structure.
+     C*
+     C                     ADD  1         PALCNT
+     C           PALCNT    OCUR PALSUM
+     C                     Z-ADDPSPAL#    DSPPAL
+     C                     Z-ADDPSCUBE    DSPCUB
+     C                     Z-ADDPSSWGT    DSPWGT
+     C                     Z-ADDPSPCS     DSPPCS
+     C                     Z-ADD0         DSPSTP
+     C                     Z-SUB1         LSTSTP
+404 AC                     Z-ADDPSPLID    DSPPLI
+     C           KEYSS1    SETLLPLTSTP1
+     C           FOREVR    DOWEQFOREVR
+     C           KEYSS1    READEPLTSTP1                  78
+     C           *IN78     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C           PSSSTP    IFNE LSTSTP
+     C                     ADD  1         DSPSTP
+     C                     Z-ADDPSSSTP    LSTSTP
+     C                     ENDIF
+     C                     ENDDO
+     C*
+     C                     ENDDO
+     C*
+     C*   Print last pallet(s), if any.
+     C*
+     C           PALCNT    IFGT 0
+     C                     EXSR PRTSEL
+     C                     ENDIF
+     C*
+     C*
+     C*   Bye, Bye.
+     C*
+     C                     MOVE *ON       *INLR
+     CLR         PRTFLG    IFEQ *OFF
+     CLR                   EXSR PRINT
+     CLR                   ENDIF
+     C*
+     C*   Close up shop and return home.
+     C*
+     CLR         OPENED    IFEQ *ON
+     CLR                   CLOSEPLBL43PR
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     CSR                   Z-ADD1         THREE   30
+405 AC*
+405 AC*  Define key for OPTIONS file.
+405 AC*
+405 ACSR         OPKEY     KLIST
+405 ACSR                   KFLD           OPWHSE
+405 ACSR                   KFLD           OPCODE
+     C*
+     C*  Define partial key for PLTSUM3 file.
+     C*
+     CSR         *LIKE     DEFN PSTYPE    KYTYPE
+     CSR         KEYPS3    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYTYPE
+     CSR                   KFLD           $PCOMP
+     CSR                   KFLD           $PTZON
+     CSR                   KFLD           $PGEN
+     CSR                   KFLD           $PSZON
+404 AC*
+404 ACSR         *LIKE     DEFN PSUNLD    CURUNL
+404 ACSR         *LIKE     DEFN PSROW     CURROW
+404 ACSR         *LIKE     DEFN PSCOL     CURCOL
+404 ACSR         KEYPS     KLIST
+404 ACSR                   KFLD           $PWHSE
+404 ACSR                   KFLD           $PRTID
+404 ACSR                   KFLD           KYTYPE
+404 ACSR                   KFLD           $PCOMP
+404 ACSR                   KFLD           $PTZON
+404 ACSR                   KFLD           $PGEN
+404 ACSR                   KFLD           $PSZON
+404 ACSR                   KFLD           CURUNL
+404 ACSR                   KFLD           CURROW
+404 ACSR                   KFLD           CURCOL
+     C*
+     C*  Define partial key for PLTSTP1 file.
+     C*
+     CSR         KEYSS1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+402 ACSR                   KFLD           PSPLID
+     CSR                   KFLD           PSROW
+     CSR                   KFLD           PSCOL
+     C*
+     C*  Define partial key for LABEL31 file.
+     C*
+     CSR         *LIKE     DEFN LBTYPE    KYLTYP
+     CSR         KEYL31    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYLTYP
+     CSR                   KFLD           PSPLID
+     C*
+     C*  Define partial key for LABEL32 file.
+     C*
+     CSR         KEYL32    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYLTYP
+     CSR                   KFLD           LSTTRN
+     C*
+     C*  Define partial key for LABEL33 file.
+     C*
+     CSR         KEYL33    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           LSTTRN
+216 AC*
+216 AC*  Define key for PIRITEM file. (FOR BROKEN CASE ITEM)
+216 AC*
+216 ACSR         KEYIB     KLIST
+216 ACSR                   KFLD           $PWHSE
+216 ACSR                   KFLD           LBITEM
+213 AC*
+213 AC*  Define key for PIRITEM file. (FOR LINK ITEM)
+213 AC*
+213 ACSR         KEYIT     KLIST
+213 ACSR                   KFLD           $PWHSE
+213 ACSR                   KFLD           ILITM2
+213 AC*
+213 AC*  Define key for ITEMLNK file.
+213 AC*
+213 ACSR         KEYIL     KLIST
+213 ACSR                   KFLD           $PWHSE
+213 ACSR                   KFLD           LBITEM
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*   Define variables.
+     C*
+413 ACSR         *LIKE     DEFN PSPLID    LSTPID
+413 ACSR         *LIKE     DEFN LBLBL#    LSTLB#
+     CSR         *LIKE     DEFN LBTRN#    LSTTRN
+     CSR         *LIKE     DEFN LBSTOP    LSTSTP
+     CSR         *LIKE     DEFN PSSZON    LSTZON
+     CSR         *LIKE     DEFN PSSZON    TMPZON
+     CSR         *LIKE     DEFN LBWHDP    LSTWDP
+     CSR         *LIKE     DEFN LBUTYP    LSTUM
+     CSR         *LIKE     DEFN LBQPCK    W1QTY
+     CSR         *LIKE     DEFN LBQPCK    W1QTY2
+     CSR         *LIKE     DEFN LBQPCK    W1PICK
+     CSR         *LIKE     DEFN LBPAL#    W1PAL#
+405 AC*
+405 AC*  Get system options.
+405 AC*
+405 ACSR                   Z-ADD0         OPWHSE
+405 ACSR                   MOVE '*SYSTEM 'OPCODE
+405 ACSR         OPKEY     CHAINOPTIONS              79
+405 ACSR         *IN79     IFEQ *ON
+405 ACSR                   MOVE 'Y'       OPLETD
+405 ACSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  #CVTEC  Call QECCVTEC (convert edit code) API
+     C*
+     CSR         #CVTEC    BEGSR
+     CSR                   CLEARECMASK
+     CSR                   CLEARECMSKL
+     CSR                   CLEARECRCVL
+     CSR                   CLEARECZBAL
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECCVTEC'
+     CSR                   PARM           ECMASK           Edit mask
+     CSR                   PARM           ECMSKL           Edit mask length
+     CSR                   PARM           ECRCVL           Receiver length
+     CSR                   PARM           ECZBAL           Zero bal fill
+     CSR                   PARM           ECEDCD           Edit code
+     CSR                   PARM           ECFILL           Fill/float
+     CSR                   PARM           ECSPRC           Source prec
+     CSR                   PARM           ECSDEC           Source decimal
+     CSR                   PARM           APIERR           API error code
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BEGBLK  Begining of bulk label.
+     C*
+     CSR         BEGBLK    BEGSR
+     CSR                   EXSR ZZCLER
+     CSR                   MOVE *ALL'*'   LINE3
+     CSR                   MOVE CNST6     CN41
+     CSR                   MOVE *ALL'*'   LINE5
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BEGRPL  Begining of letdowm label.
+     C*
+     CSR         BEGRPL    BEGSR
+     CSR                   EXSR ZZCLER
+     CSR                   MOVE *ALL'*'   LINE3
+     CSR                   MOVE CNST11    CN42
+     CSR                   MOVE *ALL'*'   LINE5
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Bulk    Bulk pick labels.
+     C*
+     CSR         BULK      BEGSR
+     CSR                   EXSR ZZCLER
+400 DC**         OHKEY     CHAINORDH                 79
+     C*  Line 1
+     CSR                   MOVE LBDISP    SL1
+     C*          Quantity
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1QTY            Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QT1
+     CSR                   MOVE UMSHRT    UM1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*  Line 2
+     CSR                   MOVE W1CMBO    CM2
+     C*          Tie
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD4         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD4         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTIE            Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TI2
+     CSR                   MOVE '/'       SH2
+     C*          High
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD2         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD2         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBHIGH           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    HG2
+     CSR                   MOVELSTP11     ST11
+     CSR                   MOVELSTP21     ST21
+     C*  LINE 3
+     CSR                   MOVE ITPDSC    PD3
+     CSR                   MOVELSTP12     ST12
+     CSR                   MOVELSTP22     ST22
+     C*  LINE 4
+     CSR                   MOVE ITDESC    DE4
+     CSR                   MOVELSTP13     ST13
+     CSR                   MOVELSTP23     ST23
+     C*  LINE 5
+     CSR                   MOVELSTP14     ST14
+     CSR                   MOVELSTP24     ST24
+     C*  LINE 6
+     CSR                   MOVE LBITEM    IT6
+     C*          Order number
+     CSR                   MOVE CNST8     OR6
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           OHCORD           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    ON6
+     CSR                   MOVELSTP15     ST15
+     CSR                   MOVELSTP25     ST25
+     C*  LINE 7
+     C*          Customer
+     CSR                   MOVE CNST9     CS7
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD11        ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD11        EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           OHCUST           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    CSN7
+     CSR                   MOVELSTP16     ST16
+     CSR                   MOVELSTP26     ST26
+     C*  LINE 8
+     C*          DATE
+     CSR                   MOVE UMONTH    MN8
+     CSR                   MOVE '/'       SH8
+     CSR                   MOVE UDAY      DY8
+     CSR                   MOVE OHTRUK    TK8
+     CSR                   MOVELSTP17     ST17
+     CSR                   MOVELSTP27     ST27
+     C*  LINE 9
+     CSR                   MOVELOHCNAM    CM9
+     CSR                   MOVELSTP18     ST18
+     CSR                   MOVELSTP28     ST28
+     C*  LINE 10
+     CSR                   MOVELOHCAD1    CM10
+     CSR                   MOVELSTP19     ST19
+     CSR                   MOVELSTP29     ST29
+     C*  LINE 11
+     CSR                   MOVELOHCCTY    CT11
+     CSR                   MOVELOHCST     STT11
+     CSR                   MOVELOHCZIP    ZIP11
+404 AC*          Route  number
+404 ACSR                   MOVELCNST53    RT11
+404 ACSR                   MOVEL$PRTE     RTN11
+     C*          Pallet number
+405 DC**                   EXSR GETPAL
+     CSR                   MOVELCNST10    PL11
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+405 MCSR                   PARM           PSPAL#           Source var
+405 DC**                   PARM           PAL#             Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    PLN11
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CACHWT  Catch weight labels.
+     C*
+     CSR         CACHWT    BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVELCNST37    LINE1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*
+     C*  Line 2
+     CSR                   MOVE CNST31    IT24
+     CSR                   MOVELLBITEM    ITM24
+     CSR                   MOVELITDESC    ITD24
+     CSR                   MOVELITPDSC    ITP24
+     C*  LINE 3
+     CSR                   MOVE CNST31    IT34
+     CSR                   MOVE CNST28    WT34
+     C*
+     C*  LINE 4
+     C*
+     C*  LINE 5
+     C*
+     C*  LINE 6
+     C*
+     C*  LINE 7
+     C*
+     C*  LINE 8
+     C*
+     C*  LINE 9
+     C*
+     C*  LINE 10
+     C*
+     C*  LINE 11
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CMBB    Combined label is next.
+     C*
+     CSR         CMBB      BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVE LBDISP    SL1
+     CSR                   MOVE *ALL'*'   STAR1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*  Line 2
+     CSR                   MOVE CNST31    IT24
+     CSR                   MOVELLBITEM    ITM24
+     CSR                   MOVELITDESC    ITD24
+     CSR                   MOVELITPDSC    ITP24
+     C*  Line 3
+     CSR                   MOVE CNST17    CN31
+     C*  Line 4
+     CSR                   MOVE CNST30    S43
+     CSR                   MOVE CNST31    I43
+     CSR                   MOVE CNST32    Q43
+     CSR                   MOVE CNST44    AR44
+     C*  Line 5
+     CSR                   MOVE CNST45    AR55
+     C*  Line 6
+     CSR                   MOVE CNST46    AR66
+     C*  Line 7
+     CSR                   MOVE CNST47    AR77
+     C*  Line 8
+     CSR                   MOVE CNST48    AR88
+     C*  Line 9
+     C**                   MOVE CNST22    CN92
+     C*  Line 10
+     C**                   MOVE CNST23    CN12
+     C*  Line 11
+     C**                   MOVE CNST21    CN11
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CMBA    Combined label is before.
+     C*
+     CSR         CMBA      BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVE LBDISP    SL1
+     CSR                   MOVE *ALL'*'   STAR1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*  Line 2
+     CSR                   MOVE CNST31    IT24
+     CSR                   MOVELLBITEM    ITM24
+     CSR                   MOVELITDESC    ITD24
+     CSR                   MOVELITPDSC    ITP24
+     C*  Line 3
+     CSR                   MOVE CNST18    CN31
+     C*  Line 4
+     CSR                   MOVE CNST30    S43
+     CSR                   MOVE CNST31    I43
+     CSR                   MOVE CNST32    Q43
+     CSR                   MOVE CNST39    AR44
+     C*  Line 5
+     CSR                   MOVE CNST40    AR55
+     C*  Line 6
+     CSR                   MOVE CNST41    AR66
+     C*  Line 7
+     CSR                   MOVE CNST42    AR77
+     C*  Line 8
+     CSR                   MOVE CNST43    AR88
+     C*  Line 9
+     C**                   MOVE CNST21    CN91
+     C*  Line 10
+     C**                   MOVE CNST21    CN10
+     C*  Line 11
+     C**                   MOVE CNST21    CN11
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CRTSTP  Create stop numbers.
+     C*
+     CSR         CRTSTP    BEGSR
+     C*
+     C*  Seperate characters.
+     C*
+     CSR         LBSTOP    DIV  10        NUM1    10
+     CSR                   MVR            NUM2    10
+     C*
+     C*  Build first character if not zero.
+     C*
+     C**         NUM1      IFGT 0
+     CSR                   CALL 'BIGNUM'
+     CSR                   PARM '*MB     '$BNCOD  8
+     CSR                   PARM           NUM1
+     CSR                   PARM           CH1
+     C**                   ELSE
+     C**                   MOVE *BLANKS   CH1
+     C**                   END
+     C*
+     C*  Build second character.
+     C*
+     CSR                   CALL 'BIGNUM'
+     CSR                   PARM '*MB     '$BNCOD
+     CSR                   PARM           NUM2
+     CSR                   PARM           CH2
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  DISCRP  Discrepancies label.
+     C*
+     CSR         DISCRP    BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVELCNST36    LINE1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+404 DC*                    PARM           LBTRN#           Source var
+404 MCSR                   PARM           LSTTRN           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*
+     C*  Line 2
+     C*
+     C*  LINE 3
+     C                     MOVE CNST30    S23
+     C                     MOVE CNST31    I23
+     C                     MOVE CNST32    Q23
+     C*  LINE 4
+     C*
+     C*  LINE 5
+     C*
+     C*  LINE 6
+     C*
+     C*  LINE 7
+     C*
+     C*  LINE 8
+     C*
+     C*  LINE 9
+     C*
+     C*  LINE 10
+     C*
+     C*  LINE 11
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+404 AC*----------------------------------------------------------------
+404 AC*
+404 AC*  GETPAL  Get pallet number.
+404 AC*
+     CSR         GETPAL    BEGSR
+     CSR                   Z-ADD0         PAL#    70
+     CSR         1         DO   PALCNT    CURPAL  20
+     CSR         CURPAL    OCUR PALSUM
+     CSR         DSPPLI    IFEQ LBPAL#
+     CSR                   Z-ADDDSPPAL    PAL#
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  OPNPRT  Open printer file.
+     C*
+     CSR         OPNPRT    BEGSR
+     C*
+     C*   Open printer file for department.
+     C*
+     CSR         OPENED    IFNE *ON
+     C*
+     C*      If printer already open then close it.
+     C*
+     CSR         OPENED    IFEQ *ON
+     CSR                   CLOSEPLBL43PR
+     CSR                   ENDIF
+     C*
+     C*      Override printer file.
+     C*
+     C*          OVRPRTF FILE(PLBL__PR) OUTQ(*DEV) DEV(rodev)
+     C*                  FORMTYPE(roform)
+     C*
+     CSR                   MOVEAOVRPRT,1  A80
+     CSR                   MOVEAOPPDEV    A80,39
+     CSR                   MOVEAOPPFRM    A80,60
+     CSR                   MOVEAA80       QCMD
+     CSR                   CALL 'QCMDEXC'
+     CSR                   PARM           QCMD   80
+     CSR                   PARM 80        QLEN   155
+     C*
+     C*      Open printer file.
+     C*
+     CSR                   OPEN PLBL43PR
+     CSR                   MOVE *ON       OPENED  1
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PALSUD  Pallet summary detail line.
+     C*
+     CSR         PALSUD    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3
+     C*
+     C*  Line 4
+     C*
+     C*  Line 5
+     C*
+     C*  Line 6
+     C*
+     C*  Line 7
+     C*
+     C*  Line 8
+     C*
+     C*  Line 9
+     C*
+     C*  Line 10/11
+     C*          Pallet number
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1PAL#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    P11X   10
+     C*          STOP
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD3         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD3         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1PSTP  30       Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    S11X    3
+     C*          PIECES
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1PPCS  50       Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    C11X    5
+     C*          CUBE
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD6         ECSPRC
+     CSR                   Z-ADD3         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD6         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1PCUB  63       Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    U11X    7
+     C*          WEIGHT
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD2         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1PWGT  72       Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    W11X    8
+     CSR                   SELEC
+     CSR         CURPAL    WHEQ 1
+     CSR                   MOVE P11X      P10
+     CSR                   MOVE S11X      S10
+     CSR                   MOVE C11X      C10
+     CSR                   MOVE U11X      U10
+     CSR                   MOVE W11X      W10
+     CSR         CURPAL    WHEQ 2
+     CSR                   MOVE P11X      P11
+     CSR                   MOVE S11X      S11
+     CSR                   MOVE C11X      C11
+     CSR                   MOVE U11X      U11
+     CSR                   MOVE W11X      W11
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PALSUH  Pallet summary header line.
+     C*
+     CSR         PALSUH    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3
+     C*
+     C*  Line 4
+     C*
+     C*  Line 5
+     C*
+     C*  Line 6
+     C*
+     C*  Line 7
+     C*
+     C*  Line 8
+     C*
+     C*  Line 9
+     CSR                   MOVE CNST24    PL93
+     CSR                   MOVE CNST25    ST93
+     CSR                   MOVE CNST26    PC93
+     CSR                   MOVE CNST27    CU93
+     CSR                   MOVE CNST28    WG93
+     C*  Line 10
+     C*
+     C*  Line 11
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Pick    Pick labels.
+     C*
+     CSR         PICK      BEGSR
+     CSR                   EXSR ZZCLER
+     CSR         *LIKE     DEFN OHCORD    CUSORD
+     CSR         *LIKE     DEFN OHCUST    CUSNUM
+     CSR         *LIKE     DEFN OHCNAM    CUSNAM
+     CSR         *LIKE     DEFN OHCAD1    CUSAD1
+     CSR         *LIKE     DEFN OHCAD2    CUSAD2
+     CSR         *LIKE     DEFN OHCCTY    CUSCTY
+     CSR         *LIKE     DEFN OHCST     CUSST
+     CSR         *LIKE     DEFN OHCZIP    CUSZIP
+     CSR         *LIKE     DEFN OHTRUK    CUSTRK
+400 DC**         OHKEY     CHAINORDH                 79
+     CSR                   Z-ADDOHCORD    CUSORD
+     CSR                   Z-ADDOHCUST    CUSNUM
+     CSR                   MOVE OHCNAM    CUSNAM
+     CSR                   MOVE OHCAD1    CUSAD1
+     CSR                   MOVE OHCAD2    CUSAD2
+     CSR                   MOVE OHCCTY    CUSCTY
+     CSR                   MOVE OHCST     CUSST
+     CSR                   MOVE OHCZIP    CUSZIP
+     CSR                   MOVE OHTRUK    CUSTRK
+     CSR         LBGRP2    IFEQ 'T'
+400 DC**         TOHKEY    CHAINTORDH                79
+400 DC**                   Z-ADDTOHCO#    CUSORD
+400 DC**                   Z-ADDTOHCC#    CUSNUM
+400 DC**                   MOVE TOHCNM    CUSNAM
+400 DC**                   MOVE TOHCA1    CUSAD1
+400 DC**                   MOVE TOHCA2    CUSAD2
+400 DC**                   MOVE TOHCCT    CUSCTY
+400 DC**                   MOVE TOHCST    CUSST
+400 DC**                   MOVE TOHCZP    CUSZIP
+400 DC**                   MOVE TOHTRK    CUSTRK
+400 DC*          Warehouse
+400 DC**                   MOVE 'Z'       ECEDCD
+400 DC**                   CLEARECFILL
+400 DC**                   Z-ADD3         ECSPRC
+400 DC**                   Z-ADD0         ECSDEC
+400 DC**                   EXSR #CVTEC
+400 DC*
+400 DC**                   Z-ADDECRCVL    EDRCVL
+400 DC**                   MOVELECMASK    EDMASK
+400 DC**                   Z-ADDECMSKL    EDMSKL
+400 DC**                   MOVELECZBAL    EDZBAL
+400 DC**                   CLEAREDRVAR
+400 DC**                   Z-ADD3         EDSPRC
+400 DC**                   MOVEL'*PACKED' EDSCLS    P
+400 DC**                   CLEARAPIERR
+400 DC**                   Z-ADD116       AEBYPR
+400 DC*
+400 DC**                   CALL 'QECEDT'
+400 DC**                   PARM           EDRVAR 64        Receiver var
+400 DC**                   PARM           EDRCVL           Receiver length
+ 00 DC**                   PARM           TOHTWH           Source var
+400 DC**                   PARM           EDSCLS           Source class
+400 DC**                   PARM           EDSPRC           Source var prec
+400 DC**                   PARM           EDMASK256        Edit mask
+400 DC**                   PARM           EDMSKL           Edit mask len
+400 DC**                   PARM           EDZBAL           Zero bal fill
+400 DC**                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TOWH    3
+     CSR                   ENDIF
+     C*  Line 1
+     CSR                   MOVE LBDISP    SL1
+     CSR         COMBO     IFEQ *OFF
+     C*          Quantity
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1PICK           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QT11
+     C*          Of quantity
+     CSR                   MOVE 'of'      OF11
+     CSR                   ELSE
+     CSR                   MOVE 'TOT'     TOT11
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1QTY2           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QT12
+     CSR                   MOVE UMSHRT    UM1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*  Line 2
+     CSR                   MOVE W1CMBO    CM2
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE 'TFR'     TFR
+     CSR                   ENDIF
+     CSR                   MOVELSTP11     ST11
+     CSR                   MOVELSTP21     ST21
+     C*  LINE 3
+     CSR                   MOVE ITPDSC    PD3
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR3
+     CSR                   ENDIF
+     CSR                   MOVELSTP12     ST12
+     CSR                   MOVELSTP22     ST22
+     C*  LINE 4
+     CSR                   MOVE ITDESC    DE4
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR4
+     CSR                   ENDIF
+     CSR                   MOVELSTP13     ST13
+     CSR                   MOVELSTP23     ST23
+     C*  LINE 5
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR5
+     CSR                   ENDIF
+     CSR                   MOVELSTP14     ST14
+     CSR                   MOVELSTP24     ST24
+     C*  LINE 6
+     CSR                   MOVE LBITEM    IT6
+     C*          Order number
+     CSR                   MOVE CNST8     OR6
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           CUSORD           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    ON6
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR6
+     CSR                   ENDIF
+     CSR                   MOVELSTP15     ST15
+     CSR                   MOVELSTP25     ST25
+     C*  LINE 7
+     C*          Customer
+     CSR                   MOVE CNST9     CS7
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD11        ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD11        EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           CUSNUM           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    CSN7
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR7
+     CSR                   ENDIF
+     CSR                   MOVELSTP16     ST16
+     CSR                   MOVELSTP26     ST26
+     C*  LINE 8
+     C*          DATE
+     CSR                   MOVE UMONTH    MN8
+     CSR                   MOVE '/'       SH8
+     CSR                   MOVE UDAY      DY8
+     CSR                   MOVE CUSTRK    TK8
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR8
+     CSR                   ENDIF
+     CSR                   MOVELSTP17     ST17
+     CSR                   MOVELSTP27     ST27
+     C*  LINE 9
+     CSR                   MOVELCUSNAM    CM9
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR9
+     CSR                   ENDIF
+     CSR                   MOVELSTP18     ST18
+     CSR                   MOVELSTP28     ST28
+     C*  LINE 10
+     CSR                   MOVELCUSAD1    CM10
+     CSR         LBGRP2    IFEQ 'T'
+     CSR                   MOVE TOWH      TFR10
+     CSR                   ENDIF
+     CSR                   MOVELSTP19     ST19
+     CSR                   MOVELSTP29     ST29
+     C*  LINE 11
+     CSR                   MOVELCUSCTY    CT11
+     CSR                   MOVELCUSST     STT11
+     CSR                   MOVELCUSZIP    ZIP11
+404 AC*          Route  number
+404 ACSR                   MOVELCNST53    RT11
+404 ACSR                   MOVEL$PRTE     RTN11
+     C*          Pallet number
+404 ACSR                   EXSR GETPAL
+     CSR                   MOVELCNST10    PL11
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+404 DC*                    PARM           PSPAL#           Source var
+404 MCSR                   PARM           PAL#             Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    PLN11
+     CSR                   EXSR ZZFILL
+     CSR                   MOVE *OFF      COMBO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PIRSUD  PIR summary detail line.
+     C*
+     CSR         PIRSUD    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3-11
+     C*          Stop
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD2         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD2         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1RSTP  20       Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    SX      2
+     C*          Pieces
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1RPCS  50       Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    CX      5
+405 DC*          Cube
+405 DC*                    MOVE '3'       ECEDCD
+405 DC*                    CLEARECFILL
+405 DC*                    Z-ADD6         ECSPRC
+405 DC*                    Z-ADD3         ECSDEC
+405 DC*                    EXSR #CVTEC
+405 DC*
+405 DC*                    Z-ADDECRCVL    EDRCVL
+405 DC*                    MOVELECMASK    EDMASK
+405 DC*                    Z-ADDECMSKL    EDMSKL
+405 DC*                    MOVELECZBAL    EDZBAL
+405 DC*                    CLEAREDRVAR
+405 DC*                    Z-ADD6         EDSPRC
+405 DC*                    MOVEL'*PACKED' EDSCLS    P
+405 DC*                    CLEARAPIERR
+405 DC*                    Z-ADD116       AEBYPR
+405 DC*
+405 DC*                    CALL 'QECEDT'
+405 DC*                    PARM           EDRVAR 64        Receiver var
+405 DC*                    PARM           EDRCVL           Receiver length
+405 DC*                    PARM           W1RCUB  63       Source var
+405 DC*                    PARM           EDSCLS           Source class
+405 DC*                    PARM           EDSPRC           Source var prec
+405 DC*                    PARM           EDMASK256        Edit mask
+405 DC*                    PARM           EDMSKL           Edit mask len
+405 DC*                    PARM           EDZBAL           Zero bal fill
+405 DC*                    PARM           APIERR           API error code
+405 DC*                    MOVELEDRVAR    UX      7
+405 DC*          Weight
+405 DC*                    MOVE '3'       ECEDCD
+405 DC*                    CLEARECFILL
+405 DC*                    Z-ADD7         ECSPRC
+405 DC*                    Z-ADD2         ECSDEC
+405 DC*                    EXSR #CVTEC
+405 DC*
+405 DC*                    Z-ADDECRCVL    EDRCVL
+405 DC*                    MOVELECMASK    EDMASK
+405 DC*                    Z-ADDECMSKL    EDMSKL
+405 DC*                    MOVELECZBAL    EDZBAL
+405 DC*                    CLEAREDRVAR
+405 DC*                    Z-ADD7         EDSPRC
+405 DC*                    MOVEL'*PACKED' EDSCLS    P
+405 DC*                    CLEARAPIERR
+405 DC*                    Z-ADD116       AEBYPR
+405 DC*
+405 DC*                    CALL 'QECEDT'
+405 DC*                    PARM           EDRVAR 64        Receiver var
+405 DC*                    PARM           EDRCVL           Receiver length
+405 DC*                    PARM           W1RWGT  72       Source var
+403 DC**                   PARM           W1RWGT  70       Source var
+405 DC*                    PARM           EDSCLS           Source class
+405 DC*                    PARM           EDSPRC           Source var prec
+405 DC*                    PARM           EDMASK256        Edit mask
+405 DC*                    PARM           EDMSKL           Edit mask len
+405 DC*                    PARM           EDZBAL           Zero bal fill
+405 DC*                    PARM           APIERR           API error code
+405 DC*                    MOVELEDRVAR    WX      8
+     C*
+405 AC*          Item
+405 ACSR         LBITEM    CAT  '-':1     IX     48 P
+405 ACSR         IX        CAT  ITDESC:1  IX        P
+     C*
+403 AC*          Pallet Number
+403 ACSR                   MOVE '3'       ECEDCD
+403 ACSR                   CLEARECFILL
+403 ACSR                   Z-ADD7         ECSPRC
+403 ACSR                   Z-ADD0         ECSDEC
+403 ACSR                   EXSR #CVTEC
+403 AC*
+403 ACSR                   Z-ADDECRCVL    EDRCVL
+403 ACSR                   MOVELECMASK    EDMASK
+403 ACSR                   Z-ADDECMSKL    EDMSKL
+403 ACSR                   MOVELECZBAL    EDZBAL
+403 ACSR                   CLEAREDRVAR
+403 ACSR                   Z-ADD7         EDSPRC
+403 ACSR                   MOVEL'*PACKED' EDSCLS    P
+403 ACSR                   CLEARAPIERR
+403 ACSR                   Z-ADD116       AEBYPR
+403 AC*
+403 ACSR                   CALL 'QECEDT'
+403 ACSR                   PARM           EDRVAR 64        Receiver var
+403 ACSR                   PARM           EDRCVL           Receiver length
+403 ACSR                   PARM           W1PAL#           Source var
+403 ACSR                   PARM           EDSCLS           Source class
+403 ACSR                   PARM           EDSPRC           Source var prec
+403 ACSR                   PARM           EDMASK256        Edit mask
+403 ACSR                   PARM           EDMSKL           Edit mask len
+403 ACSR                   PARM           EDZBAL           Zero bal fill
+403 ACSR                   PARM           APIERR           API error code
+405 ACSR                   MOVELEDRVAR    PX      7
+403 MCSR                   MOVELEDRVAR    RX     25
+403 DC**                   MOVELW1RCNM    RX     25
+     CSR                   SELEC
+     CSR         S         WHEQ 1
+     CSR                   MOVE SX        S33
+     CSR                   MOVE CX        C33
+405 DC*                    MOVE UX        U33
+405 DC*                    MOVE WX        W33
+405 DC*                    MOVELRX        R33
+405 ACSR                   MOVELIX        I33
+405 ACSR                   MOVELPX        P33
+     CSR         S         WHEQ 2
+     CSR                   MOVE SX        S44
+     CSR                   MOVE CX        C44
+405 DC*                    MOVE UX        U44
+405 DC*                    MOVE WX        W44
+405 DC*                    MOVELRX        R44
+405 ACSR                   MOVELIX        I44
+405 ACSR                   MOVELPX        P44
+     CSR         S         WHEQ 3
+     CSR                   MOVE SX        S55
+     CSR                   MOVE CX        C55
+405 DC*                    MOVE UX        U55
+405 DC*                    MOVE WX        W55
+405 DC*                    MOVELRX        R55
+405 ACSR                   MOVELIX        I55
+405 ACSR                   MOVELPX        P55
+     CSR         S         WHEQ 4
+     CSR                   MOVE SX        S66
+     CSR                   MOVE CX        C66
+405 DC*                    MOVE UX        U66
+405 DC*                    MOVE WX        W66
+405 DC*                    MOVELRX        R66
+405 ACSR                   MOVELIX        I66
+405 ACSR                   MOVELPX        P66
+     CSR         S         WHEQ 5
+     CSR                   MOVE SX        S77
+     CSR                   MOVE CX        C77
+405 DC*                    MOVE UX        U77
+405 DC*                    MOVE WX        W77
+405 DC*                    MOVELRX        R77
+405 ACSR                   MOVELIX        I77
+405 ACSR                   MOVELPX        P77
+     CSR         S         WHEQ 6
+     CSR                   MOVE SX        S88
+     CSR                   MOVE CX        C88
+405 DC*                    MOVE UX        U88
+405 DC*                    MOVE WX        W88
+405 DC*                    MOVELRX        R88
+405 ACSR                   MOVELIX        I88
+405 ACSR                   MOVELPX        P88
+     CSR         S         WHEQ 7
+     CSR                   MOVE SX        S99
+     CSR                   MOVE CX        C99
+405 DC*                    MOVE UX        U99
+405 DC*                    MOVE WX        W99
+405 DC*                    MOVELRX        R99
+405 ACSR                   MOVELIX        I99
+405 ACSR                   MOVELPX        P99
+     CSR         S         WHEQ 8
+     CSR                   MOVE SX        S00
+     CSR                   MOVE CX        C00
+405 DC*                    MOVE UX        U00
+405 DC*                    MOVE WX        W00
+405 DC*                    MOVELRX        R00
+405 ACSR                   MOVELIX        I00
+405 ACSR                   MOVELPX        P00
+     CSR         S         WHEQ 9
+     CSR                   MOVE SX        S111
+     CSR                   MOVE CX        C111
+405 DC*                    MOVE UX        U111
+405 DC*                    MOVE WX        W111
+405 DC*                    MOVELRX        R111
+405 ACSR                   MOVELIX        I111
+405 ACSR                   MOVELPX        P111
+     CSR                   ENDSL
+     C*   Overflow to next label
+     CSR         S         IFEQ 9
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   EXSR PIRSUH
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PIRSUH  PIR summary header line.
+     C*
+     CSR         PIRSUH    BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+400 DC**                   MOVE CNST34    LINE1
+     CSR                   MOVEACNST52    A58
+     CSR                   MOVEALSTZON    A58,33
+     CSR                   MOVEAA58       LINE1
+404 AC*          Transaction number
+404 ACSR                   MOVE CNST7     CN1
+404 ACSR                   MOVE '3'       ECEDCD
+404 ACSR                   CLEARECFILL
+404 ACSR                   Z-ADD7         ECSPRC
+404 ACSR                   Z-ADD0         ECSDEC
+404 ACSR                   EXSR #CVTEC
+404 AC*
+404 ACSR                   Z-ADDECRCVL    EDRCVL
+404 ACSR                   MOVELECMASK    EDMASK
+404 ACSR                   Z-ADDECMSKL    EDMSKL
+404 ACSR                   MOVELECZBAL    EDZBAL
+404 ACSR                   CLEAREDRVAR
+404 ACSR                   Z-ADD7         EDSPRC
+404 ACSR                   MOVEL'*PACKED' EDSCLS    P
+404 ACSR                   CLEARAPIERR
+404 ACSR                   Z-ADD116       AEBYPR
+404 AC*
+404 ACSR                   CALL 'QECEDT'
+404 ACSR                   PARM           EDRVAR 64        Receiver var
+404 ACSR                   PARM           EDRCVL           Receiver length
+404 ACSR                   PARM           LSTTRN           Source var
+404 ACSR                   PARM           EDSCLS           Source class
+404 ACSR                   PARM           EDSPRC           Source var prec
+404 ACSR                   PARM           EDMASK256        Edit mask
+404 ACSR                   PARM           EDMSKL           Edit mask len
+404 ACSR                   PARM           EDZBAL           Zero bal fill
+404 ACSR                   PARM           APIERR           API error code
+404 ACSR                   MOVELEDRVAR    TN1
+     C*
+     C*  Line 2
+     CSR                   MOVE CNST29    S22
+     CSR                   MOVE CNST26    C22
+405 MCSR                   MOVE CNST31    I22
+405 DC*                    MOVE CNST27    U22
+405 DC*                    MOVE CNST28    W22
+405 MCSR                   MOVE CNST10    P22
+405 DC*                    MOVE CNST10    R22
+403 DC*                    MOVE CNST9     R22
+     C*
+     C*  Line 3
+     C*
+     C*  Line 4
+     C*
+     C*  Line 5
+     C*
+     C*  Line 6
+     C*
+     C*  Line 7
+     C*
+     C*  Line 8
+     C*
+     C*  Line 9
+     C*
+     C*  Line 10
+     C*
+     C*  Line 11
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PIRSUL  PIR summary underline.
+     C*
+     CSR         PIRSUL    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3-11
+     CSR                   SELEC
+     CSR         L         WHEQ 1
+     CSR                   MOVE '-----'   C33
+     CSR                   MOVE '-------' U33
+     CSR                   MOVE '--------'W33
+     CSR         L         WHEQ 2
+     CSR                   MOVE '-----'   C44
+     CSR                   MOVE '-------' U44
+     CSR                   MOVE '--------'W44
+     CSR         L         WHEQ 3
+     CSR                   MOVE '-----'   C55
+     CSR                   MOVE '-------' U55
+     CSR                   MOVE '--------'W55
+     CSR         L         WHEQ 4
+     CSR                   MOVE '-----'   C66
+     CSR                   MOVE '-------' U66
+     CSR                   MOVE '--------'W66
+     CSR         L         WHEQ 5
+     CSR                   MOVE '-----'   C77
+     CSR                   MOVE '-------' U77
+     CSR                   MOVE '--------'W77
+     CSR         L         WHEQ 6
+     CSR                   MOVE '-----'   C88
+     CSR                   MOVE '-------' U88
+     CSR                   MOVE '--------'W88
+     CSR         L         WHEQ 7
+     CSR                   MOVE '-----'   C99
+     CSR                   MOVE '-------' U99
+     CSR                   MOVE '--------'W99
+     CSR         L         WHEQ 8
+     CSR                   MOVE '-----'   C00
+     CSR                   MOVE '-------' U00
+     CSR                   MOVE '--------'W00
+     CSR         L         WHEQ 9
+     CSR                   MOVE '-----'   C111
+     CSR                   MOVE '-------' U111
+     CSR                   MOVE '--------'W111
+     CSR                   ENDSL
+     C*
+     CSR         L         IFEQ 9
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   EXSR PIRSUH
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PIRSUT  PIR summary totals.
+     C*
+     CSR         PIRSUT    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3-11
+     C*          Pieces
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           TTLPCS           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    CT      7
+     C*          Cube
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD8         ECSPRC
+     CSR                   Z-ADD3         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD8         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           TTLCUB           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    UT      9
+     C*          Weight
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD9         ECSPRC
+     CSR                   Z-ADD2         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD9         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           TTLWGT           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    WT     10
+     C*
+     CSR                   SELEC
+     CSR         L         WHEQ 1
+     CSR                   MOVE CT        CT33
+     CSR                   MOVE UT        UT33
+     CSR                   MOVE WT        WT33
+     CSR         L         WHEQ 2
+     CSR                   MOVE CT        CT44
+     CSR                   MOVE UT        UT44
+     CSR                   MOVE WT        WT44
+     CSR         L         WHEQ 3
+     CSR                   MOVE CT        CT55
+     CSR                   MOVE UT        UT55
+     CSR                   MOVE WT        WT55
+     CSR         L         WHEQ 4
+     CSR                   MOVE CT        CT66
+     CSR                   MOVE UT        UT66
+     CSR                   MOVE WT        WT66
+     CSR         L         WHEQ 5
+     CSR                   MOVE CT        CT77
+     CSR                   MOVE UT        UT77
+     CSR                   MOVE WT        WT77
+     CSR         L         WHEQ 6
+     CSR                   MOVE CT        CT88
+     CSR                   MOVE UT        UT88
+     CSR                   MOVE WT        WT88
+     CSR         L         WHEQ 7
+     CSR                   MOVE CT        CT99
+     CSR                   MOVE UT        UT99
+     CSR                   MOVE WT        WT99
+     CSR         L         WHEQ 8
+     CSR                   MOVE CT        CT00
+     CSR                   MOVE UT        UT00
+     CSR                   MOVE WT        WT00
+     CSR         L         WHEQ 9
+     CSR                   MOVE CT        CT111
+     CSR                   MOVE UT        UT111
+     CSR                   MOVE WT        WT111
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRINT   Print labels.
+     C*          Print 3 labels at a time.(3 across)
+     C*
+     CSR         PRINT     BEGSR
+     C*
+     CSR                   MOVE *OFF      PRTFLG  1
+     CSR         THREE     IFEQ 3
+     CSR         *INLR     OREQ *ON
+     CSR         1         DO   11        Z       30
+     CSR         Z         OCUR DS1
+     CSR         Z         OCUR DS2
+     CSR         Z         OCUR DS3
+     CSR                   WRITELABEL
+     CSR                   Z-ADD0         THREE
+     CSR                   MOVE *ON       PRTFLG
+     CSR                   ENDDO
+     CSR                   WRITESKIP1
+     CSR                   ENDIF
+     CSR                   ADD  1         THREE
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTBLK  Print bulk pick labels for route/department.
+     C*
+     CSR         PRTBLK    BEGSR
+     C*
+     CSR                   MOVE *ON       FIRST
+     CSR                   MOVE ' (BULK)' W1CMBO
+     C*
+     C*  Loop bulk picks for zone.
+     C*
+413 AC*    Revised to only use a pallet id once.
+     C*
+413 ACSR                   Z-SUB1         LSTPID
+     CSR                   MOVE 'B'       KYTYPE
+     CSR         KEYPS3    SETLLPLTSUM3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYPS3    READEPLTSUM3                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+413 ACSR         PSPLID    IFEQ LSTPID
+413 ACSR                   ITER
+413 ACSR                   ENDIF
+413 ACSR                   Z-ADDPSPLID    LSTPID
+     C*
+     C*    Loop through bulk pick labels for pallet.
+     C*      Note: There should only be one label, but this keeps
+     C*            the coding consistant with replenishments.
+     C*
+413 AC*      The above statment is false. There can be more than
+     C*      one bulk pick to a pallet especially if an item didn't
+     C*      have home slot.
+     C*
+413 AC*      The 413 fix was necessary because the LABEL31 file
+     C*      is joined to the PLTSUM file only using the pallet
+     C*      id. When there are multiple bulk picks on a pallet
+     C*      the LABEL31 ends up with duplicate records. These
+     C*      dups are created in sequence so we can check the
+     C*      label number against the last one and skip the
+     C*      record if they are the same.
+     C*
+413 ACSR                   Z-SUB1         LSTLB#
+     CSR                   MOVE 'B'       KYLTYP
+     CSR         KEYL31    SETLLLABEL31
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     C*
+     CSR         KEYL31    READELABEL31                  78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+413 ACSR         LBLBL#    IFEQ LSTLB#
+413 ACSR                   ITER
+413 ACSR                   ENDIF
+413 ACSR                   Z-ADDLBLBL#    LSTLB#
+     C*
+     C*       Skip label if nothing was picked.
+     C*
+     CSR         LBQPCK    IFEQ 0
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*       Print beginning bulk pick label.
+     C*
+     CSR         FIRST     IFEQ *ON
+     C***                  WRITEBEGBULK
+     CSR                   EXSR BEGBLK
+     CSR                   EXSR PRINT
+     CSR                   MOVE *OFF      FIRST
+     CSR                   ENDIF
+     C*
+     C*       Print warning for bulk/replenishment combo.
+     C*
+     C*
+     C*       Print bulk label.
+     C*
+     CSR                   Z-ADDLBQPCK    W1QTY
+     CSR                   EXSR CRTSTP
+     C***                  WRITESETHEAD
+     C***                  WRITEBULK
+     CSR                   EXSR SETHED
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   EXSR BULK
+     CSR                   EXSR PRINT
+     C*
+     C*       Print replenishment label if necessary.
+     C*
+     CSR         LBDSP2    IFNE *BLANKS
+     CSR                   Z-ADDLBQRMN    W1QTY
+     C***                  WRITETRANSFER
+     CSR                   EXSR REPL1
+     CSR                   EXSR PRINT
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   MOVE *BLANKS   W1CMBO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTRPL  Print replenishment labels for zone
+     C*
+     CSR         PRTRPL    BEGSR
+     C*
+     CSR                   MOVE *ON       FIRST
+     C*
+     C*  Loop through pallets for zone.
+     C*
+     CSR                   MOVE 'O'       KYTYPE
+     CSR         KEYPS3    SETLLPLTSUM3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYPS3    READEPLTSUM3                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*    Loop through replenishment labels for pallet.
+     C*
+     CSR                   MOVE 'R'       KYLTYP
+     CSR         KEYL31    SETLLLABEL31
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     C*
+     CSR         KEYL31    READELABEL31                  78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*       Skip label if nothing was picked.
+     C*
+     CSR         LBQPCK    IFEQ 0
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*       Print "Beginning Replenishment" pick label.
+     C*
+     CSR         FIRST     IFEQ *ON
+     C***                  WRITEBEGREPL
+     CSR                   EXSR BEGRPL
+     CSR                   EXSR PRINT
+     CSR                   MOVE *OFF      FIRST
+     CSR                   ENDIF
+     C*
+     C*       Print replenishment label if necessary.
+     C*
+     CSR                   Z-ADDLBQPCK    W1QTY
+     C***                  WRITESETHEAD
+     CSR                   EXSR SETHED
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+213 ACSR         ITTYPE    IFEQ 'B'
+213 ACSR                   MOVE LBITEM    TOITEM 15
+213 ACSR                   MOVE ITDESC    TODESC 30
+213 ACSR         KEYIL     CHAINITEMLNK              79
+213 ACSR                   MOVE ILITM2    FRITEM 15
+213 ACSR         KEYIT     CHAINPIRITEM              79
+213 ACSR                   MOVE ITDESC    FRDESC 30
+213 ACSR                   Z-ADDITUMQ2    TOQTY   50
+213 ACSR                   MOVE ITUM2     TOUM    5
+213 AC***                  WRITETRANSFR2
+     CSR                   EXSR REPL2
+     CSR                   EXSR PRINT
+213 ACSR                   ELSE
+     C***                  WRITETRANSFER
+     CSR                   EXSR REPL1
+     CSR                   EXSR PRINT
+213 ACSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTSEL  Print normal selection labels for zone.
+     C*
+     CSR         PRTSEL    BEGSR
+     C*
+     C*   Print header for this set of selection labels.
+     C*
+     CSR                   EXSR SETBEG
+     C*
+     C*   Loop through selection labels for transaction.
+     C*
+     CSR                   Z-ADD0         COUNT   50
+     CSR                   MOVE 'O'       KYLTYP
+     CSR         KEYL32    SETLLLABEL32
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYL32    READELABEL32                  78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+404 AC*     Skip label if cross dock.
+     C*
+404 ACSR         LBSTYP    IFEQ 'X'
+404 ACSR                   ITER
+404 ACSR                   ENDIF
+     C*
+     C*     Skip label if nothing was picked.
+     C*
+     CSR         LBQPCK    IFEQ 0
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     CSR                   ADD  1         COUNT
+     C*
+     C*     See if we should print the "before" um warning.
+     C*
+     CSR         LBUTYP    IFNE 'N'
+     CSR         OPUWRB    ANDEQ'Y'
+     C***                  WRITEWARNUMB
+     CSR                   EXSR UMB
+     CSR                   EXSR PRINT
+     CSR                   ENDIF
+     C*
+     C*     Initialize label fields.
+     C*
+     CSR                   Z-ADDLBQPCK    W1QTY2
+     CSR                   EXSR CRTSTP
+     C*
+     C*     Either print a combination label ...
+     C*
+     CSR                   SELEC
+     CSR         LBQPCK    WHGE OPCLVL
+     CSR                   MOVE *ON       COMBO   1
+     C*
+     C*        See if we should print the "before" combo warning.
+     C*
+     CSR         OPCWRB    IFEQ 'Y'
+     C***                  WRITEWARNCMBB
+     CSR                   EXSR CMBB
+     CSR                   EXSR PRINT
+     CSR                   ENDIF
+     C*
+     C*        Print one label.
+     C*
+     CSR                   Z-ADDLBQPCK    W1PICK
+     CSR                   MOVE '(COMBO)' W1CMBO  7
+     C***                  WRITEPICK
+     CSR                   EXSR PICK
+     CSR                   EXSR PRINT
+     CSR                   MOVE *BLANKS   W1CMBO
+     C*
+     C*        See if we should print the "after" combo warning.
+     C*
+     CSR         OPCWRA    IFEQ 'Y'
+     C***                  WRITEWARNCMBA
+     CSR                   EXSR CMBA
+     CSR                   EXSR PRINT
+     CSR                   ENDIF
+     C*
+     CSR                   OTHER
+     C*
+     C*     Or print individual labels.
+     C*
+402 ACSR                   MOVE *OFF      COMBO
+     CSR         1         DO   LBQPCK    W1PICK
+     C***                  WRITEPICK
+     CSR                   EXSR PICK
+     CSR                   EXSR PRINT
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSL
+     C*
+     C*     See if we should print the "after" um warning.
+     C*
+     CSR         LBUTYP    IFNE 'N'
+     CSR         OPUWRA    ANDEQ'Y'
+     C***                  WRITEWARNUMA
+     CSR                   EXSR UMA
+     CSR                   EXSR PRINT
+     CSR                   ENDIF
+     C*
+     C*     Print catch weight labels.
+     C*
+     CSR         ITCWGT    IFEQ 'Y'
+     CSR         OPCWGT    ANDNE0
+     CSR         LBQPCK    DIV  OPCWGT    LBLS    30
+     CSR                   MVR            REMAIN  20
+     CSR         REMAIN    IFNE 0
+     CSR                   ADD  1         LBLS
+     CSR                   ENDIF
+     CSR         1         DO   LBLS
+     C***                  WRITECATCHWGT
+     CSR                   EXSR CACHWT
+     CSR                   EXSR PRINT
+     CSR                   ENDDO
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     C*   Print summary for this set of selection labels.
+     C*
+     CSR                   EXSR SETEND
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+404 AC*  PRTXDK  Print cross dock labels.
+     C*
+404 ACSR         PRTXDK    BEGSR
+     C*
+     C*
+404 AC*   Loop through selection labels for transaction.
+404 AC*
+404 ACSR                   Z-ADD0         COUNT   50
+404 ACSR                   MOVE 'O'       KYLTYP
+404 ACSR         KEYL32    SETLLLABEL32
+404 AC*
+404 ACSR         FOREVR    DOUNEFOREVR
+404 ACSR         KEYL32    READELABEL32                  78
+404 ACSR         *IN78     IFEQ *ON
+404 ACSR                   LEAVE
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     Skip label if not cross dock.
+404 AC*
+404 ACSR         LBSTYP    IFNE 'X'
+404 ACSR                   ITER
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     Skip label if nothing was picked.
+404 AC*
+404 ACSR         LBQPCK    IFEQ 0
+404 ACSR                   ITER
+404 ACSR                   ENDIF
+404 AC*
+404 ACSR                   ADD  1         COUNT
+404 AC*
+404 AC*   Print warning "Cross dock labels next".
+404 AC*
+404 ACSR         COUNT     IFEQ 1
+404 ACSR                   EXSR XDKB
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     See if we should print the "before" um warning.
+404 AC*
+404 ACSR         LBUTYP    IFNE 'N'
+404 ACSR         OPUWRB    ANDEQ'Y'
+404 ACSR                   EXSR UMB
+404 ACSR                   EXSR PRINT
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     Initialize label fields.
+404 AC*
+404 ACSR                   Z-ADDLBQPCK    W1QTY2
+404 ACSR                   EXSR CRTSTP
+404 AC*
+404 AC*     Either print a combination label ...
+404 AC*
+404 ACSR                   SELEC
+404 ACSR         LBQPCK    WHGE OPCLVL
+404 ACSR                   MOVE *ON       COMBO   1
+404 AC*
+404 AC*        See if we should print the "before" combo warning.
+404 AC*
+404 ACSR         OPCWRB    IFEQ 'Y'
+404 ACSR                   EXSR CMBB
+404 ACSR                   EXSR PRINT
+404 ACSR                   ENDIF
+404 AC*
+404 AC*        Print one label.
+404 AC*
+404 ACSR                   Z-ADDLBQPCK    W1PICK
+404 ACSR                   MOVE '(COMBO)' W1CMBO  7
+404 ACSR                   EXSR PICK
+404 ACSR                   EXSR PRINT
+404 ACSR                   MOVE *BLANKS   W1CMBO
+404 AC*
+404 AC*        See if we should print the "after" combo warning.
+404 AC*
+404 ACSR         OPCWRA    IFEQ 'Y'
+404 ACSR                   EXSR CMBA
+404 ACSR                   EXSR PRINT
+404 ACSR                   ENDIF
+404 AC*
+404 ACSR                   OTHER
+404 AC*
+404 AC*     Or print individual labels.
+404 AC*
+402 ACSR                   MOVE *OFF      COMBO
+404 ACSR         1         DO   LBQPCK    W1PICK
+404 ACSR                   EXSR PICK
+404 ACSR                   EXSR PRINT
+404 ACSR                   ENDDO
+404 AC*
+404 ACSR                   ENDSL
+404 AC*
+404 AC*     See if we should print the "after" um warning.
+404 AC*
+404 ACSR         LBUTYP    IFNE 'N'
+404 ACSR         OPUWRA    ANDEQ'Y'
+404 ACSR                   EXSR UMA
+404 ACSR                   EXSR PRINT
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     Print catch weight labels.
+404 AC*
+404 ACSR         ITCWGT    IFEQ 'Y'
+404 ACSR         OPCWGT    ANDNE0
+404 ACSR         LBQPCK    DIV  OPCWGT    LBLS    30
+404 ACSR                   MVR            REMAIN  20
+404 ACSR         REMAIN    IFNE 0
+404 ACSR                   ADD  1         LBLS
+404 ACSR                   ENDIF
+404 ACSR         1         DO   LBLS
+404 ACSR                   EXSR CACHWT
+404 ACSR                   EXSR PRINT
+404 ACSR                   ENDDO
+404 ACSR                   ENDIF
+404 AC*
+404 ACSR                   ENDDO
+404 AC*
+404 AC*
+404 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Replenishments 1
+     C*
+     CSR         REPL1     BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*  Line 2
+     C*
+     C*  Line 3
+     C*
+     C*  Line 4
+     CSR                   MOVE CNST12    FM43
+     CSR                   MOVE LBDISP    FS43
+     CSR                   MOVE CNST13    TO43
+     CSR                   MOVE LBDSP2    TS43
+     C*  Line 5
+     C*
+     C*  Line 6
+     CSR                   MOVE CNST14    QT61
+     C*          Quantity
+     CSR                   MOVE 'L'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1QTY            Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QN61
+     CSR                   MOVE 'of'      OF61
+     C*          Quantity Available
+     CSR                   MOVE 'L'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBQAVL           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QV61
+     CSR                   MOVE UMSHRT    UM61
+     CSR                   MOVE CNST15    TH61
+     C*          Tie
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD4         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD4         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTIE            Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TI61
+     CSR                   MOVE '/'       SH61
+     C*          High
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD2         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD2         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBHIGH           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    HG61
+     C*  Line 7
+     C*
+     C*  Line 8
+     CSR                   MOVE CNST16    IT81
+     CSR                   MOVE LBITEM    IM81
+     CSR                   MOVELITPDSC    PD81
+     C*  Line 9
+     CSR                   MOVELITDESC    DS91
+     C*  Line 10
+     C*
+     C*  Line 11
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Replenishments 2
+     C*
+     CSR         REPL2     BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*  Line 2
+     C*
+     C*  Line 3
+     C*
+     C*  Line 4
+     CSR                   MOVE CNST12    FM43
+     CSR                   MOVE LBDISP    FS43
+     CSR                   MOVE CNST13    TO43
+     CSR                   MOVE LBDSP2    TS43
+     C*  Line 5
+     C*
+     C*  Line 6
+     CSR                   MOVE CNST14    QT61
+     C*          From Quantity
+     CSR                   MOVE 'L'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1QTY            Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QN61
+     CSR                   MOVE 'of'      OF61
+     C*          Quantity Available
+     CSR                   MOVE 'L'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBQAVL           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QV61
+     CSR                   MOVE UMSHRT    UM61
+     C*          To Quantity
+     CSR                   MOVE CNST14    QT62
+     CSR                   MOVE 'L'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           TOQTY            Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    QN62
+     CSR                   MOVE TOUM      UM62
+     C*  Line 7
+     C*
+     C*  Line 8
+     CSR                   MOVE CNST16    IT81
+     CSR                   MOVE FRITEM    IM81
+     CSR                   MOVE CNST16    IT82
+     CSR                   MOVE TOITEM    IM82
+     C*  Line 9
+     CSR                   MOVELFRDESC    DS91
+     CSR                   MOVELTODESC    DS92
+     C*  Line 10
+     C*
+     C*  Line 11
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETBEG  Start new set of labels.
+     C*
+     CSR         SETBEG    BEGSR
+     C*
+     C*   Print set header label.
+     C*
+     CSR                   Z-ADDLSTTRN    LBTRN#
+     C***                  WRITESETHEAD
+     CSR                   EXSR SETHED
+     C*
+     C*   Print pallet summary.
+     C*
+     C***                  WRITEPALSUMH
+     CSR                   EXSR PALSUH
+     CSR         1         DO   PALCNT    CURPAL  20
+     CSR         CURPAL    OCUR PALSUM
+     CSR                   Z-ADDDSPPAL    W1PAL#
+     CSR                   Z-ADDDSPSTP    W1PSTP
+     CSR                   Z-ADDDSPCUB    W1PCUB
+     CSR                   Z-ADDDSPWGT    W1PWGT
+     CSR                   Z-ADDDSPPCS    W1PPCS
+     C***                  WRITEPALSUMD
+     CSR                   EXSR PALSUD
+     CSR                   ENDDO
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETEND  End set of labels.
+     C*
+     CSR         SETEND    BEGSR
+     C*
+404 AC*   Print cross dock labels.
+     C*
+404 ACSR                   EXSR PRTXDK
+     C*
+     C*   Print discrepancy labels.
+     C*
+     CSR         OPERR     IFNE 0
+     CSR         COUNT     DIV  OPERR     LBLS    30
+     CSR                   MVR            REMAIN  20
+     CSR         REMAIN    IFNE 0
+     CSR                   ADD  1         LBLS
+     CSR                   ENDIF
+     CSR         1         DO   LBLS
+     C***                  WRITEDISCREP
+     CSR                   EXSR DISCRP
+     CSR                   EXSR PRINT
+     CSR                   ENDDO
+     CSR                   ENDIF
+     C*
+     C*   Print merge summary(s) for transaction.
+     C*
+     C*     Loop through selection labels for transaction.
+     C*
+     CSR                   MOVE *ON       FIRST2  1
+     CSR                   MOVE 'M'       KYLTYP
+406 ACSR                   Z-ADD0         S
+     CSR         KEYL32    SETLLLABEL32
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYL32    READELABEL32                  78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*       Put together zone from label fields.
+     C*
+     CSR                   MOVELLBWHDP    TMPZON
+     CSR                   MOVE LBSTYP    TMPZON
+     C*
+     C*       First time through initialization.
+     C*
+     CSR         FIRST2    IFEQ *ON
+     CSR                   MOVE TMPZON    LSTZON
+     CSR                   Z-ADDLBSTOP    W1RSTP
+404 ACSR                   EXSR GETPAL
+404 ACSR                   Z-ADDPAL#      W1PAL#
+     C***                  WRITEPIRSUMH
+     CSR                   EXSR PIRSUH
+     CSR                   Z-ADD0         TTLCUB  83
+     CSR                   Z-ADD0         TTLWGT  92
+     CSR                   Z-ADD0         TTLPCS  70
+404 ACSR                   Z-ADD0         W1RCUB
+404 ACSR                   Z-ADD0         W1RWGT
+404 ACSR                   Z-ADD0         W1RPCS
+     CSR                   Z-ADD0         S       30
+     CSR                   MOVE *OFF      FIRST2
+     CSR                   ENDIF
+405 DC*
+405 DC*       When zone or stop changes, print detail line.
+405 DC*
+405 DC*          TMPZON    IFNE LSTZON
+405 DC*          LBSTOP    ORNE W1RSTP
+404 ACSR                   EXSR GETPAL
+404 ACSR                   Z-ADDPAL#      W1PAL#
+405 DC***                  WRITEPIRSUMD
+405 DC*                    ADD  1         S
+405 DC*          S         IFGT 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ENDIF
+405 DC*                    EXSR PIRSUD
+405 DC*                    ADD  W1RCUB    TTLCUB
+405 DC*                    ADD  W1RWGT    TTLWGT
+405 DC*                    ADD  W1RPCS    TTLPCS
+405 DC*                    Z-ADD0         W1RCUB
+405 DC*                    Z-ADD0         W1RWGT
+405 DC*                    Z-ADD0         W1RPCS
+405 DC*                    Z-ADDLBSTOP    W1RSTP
+405 DC*                    ENDIF
+     C*
+     C*       When zone changes, print summary totals.
+     C*
+     CSR         TMPZON    IFNE LSTZON
+405 DC***                  WRITEPIRSUML
+405 DC***                  WRITEPIRSUMT
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S       30
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L       30
+405 DC*                    EXSR PIRSUL
+405 DC*
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L
+405 DC*                    EXSR PIRSUT
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   Z-ADD0         TTLCUB  83
+     CSR                   Z-ADD0         TTLWGT  92
+     CSR                   Z-ADD0         TTLPCS  70
+     CSR                   Z-ADD0         S       30
+     CSR                   MOVE TMPZON    LSTZON
+403 AC***                  WRITEPIRSUMH
+403 ACSR                   EXSR PIRSUH
+     CSR                   ENDIF
+     C*
+     C*       Update summary amounts for stop.
+     C*
+405 DC*                    ADD  LBCUBE    W1RCUB
+405 MCSR                   Z-ADDLBCUBE    W1RCUB  63
+405 DC*                    ADD  LBSWGT    W1RWGT
+405 MCSR                   Z-ADDLBSWGT    W1RWGT  72
+405 DC*                    ADD  LBQPCK    W1RPCS
+405 MCSR                   Z-ADDLBQPCK    W1RPCS
+     CSR                   MOVELOHCNAM    W1RCNM 30
+405 AC*
+405 AC*       Print detail line.
+405 AC*
+404 ACSR                   EXSR GETPAL
+404 ACSR                   Z-ADDPAL#      W1PAL#
+405 ACSR                   Z-ADDLBSTOP    W1RSTP
+405 AC***                  WRITEPIRSUMD
+405 ACSR                   ADD  1         S
+405 ACSR         S         IFGT 9
+405 ACSR                   Z-ADD1         S
+405 ACSR                   ENDIF
+405 ACSR                   EXSR PIRSUD
+405 ACSR                   ADD  W1RCUB    TTLCUB
+405 ACSR                   ADD  W1RWGT    TTLWGT
+405 ACSR                   ADD  W1RPCS    TTLPCS
+     C*
+     CSR                   ENDDO
+405 AC*
+405 AC*     Force printing of label.
+405 AC*
+405 ACSR         S         IFGT 0
+405 ACSR         S         ANDLT9
+405 ACSR                   EXSR ZZFILL
+405 ACSR                   EXSR PRINT
+405 ACSR                   ENDIF
+405 DC*
+405 DC*     Print leftovers.
+405 DC*
+405 DC*          FIRST2    IFEQ *OFF
+405 DC*
+405 DC*       Detail line.
+405 DC*
+405 DC***                  WRITEPIRSUMD
+405 DC*                    ADD  1         S
+405 DC*          S         IFGT 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ENDIF
+405 DC*                    EXSR PIRSUD
+405 DC*                    ADD  W1RCUB    TTLCUB
+405 DC*                    ADD  W1RWGT    TTLWGT
+405 DC*                    ADD  W1RPCS    TTLPCS
+405 DC*
+405 DC*       Summary totals.
+405 DC*
+405 DC***                  WRITEPIRSUML
+405 DC***                  WRITEPIRSUMT
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S       30
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L       30
+405 DC*                    EXSR PIRSUL
+405 DC*
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L
+405 DC*                    EXSR PIRSUT
+405 DC*                    EXSR ZZFILL
+405 DC*                    EXSR PRINT
+405 DC*                    ENDIF
+     C*
+     C*
+     C*   Print set summary for transaction.
+     C*
+     C*     Print header label.
+     C*
+     C***                  WRITESETSUMH
+     CSR                   EXSR SETSUH
+     C*
+     C*     Loop through all labels for transaction.
+     C*
+     CSR                   MOVE *ON       FIRST2  1
+     CSR         KEYL33    SETLLLABEL33
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYL33    READELABEL33                  78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*       First time through initialization.
+     C*
+     CSR         FIRST2    IFEQ *ON
+     CSR                   Z-ADDLBSTOP    W1SSTP  20
+     CSR                   Z-ADD0         W1SCUB  63
+403 ACSR                   Z-ADD0         W1SWGT  72
+403 DC**                   Z-ADD0         W1SWGT  70
+     CSR                   Z-ADD0         W1SPCS  50
+     CSR                   MOVE *BLANKS   W1SCNM 30
+     CSR                   Z-ADD0         TTLCUB  83
+     CSR                   Z-ADD0         TTLWGT  92
+     CSR                   Z-ADD0         TTLPCS  70
+     CSR                   Z-ADD0         S       30
+     CSR                   MOVE *OFF      FIRST2
+     CSR                   ENDIF
+     C*
+     C*       When stop changes, print detail line.
+     C*
+     CSR         LBSTOP    IFNE W1SSTP
+     C***                  WRITESETSUMD
+     CSR                   ADD  1         S
+     CSR         S         IFGT 9
+     CSR                   Z-ADD1         S
+     CSR                   ENDIF
+     CSR                   EXSR SETSUD
+     CSR                   ADD  W1SCUB    TTLCUB
+     CSR                   ADD  W1SWGT    TTLWGT
+     CSR                   ADD  W1SPCS    TTLPCS
+     CSR                   Z-ADD0         W1SCUB
+     CSR                   Z-ADD0         W1SWGT
+     CSR                   Z-ADD0         W1SPCS
+     CSR                   Z-ADDLBSTOP    W1SSTP
+     CSR                   ENDIF
+     C*
+     C*       Update summary amounts for stop.
+     C*
+     CSR                   ADD  LBCUBE    W1SCUB
+     CSR                   ADD  LBSWGT    W1SWGT
+     CSR                   ADD  LBQPCK    W1SPCS
+     CSR                   MOVELOHCNAM    W1SCNM 30
+     C*
+     CSR                   ENDDO
+     C*
+     C*     Print last stop and totals.
+     C*
+     CSR         FIRST2    IFEQ *OFF
+     C*
+     C*       Detail line.
+     C*
+     C***                  WRITESETSUMD
+     CSR                   ADD  1         S
+     CSR         S         IFGT 9
+     CSR                   Z-ADD1         S
+     CSR                   ENDIF
+     CSR                   EXSR SETSUD
+     CSR                   ADD  W1SCUB    TTLCUB
+     CSR                   ADD  W1SWGT    TTLWGT
+     CSR                   ADD  W1SPCS    TTLPCS
+     C*
+     C*       Summary totals.
+     C*
+     C***                  WRITESETSUML
+     C***                  WRITESETSUMT
+     CSR         S         IFEQ 9
+     CSR                   Z-ADD1         S       30
+     CSR                   ELSE
+     CSR                   ADD  1         S
+     CSR                   ENDIF
+     CSR                   Z-ADDS         L       30
+     CSR                   EXSR SETSUL
+     C*
+     CSR         S         IFEQ 9
+     CSR                   Z-ADD1         S
+     CSR                   ELSE
+     CSR                   ADD  1         S
+     CSR                   ENDIF
+     CSR                   Z-ADDS         L
+     CSR                   EXSR SETSUT
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   ENDIF
+     C*
+     C*
+     C*  End of transaction, force print.
+     C*
+     CSR                   EXSR ZZCLER
+     CSR                   Z-ADD3         THREE
+     CSR                   EXSR PRINT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETHED  Set summary header.(Batch, Warehouse etc.)
+     C*
+     CSR         SETHED    BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     C*          Transaction number
+     CSR                   MOVE CNST7     CN1
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           LBTRN#           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    TN1
+     C*  Line 2
+     C*
+     C*  Line 3
+     C*          Warehouse
+     CSR                   MOVE CNST2     CN3
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD3         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD3         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           $PWHSE           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    WH3
+     C*  Line 4
+     C*          Route
+     CSR                   MOVE CNST3     CN44
+     CSR                   MOVE $PRTE     RT44
+     C*  Line 5
+     C*          Compartment
+     CSR                   MOVE CNST49    CN55
+     CSR                   MOVE $PCOMP    CP55
+     C*  Line 6
+     C*          Zone
+     CSR                   MOVE CNST50    CN63
+     CSR                   MOVE $PSZON    ZN63
+     C*  Line 7
+     C*          Type
+     CSR                   MOVE CNST51    CN73
+     CSR         $PGEN     IFEQ 1
+     CSR                   MOVE 'Truck'   TP73
+     CSR                   ELSE
+     CSR                   MOVE 'Stage'   TP73
+     CSR                   ENDIF
+     C*  Line 8
+     C*
+     C*  Line 9
+     C*
+     C*  Line 10
+     C*
+     C*  Line 11
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETSUD  Set summary detail lines.
+     C*
+     CSR         SETSUD    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3-11
+     C*          Stop
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD2         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD2         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1SSTP           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    SX      2
+     C*          Pieces
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD5         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD5         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1SPCS           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    CX      5
+     C*          Cube
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD6         ECSPRC
+     CSR                   Z-ADD3         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD6         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1SCUB           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    UX      7
+     C*          Weight
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD2         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           W1SWGT           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    WX      8
+     C*
+     CSR                   MOVELW1SCNM    RX
+     CSR                   SELEC
+     CSR         S         WHEQ 1
+     CSR                   MOVE SX        S33
+     CSR                   MOVE CX        C33
+     CSR                   MOVE UX        U33
+     CSR                   MOVE WX        W33
+     CSR                   MOVELRX        R33
+     CSR         S         WHEQ 2
+     CSR                   MOVE SX        S44
+     CSR                   MOVE CX        C44
+     CSR                   MOVE UX        U44
+     CSR                   MOVE WX        W44
+     CSR                   MOVELRX        R44
+     CSR         S         WHEQ 3
+     CSR                   MOVE SX        S55
+     CSR                   MOVE CX        C55
+     CSR                   MOVE UX        U55
+     CSR                   MOVE WX        W55
+     CSR                   MOVELRX        R55
+     CSR         S         WHEQ 4
+     CSR                   MOVE SX        S66
+     CSR                   MOVE CX        C66
+     CSR                   MOVE UX        U66
+     CSR                   MOVE WX        W66
+     CSR                   MOVELRX        R66
+     CSR         S         WHEQ 5
+     CSR                   MOVE SX        S77
+     CSR                   MOVE CX        C77
+     CSR                   MOVE UX        U77
+     CSR                   MOVE WX        W77
+     CSR                   MOVELRX        R77
+     CSR         S         WHEQ 6
+     CSR                   MOVE SX        S88
+     CSR                   MOVE CX        C88
+     CSR                   MOVE UX        U88
+     CSR                   MOVE WX        W88
+     CSR                   MOVELRX        R88
+     CSR         S         WHEQ 7
+     CSR                   MOVE SX        S99
+     CSR                   MOVE CX        C99
+     CSR                   MOVE UX        U99
+     CSR                   MOVE WX        W99
+     CSR                   MOVELRX        R99
+     CSR         S         WHEQ 8
+     CSR                   MOVE SX        S00
+     CSR                   MOVE CX        C00
+     CSR                   MOVE UX        U00
+     CSR                   MOVE WX        W00
+     CSR                   MOVELRX        R00
+     CSR         S         WHEQ 9
+     CSR                   MOVE SX        S111
+     CSR                   MOVE CX        C111
+     CSR                   MOVE UX        U111
+     CSR                   MOVE WX        W111
+     CSR                   MOVELRX        R111
+     CSR                   ENDSL
+     C*   Overflow to next label.
+     CSR         S         IFEQ 9
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   EXSR SETSUH
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETSUH  Set summary header line.
+     C*
+     CSR         SETSUH    BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVE CNST35    LINE1
+404 AC*          Transaction number
+404 ACSR                   MOVE CNST7     CN1
+404 ACSR                   MOVE '3'       ECEDCD
+404 ACSR                   CLEARECFILL
+404 ACSR                   Z-ADD7         ECSPRC
+404 ACSR                   Z-ADD0         ECSDEC
+404 ACSR                   EXSR #CVTEC
+404 AC*
+404 ACSR                   Z-ADDECRCVL    EDRCVL
+404 ACSR                   MOVELECMASK    EDMASK
+404 ACSR                   Z-ADDECMSKL    EDMSKL
+404 ACSR                   MOVELECZBAL    EDZBAL
+404 ACSR                   CLEAREDRVAR
+404 ACSR                   Z-ADD7         EDSPRC
+404 ACSR                   MOVEL'*PACKED' EDSCLS    P
+404 ACSR                   CLEARAPIERR
+404 ACSR                   Z-ADD116       AEBYPR
+404 AC*
+404 ACSR                   CALL 'QECEDT'
+404 ACSR                   PARM           EDRVAR 64        Receiver var
+404 ACSR                   PARM           EDRCVL           Receiver length
+404 ACSR                   PARM           LSTTRN           Source var
+404 ACSR                   PARM           EDSCLS           Source class
+404 ACSR                   PARM           EDSPRC           Source var prec
+404 ACSR                   PARM           EDMASK256        Edit mask
+404 ACSR                   PARM           EDMSKL           Edit mask len
+404 ACSR                   PARM           EDZBAL           Zero bal fill
+404 ACSR                   PARM           APIERR           API error code
+404 ACSR                   MOVELEDRVAR    TN1
+     C*
+     C*  Line 2
+     CSR                   MOVE CNST29    S22
+     CSR                   MOVE CNST26    C22
+     CSR                   MOVE CNST27    U22
+     CSR                   MOVE CNST28    W22
+     CSR                   MOVE CNST9     R22
+     C*
+     C*  Line 3
+     C*
+     C*  Line 4
+     C*
+     C*  Line 5
+     C*
+     C*  Line 6
+     C*
+     C*  Line 7
+     C*
+     C*  Line 8
+     C*
+     C*  Line 9
+     C*
+     C*  Line 10
+     C*
+     C*  Line 11
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETSUL  Set summary underline.
+     C*
+     CSR         SETSUL    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3-11
+     CSR                   SELEC
+     CSR         L         WHEQ 1
+     CSR                   MOVE '-----'   C33
+     CSR                   MOVE '-------' U33
+     CSR                   MOVE '--------'W33
+     CSR         L         WHEQ 2
+     CSR                   MOVE '-----'   C44
+     CSR                   MOVE '-------' U44
+     CSR                   MOVE '--------'W44
+     CSR         L         WHEQ 3
+     CSR                   MOVE '-----'   C55
+     CSR                   MOVE '-------' U55
+     CSR                   MOVE '--------'W55
+     CSR         L         WHEQ 4
+     CSR                   MOVE '-----'   C66
+     CSR                   MOVE '-------' U66
+     CSR                   MOVE '--------'W66
+     CSR         L         WHEQ 5
+     CSR                   MOVE '-----'   C77
+     CSR                   MOVE '-------' U77
+     CSR                   MOVE '--------'W77
+     CSR         L         WHEQ 6
+     CSR                   MOVE '-----'   C88
+     CSR                   MOVE '-------' U88
+     CSR                   MOVE '--------'W88
+     CSR         L         WHEQ 7
+     CSR                   MOVE '-----'   C99
+     CSR                   MOVE '-------' U99
+     CSR                   MOVE '--------'W99
+     CSR         L         WHEQ 8
+     CSR                   MOVE '-----'   C00
+     CSR                   MOVE '-------' U00
+     CSR                   MOVE '--------'W00
+     CSR         L         WHEQ 9
+     CSR                   MOVE '-----'   C111
+     CSR                   MOVE '-------' U111
+     CSR                   MOVE '--------'W111
+     CSR                   ENDSL
+     C*   Overflow to next label.
+     CSR         L         IFEQ 9
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   EXSR SETSUH
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETSUT  Set summary totals line.
+     C*
+     CSR         SETSUT    BEGSR
+     C*  Line 1
+     C*
+     C*  Line 2
+     C*
+     C*  Line 3-11
+     C*          Pieces
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD7         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD7         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           TTLPCS           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    CT      7
+     C*          Cube
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD8         ECSPRC
+     CSR                   Z-ADD3         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD8         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           TTLCUB           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    UT      9
+     C*          Weight
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD9         ECSPRC
+     CSR                   Z-ADD2         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD9         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           TTLWGT           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    WT     10
+     C*
+     CSR                   SELEC
+     CSR         L         WHEQ 1
+     CSR                   MOVE CT        CT33
+     CSR                   MOVE UT        UT33
+     CSR                   MOVE WT        WT33
+     CSR         L         WHEQ 2
+     CSR                   MOVE CT        CT44
+     CSR                   MOVE UT        UT44
+     CSR                   MOVE WT        WT44
+     CSR         L         WHEQ 3
+     CSR                   MOVE CT        CT55
+     CSR                   MOVE UT        UT55
+     CSR                   MOVE WT        WT55
+     CSR         L         WHEQ 4
+     CSR                   MOVE CT        CT66
+     CSR                   MOVE UT        UT66
+     CSR                   MOVE WT        WT66
+     CSR         L         WHEQ 5
+     CSR                   MOVE CT        CT77
+     CSR                   MOVE UT        UT77
+     CSR                   MOVE WT        WT77
+     CSR         L         WHEQ 6
+     CSR                   MOVE CT        CT88
+     CSR                   MOVE UT        UT88
+     CSR                   MOVE WT        WT88
+     CSR         L         WHEQ 7
+     CSR                   MOVE CT        CT99
+     CSR                   MOVE UT        UT99
+     CSR                   MOVE WT        WT99
+     CSR         L         WHEQ 8
+     CSR                   MOVE CT        CT00
+     CSR                   MOVE UT        UT00
+     CSR                   MOVE WT        WT00
+     CSR         L         WHEQ 9
+     CSR                   MOVE CT        CT111
+     CSR                   MOVE UT        UT111
+     CSR                   MOVE WT        WT111
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+404 AC*  XDKB    Cross dock labels are next.
+     C*
+404 ACSR         XDKB      BEGSR
+     CSR                   EXSR ZZCLER
+404 AC*  Line 1
+404 ACSR                   MOVE CNST54    XDK1
+404 AC*
+404 AC*  Line 2
+404 AC*
+404 AC*  Line 3
+404 AC*
+404 AC*  Line 4
+404 AC*
+404 AC*  Line 5
+404 AC*
+404 AC*  Line 6
+404 AC*
+404 AC*  Line 7
+404 AC*
+404 AC*  Line 8
+404 AC*
+404 AC*  Line 9
+404 AC*  Line 10
+404 AC*
+404 AC*  Line 11
+404 AC*
+404 ACSR                   EXSR ZZFILL
+404 ACSR                   EXSR PRINT
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UMA     Unit of measure change is before.
+     C*
+     CSR         UMA       BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVE *ALL'*'   LINE1
+     C*  Line 2
+     C*
+     C*  Line 3
+     CSR                   MOVE CNST20    CN32
+     C*  Line 4
+     CSR                   MOVE CNST39    AR44
+     C*  Line 5
+     CSR                   MOVE CNST40    AR55
+     C*  Line 6
+     CSR                   MOVE CNST41    AR66
+     C*  Line 7
+     CSR                   MOVE CNST42    AR77
+     C*  Line 8
+     CSR                   MOVE CNST43    AR88
+     C*  Line 9
+     C**                   MOVE CNST21    CN91
+     C*  Line 10
+     C**                   MOVE CNST21    CN10
+     C*  Line 11
+     C**                   MOVE CNST21    CN11
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UMB     Unit of measure change is next.
+     C*
+     CSR         UMB       BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVE *ALL'*'   LINE1
+     C*  Line 2
+     C*
+     C*  Line 3
+     CSR                   MOVE CNST19    CN32
+     C*  Line 4
+     CSR                   MOVE CNST44    AR44
+     C*  Line 5
+     CSR                   MOVE CNST45    AR55
+     C*  Line 6
+     CSR                   MOVE CNST46    AR66
+     C*  Line 7
+     CSR                   MOVE CNST47    AR77
+     C*  Line 8
+     CSR                   MOVE CNST48    AR88
+     C*  Line 9
+     C**                   MOVE CNST22    CN92
+     C*  Line 10
+     C**                   MOVE CNST23    CN12
+     C*  Line 11
+     C**                   MOVE CNST21    CN11
+     CSR                   EXSR ZZFILL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZONHED  Zone header label.
+     C*
+     CSR         ZONHED    BEGSR
+     CSR                   EXSR ZZCLER
+     C*  Line 1
+     CSR                   MOVE *ALL'*'   LINE1
+     C*  Line 2
+     CSR                   MOVELCNST38    LINE2
+     C*  Line 3
+     C*
+     C*  Line 4
+     C*          Warehouse
+     CSR                   MOVE CNST2     CN4
+     CSR                   MOVE '3'       ECEDCD
+     CSR                   CLEARECFILL
+     CSR                   Z-ADD3         ECSPRC
+     CSR                   Z-ADD0         ECSDEC
+     CSR                   EXSR #CVTEC
+     C*
+     CSR                   Z-ADDECRCVL    EDRCVL
+     CSR                   MOVELECMASK    EDMASK
+     CSR                   Z-ADDECMSKL    EDMSKL
+     CSR                   MOVELECZBAL    EDZBAL
+     CSR                   CLEAREDRVAR
+     CSR                   Z-ADD3         EDSPRC
+     CSR                   MOVEL'*PACKED' EDSCLS    P
+     CSR                   CLEARAPIERR
+     CSR                   Z-ADD116       AEBYPR
+     C*
+     CSR                   CALL 'QECEDT'
+     CSR                   PARM           EDRVAR 64        Receiver var
+     CSR                   PARM           EDRCVL           Receiver length
+     CSR                   PARM           $PWHSE           Source var
+     CSR                   PARM           EDSCLS           Source class
+     CSR                   PARM           EDSPRC           Source var prec
+     CSR                   PARM           EDMASK256        Edit mask
+     CSR                   PARM           EDMSKL           Edit mask len
+     CSR                   PARM           EDZBAL           Zero bal fill
+     CSR                   PARM           APIERR           API error code
+     CSR                   MOVELEDRVAR    WH4
+     C*  Line 5
+     C*          Route
+     CSR                   MOVE CNST3     CN5
+     CSR                   MOVE $PRTE     RT5
+     C*  Line 6
+     C*          Compartment
+     CSR                   MOVE CNST49    CN6
+     CSR                   MOVE $PCOMP    CP6
+     C*  Line 7
+     C*          Zone
+     CSR                   MOVE CNST50    CN7
+     CSR                   MOVE $PSZON    ZN7
+     C*  Line 9
+     C*
+     C*  Line 10
+     CSR                   MOVE *ALL'*'   LINE10
+     C*  Line 11
+     CSR                   MOVE *ALL'*'   LINE11
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   EXSR PRINT
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCLER  Clear data structures.
+     C*
+     CSR         ZZCLER    BEGSR
+     CSR                   CLEARLINE1
+     CSR                   CLEARLINE2
+     CSR                   CLEARLINE3
+     CSR                   CLEARLINE4
+     CSR                   CLEARLINE5
+     CSR                   CLEARLINE6
+     CSR                   CLEARLINE7
+     CSR                   CLEARLINE8
+     CSR                   CLEARLINE9
+     CSR                   CLEARLINE10
+     CSR                   CLEARLINE11
+     C*
+     CSR                   SELEC
+     CSR         THREE     WHEQ 1
+     CSR         1         DO   11        Z
+     CSR         Z         OCUR DS1
+     CSR                   CLEARLBL1
+     CSR         Z         OCUR DS2
+     CSR                   CLEARLBL2
+     CSR         Z         OCUR DS3
+     CSR                   CLEARLBL3
+     CSR                   ENDDO
+     CSR                   ENDSL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFILL  Fill data structures.
+     C*
+     CSR         ZZFILL    BEGSR
+     C*
+     CSR                   SELEC
+     CSR         THREE     WHEQ 1
+     CSR                   Z-ADD0         Z       30
+     CSR         1         DO   11        Z
+     CSR         Z         OCUR DS1
+     CSR                   SELEC
+     CSR         Z         WHEQ 1
+     CSR                   MOVE LINE1     LBL1
+     CSR         Z         WHEQ 2
+     CSR                   MOVE LINE2     LBL1
+     CSR         Z         WHEQ 3
+     CSR                   MOVE LINE3     LBL1
+     CSR         Z         WHEQ 4
+     CSR                   MOVE LINE4     LBL1
+     CSR         Z         WHEQ 5
+     CSR                   MOVE LINE5     LBL1
+     CSR         Z         WHEQ 6
+     CSR                   MOVE LINE6     LBL1
+     CSR         Z         WHEQ 7
+     CSR                   MOVE LINE7     LBL1
+     CSR         Z         WHEQ 8
+     CSR                   MOVE LINE8     LBL1
+     CSR         Z         WHEQ 9
+     CSR                   MOVE LINE9     LBL1
+     CSR         Z         WHEQ 10
+     CSR                   MOVE LINE10    LBL1
+     CSR         Z         WHEQ 11
+     CSR                   MOVE LINE11    LBL1
+     CSR                   ENDSL
+     CSR                   ENDDO
+     C*
+     CSR         THREE     WHEQ 2
+     CSR         1         DO   11        Z
+     CSR         Z         OCUR DS2
+     CSR                   SELEC
+     CSR         Z         WHEQ 1
+     CSR                   MOVE LINE1     LBL2
+     CSR         Z         WHEQ 2
+     CSR                   MOVE LINE2     LBL2
+     CSR         Z         WHEQ 3
+     CSR                   MOVE LINE3     LBL2
+     CSR         Z         WHEQ 4
+     CSR                   MOVE LINE4     LBL2
+     CSR         Z         WHEQ 5
+     CSR                   MOVE LINE5     LBL2
+     CSR         Z         WHEQ 6
+     CSR                   MOVE LINE6     LBL2
+     CSR         Z         WHEQ 7
+     CSR                   MOVE LINE7     LBL2
+     CSR         Z         WHEQ 8
+     CSR                   MOVE LINE8     LBL2
+     CSR         Z         WHEQ 9
+     CSR                   MOVE LINE9     LBL2
+     CSR         Z         WHEQ 10
+     CSR                   MOVE LINE10    LBL2
+     CSR         Z         WHEQ 11
+     CSR                   MOVE LINE11    LBL2
+     CSR                   ENDSL
+     CSR                   ENDDO
+     C*
+     CSR         THREE     WHEQ 3
+     CSR         1         DO   11        Z
+     CSR         Z         OCUR DS3
+     CSR                   SELEC
+     CSR         Z         WHEQ 1
+     CSR                   MOVE LINE1     LBL3
+     CSR         Z         WHEQ 2
+     CSR                   MOVE LINE2     LBL3
+     CSR         Z         WHEQ 3
+     CSR                   MOVE LINE3     LBL3
+     CSR         Z         WHEQ 4
+     CSR                   MOVE LINE4     LBL3
+     CSR         Z         WHEQ 5
+     CSR                   MOVE LINE5     LBL3
+     CSR         Z         WHEQ 6
+     CSR                   MOVE LINE6     LBL3
+     CSR         Z         WHEQ 7
+     CSR                   MOVE LINE7     LBL3
+     CSR         Z         WHEQ 8
+     CSR                   MOVE LINE8     LBL3
+     CSR         Z         WHEQ 9
+     CSR                   MOVE LINE9     LBL3
+     CSR         Z         WHEQ 10
+     CSR                   MOVE LINE10    LBL3
+     CSR         Z         WHEQ 11
+     CSR                   MOVE LINE11    LBL3
+     CSR                   ENDSL
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**   OVRPRTF statment
+OVRPRTF FILE(PLBL43PR) OUTQ(*DEV) DEV(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)
+) FORMTYPE(

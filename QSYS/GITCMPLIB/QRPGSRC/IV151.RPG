@@ -1,0 +1,567 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IV151     Inventory variance report by slot - Print
+     F*  13 March, 1996
+     F*  Hemant Kapadia/Roxanne Harrison
+     F*
+     F*  Revisions:
+     F*
+217  F*    01/09/97  RH   2.17
+     F*      - Add allow item breakdown flag(ITFLG1 & ITFLG2) to print.
+416a F*    04/25/02  RH   4.16a
+     F*      - Print lines with variance greater than minimum.
+     F*      - Print Options in header.
+416b F*    05/14/02  RH   416b
+     F*      - Change to print X if exception exists for slot, not skip
+500a F*    05/11/05  RH   500a
+     F*      - FIX - Remove 416a code causing to always print exceptions
+     F*        only.
+510aAF*    08/24/06  RH   510a
+     F*      - Fix: Was truncating first 3 characters of item desc.
+510aAF*    09/20/06  RH   510a
+     F*      - Enh: Add COLUMN1 and DETAIL3 & 4 to increase item desc.
+510bAF*    09/21/06  RH   5.10b
+     F*      - Enh: Added client code.
+640aAF*    09/30/06  JCJ  640a (510c missed in previous update)
+     F*      - Fix - exclude exceptions that have a status of '4'
+     F*
+     F*  Client Revisions:
+     F*
+VIP AF*    09/30/06  JCJ  VIP A
+     F*      - Enh: Do not display an 'X' for exceptions with that have
+     F*             a variance when client = VIP.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIV151   IP  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+416b FINVEXCP2IF  E           K        DISK
+510aAFITEMDSC IF  E           K        DISK
+510aAFOPTIONS IF  E           K        DISK
+     FIV151PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    RPD     1   3 25
+     E                    RECK        3  7 0
+     E                    LVLK        3  7 0
+     E*
+     E                    A22        22  1
+416a E                    OPTN    1   2 25
+     E*
+     E*
+     I*----------------------------------------------------------------
+     IWKREC
+     I                                              WKSWHSL3
+     I                                              WKSWHDL2
+     I                                              WKSSTPL1
+510bA*----------------------------------------------------------------
+510bA*  Customer id
+510bA*
+510b I              'GETCLIENT'           C         @GETCL
+510bA /COPY QCOPYSRC,IL#PACKERS
+VIP A /COPY QCOPYSRC,IL#VIP
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I            DS
+     I                                        1   60T#DATE
+     I                                        1   20MONTH
+     I                                        3   40DAY
+     I                                        5   60YEAR
+510a I*----------------------------------------------------------------
+510a I*  OPTIONS data structure
+510a IOPDATA      DS
+510a I                                        1   1 OPSTYP
+510a I                                        2   6 OPWHDP
+510a I                                        7   8 OPUM1
+510a I                                        9  23 OPDUM
+510a I                                       24  43 OPCUM
+510a I                                       44  522OPCDIV
+510a I                                       53  53 OPCAUT
+510a I                                       54  54 OPCWRN
+510a I                                       55  571OPCRNG
+510a I                                       58  72 OPWUM
+510a I                                       73  73 OPXDSC
+510a I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse #
+     C*      $PXCP   Print exceptions only
+416a C*      $PVAR   Minimum variance
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS   3
+     C                     PARM           $PXCP   1
+416a C                     PARM           $PVAR   5
+     C                     MOVE $PWHS     $PWHSE  30
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+     C           *INL3     OREQ *ON
+     C           *INL2     OREQ *ON
+     C           *INL1     OREQ *ON
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+510a C*  Get extended description option.
+510a C           UXFLAG    IFEQ 'X'
+510a C                     EXSR ZZXOPT
+510a C                     ENDIF
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break -
+     C*
+     C*          *INL1     IFEQ *ON
+     C*                    Z-ADD1         L
+     C*                    EXSR ZRZERO
+     C*                    ENDIF
+     C*
+     C*  Print headings if level break.
+     C*
+     C           *IN93     IFEQ *ON
+     C           *INL3     OREQ *ON
+     C           *IN92     OREQ *ON
+     C           *INL2     OREQ *ON
+     C           *IN91     OREQ *ON
+     C           *INL1     OREQ *ON
+     C                     WRITESBHEAD
+510a C           CLIENT    IFEQ PACKER
+510a C                     WRITECOLUMN1
+510a C                     ELSE
+     C                     WRITECOLUMNS
+510a C                     ENDIF
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+416b C* Print X if exception record exists for slot.
+416b C           EXKEY2    CHAININVEXCP2             78
+416b C*          *IN78     CABEQ*OFF      SKIPEX
+VIP AC                     SELEC
+VIP AC           CLIENT    WHEQ VIP
+VIP AC           *IN78     ANDEQ*OFF
+VIP AC           IVESTA    ANDNE'4'
+VIP AC                     MOVE 'X'       W1EXCP
+VIP A *
+VIP AC           CLIENT    WHEQ VIP
+VIP AC           *IN78     ANDEQ*OFF
+VIP AC           IVESTA    ANDEQ'4'
+VIP AC                     MOVE ' '       W1EXCP
+VIP AC                     OTHER
+416b C           *IN78     IFEQ *OFF
+640aAC           IVESTA    ANDNE'4'
+416b C                     MOVE 'X'       W1EXCP
+416b C                     ELSE
+416b C                     MOVE ' '       W1EXCP
+416b C                     ENDIF
+VIP AC                     ENDSL
+     C*
+     C*  Calculate difference of NEW qty's SUB OLD qyt's.
+     C*
+     C           WKSQT1    SUB  WKSTK1    WKDQT1
+     C           WKSQT2    SUB  WKSTK2    WKDQT2
+     C           WKSQT3    SUB  WKSTK3    WKDQT3
+     C*
+     C*  Print exceptions only $PXCP = Y
+     C*
+     C                     SELEC
+     C           $PXCP     WHEQ 'Y'
+     C           WKDQT1    IFNE 0
+     C           WKDQT2    ORNE 0
+     C           WKDQT3    ORNE 0
+     C           ITKEY1    CHAINPIRITEM              79
+     C           *IN79     IFEQ *OFF
+510aDC*                    MOVE ITDESC    IDESC
+510aMC                     MOVELITDESC    IDESC
+510a C           UXFLAG    IFEQ '1'
+510a C           ITKEY1    CHAINITEMDSC              76
+510a C           *IN76     IFEQ *OFF
+510aAC                     MOVELIXDSC1    IDESCX
+510aAC                     MOVE IXDSC2    IDESCX
+510aAC                     ENDIF
+510aAC                     ENDIF
+217 AC           ITFLG1    IFEQ 'Y'
+217 AC                     MOVE ITFLG1    IFLG1
+217 AC                     ELSE
+217 AC                     MOVE *BLANKS   IFLG1
+217 AC                     ENDIF
+217 AC           ITFLG2    IFEQ 'Y'
+217 AC                     MOVE ITFLG2    IFLG2
+217 AC                     ELSE
+217 AC                     MOVE *BLANKS   IFLG2
+217 AC                     ENDIF
+     C                     ELSE
+     C                     MOVE *BLANKS   IDESC
+510a C                     MOVE *BLANKS   IDESCX
+217 AC                     MOVE *BLANKS   IFLG1
+217 AC                     MOVE *BLANKS   IFLG2
+     C                     ENDIF
+     C           WKSITM    IFNE WKITEM
+     C           WKITEM    ANDNE*BLANKS
+     C           WKSTAT    ANDNE'Z '
+     C           WKSTAT    ANDNE'V '
+     C           ITKEY2    CHAINPIRITEM              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVE ITDESC    ODESC
+510a C           UXFLAG    IFEQ '1'
+510a C           ITKEY2    CHAINITEMDSC              76
+510a C           *IN76     IFEQ *OFF
+510aAC                     MOVELIXDSC1    ODESCX
+510aAC                     MOVE IXDSC2    ODESCX
+510aAC                     ENDIF
+510aAC                     ENDIF
+217 AC           ITFLG1    IFEQ 'Y'
+217 AC                     MOVE ITFLG1    OFLG1
+217 AC                     ELSE
+217 AC                     MOVE *BLANKS   OFLG1
+217 AC                     ENDIF
+217 AC           ITFLG2    IFEQ 'Y'
+217 AC                     MOVE ITFLG2    OFLG2
+217 AC                     ELSE
+217 AC                     MOVE *BLANKS   OFLG2
+217 AC                     ENDIF
+     C                     ELSE
+     C                     MOVE *BLANKS   ODESC
+217 AC                     MOVE *BLANKS   OFLG1
+217 AC                     MOVE *BLANKS   OFLG2
+     C                     ENDIF
+416a C           WKDQT1    IFGE PMVAR
+416a C           WKDQT2    ORGE PMVAR
+416a C           WKDQT3    ORGE PMVAR
+416a C           WKDQT1    ORLE PNVAR
+416a C           WKDQT2    ORLE PNVAR
+416a C           WKDQT3    ORLE PNVAR
+510a C           CLIENT    IFEQ PACKER
+510a C                     WRITEDETAIL4
+510a C                     ELSE
+     C                     WRITEDETAIL2
+510a C                     ENDIF
+416a C                     ENDIF
+     C                     ELSE
+416a C           WKDQT1    IFGE PMVAR
+416a C           WKDQT2    ORGE PMVAR
+416a C           WKDQT3    ORGE PMVAR
+416a C           WKDQT1    ORLE PNVAR
+416a C           WKDQT2    ORLE PNVAR
+416a C           WKDQT3    ORLE PNVAR
+510a C           CLIENT    IFEQ PACKER
+510a C                     WRITEDETAIL3
+510a C                     ELSE
+     C                     WRITEDETAIL1
+510a C                     ENDIF
+416a C                     ENDIF
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C           $PXCP     WHEQ 'N'
+     C           ITKEY1    CHAINPIRITEM              79
+     C           *IN79     IFEQ *OFF
+510aDC*                    MOVE ITDESC    IDESC
+510aMC                     MOVELITDESC    IDESC
+510a C           UXFLAG    IFEQ '1'
+510a C           ITKEY1    CHAINITEMDSC              76
+510a C           *IN76     IFEQ *OFF
+510aAC                     MOVELIXDSC1    IDESCX
+510aAC                     MOVE IXDSC2    IDESCX
+510aAC                     ENDIF
+510aAC                     ENDIF
+     C                     ELSE
+     C                     MOVE *BLANKS   IDESC
+510a C                     MOVE *BLANKS   IDESCX
+     C                     ENDIF
+     C           WKSITM    IFNE WKITEM
+     C           WKITEM    ANDNE*BLANKS
+     C           WKSTAT    ANDNE'Z '
+     C           WKSTAT    ANDNE'V '
+     C           ITKEY2    CHAINPIRITEM              79
+     C           *IN79     IFEQ *OFF
+510aDC*                    MOVE ITDESC    ODESC
+510aMC                     MOVELITDESC    ODESC
+     C                     ELSE
+     C                     MOVE *BLANKS   ODESC
+     C                     ENDIF
+500aDC*          WKDQT1    IFGE PMVAR
+500aDC*          WKDQT2    ORGE PMVAR
+500aDC*          WKDQT3    ORGE PMVAR
+500aDC*          WKDQT1    ORLE PNVAR
+500aDC*          WKDQT2    ORLE PNVAR
+500aDC*          WKDQT3    ORLE PNVAR
+510a C           CLIENT    IFEQ PACKER
+510a C                     WRITEDETAIL4
+510a C                     ELSE
+     C                     WRITEDETAIL2
+510a C                     ENDIF
+500aDC*                    ENDIF
+     C                     ELSE
+500aDC*          WKDQT1    IFGE PMVAR
+500aDC*          WKDQT2    ORGE PMVAR
+500aDC*          WKDQT3    ORGE PMVAR
+500aDC*          WKDQT1    ORLE PNVAR
+500aDC*          WKDQT2    ORLE PNVAR
+500aDC*          WKDQT3    ORLE PNVAR
+510a C           CLIENT    IFEQ PACKER
+510a C                     WRITEDETAIL3
+510a C                     ELSE
+     C                     WRITEDETAIL1
+510a C                     ENDIF
+500aDC*                    ENDIF
+     C                     ENDIF
+     C                     ENDSL
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C*
+416b C           SKIPEX    TAG
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      *IN92
+     C                     MOVE *OFF      *IN93
+     C                     MOVE *OFF      FIRST
+     C*----------------------------------------------------------------
+     C*
+     C* Level 1 break
+     C*
+     C*1                   Z-ADD1         L
+     C*1                   EXSR ZRROLL
+     C*
+     C*1         RECK,L    IFGT 0
+     C*1                   EXSR ZRTOTL
+     C*1                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Grand totals
+     C*
+     C*R                   Z-ADD3         L
+     C*
+     CLR         RECK,L    IFGT 0
+     C*R                   EXSR ZRTOTL
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+510bAC*
+510bAC* Get client id.
+510bAC*
+510bAC                     CALL @GETCL
+510bAC                     PARM           CLIENT 10
+510bAC*
+     C*
+     C           RPKEY     KLIST
+     C                     KFLD           WKPRTF 10
+     C*
+     C           ITKEY1    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           WKSITM
+     C*
+     C           ITKEY2    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           WKITEM
+416b C*
+416b C           EXKEY2    KLIST
+416b C                     KFLD           $PWHSE
+416b C                     KFLD           WKSWHD
+416b C                     KFLD           WKSDSP
+510bAC*
+510b C           OPKEY     KLIST
+510b C                     KFLD           $PWHSE
+510b C                     KFLD           OCODE
+     C*
+416a C           $PXCP     IFEQ 'Y'
+416a C                     MOVE OPTN,1    OPTN1
+416a C                     ENDIF
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD1         L       10
+     C                     Z-ADD0         N       30
+     C                     MOVE #PROG     $CVPRG
+416a C                     MOVE $PVAR     PMVAR   50
+416a C           PMVAR     MULT -1        PNVAR   50
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     C*  Get report title.
+     C*
+     C                     MOVEL'IV151PR 'WKPRTF
+     C                     MOVE *BLANKS   RPTTTL
+     C           RPKEY     CHAINREPORTS              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELRPDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     RPTTTL
+     C*
+510a C*
+510a C*  Initialize uxflag to only get extended item desc option once.
+510a C*
+510aACSR                   MOVE 'X'       UXFLAG  1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*
+     C           *INL1     IFEQ *OFF
+     C                     MOVE *ON       *IN91
+     C                     END
+     C*
+     C           *INL2     IFEQ *OFF
+     C                     MOVE *ON       *IN92
+     C                     END
+     C*
+     C           *INL3     IFEQ *OFF
+     C                     MOVE *ON       *IN93
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITESKIP1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C*
+     C                     MOVE RPD,L     $RPD   25
+     C*
+     C*                    WRITETOTAL1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+510a C*
+510aAC*  ZZXOPT   Get use extended description option
+510a C*
+510aACSR         ZZXOPT    BEGSR
+     C*
+510aAC*   Get extended description option.
+510aACSR                   MOVE '0'       UXFLAG  1
+510aACSR                   MOVE '*ITEMMNT'OCODE   8
+     C*
+510aACSR         OPKEY     CHAINOPTIONS              79
+510aACSR         *IN79     IFEQ *OFF
+510aACSR         OPXDSC    IFEQ 'Y'
+510aACSR                   MOVE '1'       UXFLAG
+510aACSR                   ENDIF
+510aACSR                   ENDIF
+     C*
+510aACSR                   ENDSR
+     C*
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**      RPD   Report level descriptions
+ * Not used *
+ Average for week:
+ *** Grand totals ***
+**      OPTN  Options selected for report
+Variances only
+

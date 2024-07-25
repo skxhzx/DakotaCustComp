@@ -1,0 +1,445 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  LT110CL   Create Priority Replenishments file                    */
+/*  07 January  2000                                                 */
+/*  Max Blacknik                                                     */
+/*                                                                   */
+/*  Revisions                                                        */
+/*  09/20/00  HNK  4.14                                              */
+/*    - Print remaining replenishments in PRPLFIL before clearing    */
+/*      file. (Summary only)                                         */
+/*                                                                   */
+/*  03/07/07  JCJ  5.10                                              */
+/*    - Added call to LT110E for Phase 2 of Repack repl process      */
+/*   05/11/10  RH   5.30                                             */
+/*     - Enh: Add code to Get Client.                                */
+/*                                                                   */
+/*  02/20/11  MLB  6.40                                              */
+/*    - Fix: Revised program to close IT381, PIRITEM and SLOT at     */
+/*      program completion. Required now that pgm converted to ILE.  */
+/*                                                                   */
+/*  02/07/14  MLB  6.50                                              */
+/*    - Fix: Revised program to close PIRITEM, delete override after */
+/*      call to LT110A. Pgm was failing with CPF4205 - Shared open   */
+/*      not allowed for query.                                       */
+/*                                                                   */
+/*  08/25/14  KDE  6.50b                                             */
+/*    - Fix: Revised program to pass a blank slot to LT110E          */
+/*      Changes were made during Repack updates and never to this CL */
+/*                                                                   */
+/*  04/22/15  KDE  7.00                                              */
+/*    - Fix: Revised program LT110F to use index PIRITEM2 instead    */
+/*      of open query.  Causing other issues further down stream     */
+/*                                                                   */
+/*  09/27/18  KDE  7.20                                              */
+/*    - Enh: Added option to select specific replen type             */
+/*      N-NORMAL  B-BREAKDOWN  F-FLOW  R-REPACK  S-STAGING  A-ALL    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Capitol City Produce                    */
+/*                                                                   */
+/*   05/11/10  RH   CCPa                                             */
+/*     - Enh: Do not create work order automatically                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*   Custom - Royal                                                  */
+/*   06/14/10  RH   RYLa                                             */
+/*     - Enh: Do not create work order automatically                 */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Dairyland                               */
+/*                                                                   */
+/*   02/17/11  MLB  DRYa                                             */
+/*     - Enh: Revised program to submit Host pgm, BFCIOQ01C to       */
+/*       batch when processing *ORDQTY replenishments.               */
+/*       Client wanted single place for whse staff to run pgm.       */
+/*   05/01/12  MLB  DRYb                                             */
+/*     - Enh: Revised DRYa mod to pass BFC warehouse number to       */
+/*       BFCIOQ01C in order for Ed's pgm to determine the correct    */
+/*       warehouse to send the on order qty.                         */
+/*   08/12/14  MLB  DRYc                                             */
+/*     - Enh: Revised DRYa mod to call new program to process        */
+/*       *ORDQTY replenishments for JDE warehouses. New pgm is       */
+/*       BFCEIQ04C.                                                  */
+/*   04/08/21  KDE  DRYd                                             */
+/*     - Enh: Revised to pass replenishment type to Chefs process    */
+/*       in creating order quantity replenishments.  Parm is         */
+/*       ultimately written to impsitmo, field ijtext                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Y.Hata Hilo Warehouse                   */
+/*                                                                   */
+/*   12/09/12  MLB  YHA                                              */
+/*     - Enh: Revised program to run qry, REPLLIST for Hilo whse.    */
+/*       Report needed while they learn priority replenishment       */
+/*       processing. Per Roxanne phone call. 12/09/12.               */
+/*   12/12/12  MLB  YHAa                                             */
+/*     - Enh: Revised program to run qry, DROPSCD for Hilo whse.     */
+/*       Report needed to list replenishments that are on level 3    */
+/*       or greater. Per Roxanne skype msg.  12/12/12.               */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: City Line Distributors                  */
+/*                                                                   */
+/*   10/23/19  MLB  CLD                                              */
+/*     - Enh: Revised program to run qry, REPLLIST.                  */
+/*       Added qry to job so that report is generated after *ORDQTY  */
+/*       processing is completed to eliminate timing issues.         */
+/*   10/24/19  MLB  CLDa                                             */
+/*     - Enh: Revised program to run qry, REPLLISTBK to list         */
+/*       Breaker replenishments separately. Per Steve D ZD# 610.     */
+/*   12/17/19  MLB  CLDb                                             */
+/*     - Enh: Revised pgm to call PR320CL to print Breaker replen    */
+/*       labels for DRY,FRZ,PLT and REF when processing *ORDQTY      */
+/*       replenishments and system time >= 16:30. Per Steve D.       */
+/*   01/23/20  MLB  CLDc                                             */
+/*     - Enh: Revised CLDb mod to add OVRPRTF cmd to save breaker    */
+/*       labels for later review. Temporary mod. Remove once issues  */
+/*       resolved.                                                   */
+/*   01/29/20  MLB  CLDd                                             */
+/*     - Enh: Revised pgm to add FRCRATIO(1) to PRPLFIL1 when LT110A */
+/*       creates replenishment entries to ensure they are written    */
+/*       to disk immediately. Subsequent qry and breaker label       */
+/*       printing are missing items from report and/or labels.       */
+/*   05/01/20  MLB  CLDe                                             */
+/*     - Enh: Revised pgm to disable CLD, CLDa mods. Per Steve D.    */
+/*       email dated 05/01/2020.                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+/* 720 D LT110CL:    PGM        PARM(&WHSE &WHDP &REPLENB &JOBQ)     */
+/* 720 M */  LT110CL:    PGM        PARM(&WHSE &WHDP &REPLENB &JOBQ &RTYPE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(LT110CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(LT110)
+
+  /* Report program and printer file names. */
+
+             DCL        VAR(&FILE)  TYPE(*CHAR) LEN(10) VALUE(SLOT)
+             DCL        VAR(&FILE2) TYPE(*CHAR) LEN(10) VALUE(PIRITEM)
+
+  /* Informational messages */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Priority Replenishment labels')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing priority replenishment labels')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CLIENT)     TYPE(*CHAR) LEN(10)      /* (530 A) */
+             DCL        VAR(&CLIENTLOC)  TYPE(*CHAR) LEN(10)      /* (530 A) */
+             DCL        VAR(&CAPCTY) TYPE(*CHAR) LEN(10) +
+                          VALUE('CAPITOLCTY')                    /* (CCP A) */
+             DCL        VAR(&CITYLINE) TYPE(*CHAR) LEN(10) +
+                          VALUE('CITYLINE  ')                    /* (CLD A) */
+             DCL        VAR(&ROYAL) TYPE(*CHAR) LEN(10) +
+                          VALUE('ROYAL     ')                    /* (RYL A) */
+             DCL        VAR(&DAIRYLAND) TYPE(*CHAR) LEN(10) +
+                          VALUE('DAIRYLAND')                      /* (DRYaA) */
+             DCL        VAR(&YHATA) TYPE(*CHAR) LEN(10) +
+                          VALUE('YHATA')                          /* (YHA A) */
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+/* 720 A */  DCL        VAR(&RTYPE)      TYPE(*CHAR) LEN(1)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&QUOTE)      TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&PSLT) TYPE(*CHAR) LEN(12) +
+                          VALUE('*LT110CL')                       /* 6.50b*/
+             DCL        VAR(&REPLENB)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SDEF)       TYPE(*CHAR) LEN(4)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&SYSTIME)    TYPE(*CHAR) LEN(6)       /* (CLDbA) */
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&WHDP)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+             DCL        VAR(&WHSEN)      TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&LCMD)       TYPE(*CHAR) LEN(8)
+/* 510a */   DCL        VAR(&PARENT)     TYPE(*CHAR) LEN(15)
+
+/*           MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))   */
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+/* Get Client ID */                                               /* (530 A) */
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (530 A) */
+
+/*  Make sure Replen Type not blank */
+/* 720 A */  IF         COND(&RTYPE = ' ')  THEN(DO)
+/* 720 A */  CHGVAR     VAR(&RTYPE) VALUE('A')
+/* 720 A */  ENDDO
+
+/* Don't get options if being run from JOBQ. */
+
+             RTVJOBA    TYPE(&TYPE)
+             RTVSYSVAL  SYSVAL(QTIME) RTNVAR(&SYSTIME)            /* (CLDbA) */
+             IF         COND(&TYPE = '0') THEN(GOTO CMDLBL(REPORT))
+
+
+/*  Get report options. */
+
+             IF (&WHSE ='   ') THEN(DO)
+               CALL       PGM(&OPTPGM) PARM(&WHSE &WHDP &REPLENB +
+                            &RETURN &JOBQ &RTYPE)
+
+/*  See if user wants to proceed. */
+
+             IF (&RETURN = '*EXIT' *OR &RETURN = '*CANCEL') THEN(DO)
+             SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+             ENDDO
+
+/*  See if user wants to put report on JOBQ. */
+
+             SELECT                                               /* (DRYaA) */
+             WHEN       COND(&CLIENT = &DAIRYLAND) THEN(DO)       /* (DRYaA) */
+
+/*           Host pgm always submitted to batch when *ORDQTY.        (DRYaA) */
+               IF (&REPLENB = '*ORDQTY') THEN(DO)                 /* (DRYaA) */
+                 CHKOBJ OBJ(BFCEIQ04C) OBJTYPE(*PGM)              /* (DRYcM) */
+                 MONMSG     MSGID(CPF9801 CPF9802 CPF9810 CPF9820 +
+                              CPF9830 CPF9899) EXEC(DO)           /* (DRYaA) */
+                   SNDPGMMSG  MSG('Host interface pgm BFCEIQ04C not found. +
+                                Crt *ORDQTY Replenishments +
+                                Cancelled.') TOPGMQ(*PRV)         /* (DRYcM) */
+                   RETURN                                         /* (DRYaA) */
+                 ENDDO                                            /* (DRYaA) */
+
+/*               Submit Host *ORDQTY Replenishments to batch.        (DRYaA) */
+/*  DRYd         SBMJOB     CMD(CALL PGM(BFCEIQ04C) PARM(&WHSE))     (DRTdD) */
+/* DRYdM  */     SBMJOB     CMD(CALL PGM(BFCEIQ04C) PARM(&WHSE &RTYPE)) +
+                          JOB(BFCEIQ04C) /* (DRYcM) */
+                 GOTO       CMDLBL(GETOUT)                        /* (DRYaA) */
+               ENDDO                                              /* (DRYaA) */
+             ENDDO                                                /* (DRYaA) */
+             ENDSELECT                                            /* (DRYaA) */
+                                                                  /* (DRYaA) */
+             IF (&JOBQ = 'Y') THEN(DO)
+               SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&WHSE &WHDP +
+                            &REPLENB &JOBQ &RTYPE)) JOB(&SBMPGM)
+               GOTO       CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+             MSGBFC     MESSAGE('Selecting records')
+
+ REPORT:
+/*  Verify warehouse. */
+             CALL       PGM(LT110D)  PARM(&WHSE &RETURN)
+   /*        CHGVAR     VAR(&WHSEN) VALUE(&WHSE)        */
+             IF (&RETURN = '*ERROR') THEN(DO)
+             IF (&TYPE = '1') THEN(DO)
+             SNDPGMMSG  MSGID(IT38001) MSGF(PIRMSGF) MSGDTA(&WHSE) +
+                          TOPGMQ(*PRV ('CRTPTLRPL')) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+             SNDPGMMSG  MSGID(IT38001) MSGF(PIRMSGF) MSGDTA(&WHSE) +
+                          MSGTYPE(*ESCAPE)
+               RETURN
+             ENDDO
+
+/*  Print remaining replenishments in PRPLFIL */
+
+             CALL       PGM(PR310CL)
+
+/*  Clear work file. */
+
+             CHGVAR     VAR(&WHSEN) VALUE(&WHSE)
+             CALL       PGM(LT110B) PARM(&WHSEN &WHDP &RTYPE)
+
+
+   /* Create selection criteria string. */
+
+   /* Select warehouse.                 */
+             CHGVAR     VAR(&QRYSLT) VALUE('SLWHSE *EQ ' *CAT &WHSE)
+
+   /* Select department.                */
+             IF         COND(&WHDP *NE '*ALL') THEN(DO)
+               CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+               CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLWHDP *EQ ')
+               CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT &QUOTE *CAT &WHDP +
+                 *CAT &QUOTE)
+             ENDDO
+
+   /* Must be an active slot.           */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLSTAT *EQ +
+                          "A"')
+
+   /* Must be a picking slot.           */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLPICK *EQ +
+                          "Y"')
+   /* Must be a fixed slot OR pir slot  */
+   /* PIR slot must be reserved and item type must be broken.  */
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '((SLSTYP +
+                          *EQ "F"' *BCAT '*AND' *BCAT 'ITTYPE *NE +
+                          "R")' *BCAT '*OR' *BCAT '(SLSTYP *EQ "P"' +
+                          *BCAT '*AND' *BCAT 'SLRSRV *EQ "Y"' *BCAT +
+                          '*AND' *BCAT 'ITTYPE *EQ "B"))')
+
+             OVRDBF     FILE(IT381) TOFILE(&FILE) SHARE(*YES)
+             OVRDBF     FILE(PRPLFIL)  TOFILE(PRPLFIL) FRCRATIO(1)  /*(CLDdA)*/
+             OVRDBF     FILE(PRPLFIL2) TOFILE(PRPLFIL2) FRCRATIO(1) /*(CLDdA)*/
+             OVRDBF     FILE(PRPLFIL3) TOFILE(PRPLFIL3) FRCRATIO(1) /*(CLDdA)*/
+             OVRDBF     FILE(PRPLFIL4) TOFILE(PRPLFIL4) FRCRATIO(1) /*(CLDdA)*/
+
+             OPNQRYF    FILE((SLOT) (PIRITEM)) FORMAT(IT381) +
+                          QRYSLT(&QRYSLT) +
+                          KEYFLD((*MAPFLD/QLWHSE) +
+                                 (*MAPFLD/QLWHDP) +
+                                 (*MAPFLD/QLAISL) +
+                                 (*MAPFLD/QLLOC ) +
+                                 (*MAPFLD/QLRLVL) +
+                                 (*MAPFLD/QLHAND)) +
+                          JFLD((*MAPFLD/QLWHSE  PIRITEM/ITWHSE) +
+                               (*MAPFLD/QLITEM  PIRITEM/ITITEM)) +
+                          MAPFLD((QLWHSE  SLWHSE) +
+                                 (QLWHDP  SLWHDP) +
+                                 (QLITEM  SLITEM) +
+                                 (QLDISP  SLDISP) +
+                                 (QLAISL  SLAISL) +
+                                 (QLLOC   SLLOC)  +
+                                 (QLRLVL  SLRLVL) +
+                                 (QLHAND  SLHAND) +
+                                 (QLSTAT  SLSTAT) +
+                                 (QLSDEF  SLSDEF) +
+                                 (QLSTK1  SLSTK1) +
+                                 (QLSTK2  SLSTK2) +
+                                 (QLSTK3  SLSTK3) +
+                                 (QLALC1  SLALC1) +
+                                 (QLALC2  SLALC2) +
+                                 (QLALC3  SLALC3) +
+                                 (QLTFR1  SLTFR1) +
+                                 (QLTFR2  SLTFR2) +
+                                 (QLTFR3  SLTFR3) +
+                                 (QLPCK1  SLPCK1) +
+                                 (QLPCK2  SLPCK2) +
+                                 (QLPCK3  SLPCK3) +
+                                 (QLRCV1  SLRCV1) +
+                                 (QLRCV2  SLRCV2) +
+                                 (QLRCV3  SLRCV3))
+
+
+             CALL       PGM(LT110A) PARM(&WHSE &WHDP &REPLENB &RTYPE &RETURN)
+             CLOF       OPNID(PIRITEM)                            /* (650 A) */
+             MONMSG     MSGID(CPF4519 CPF4520)                    /* (650 A) */
+             DLTOVR     FILE(PIRITEM)                             /* (650 A) */
+             MONMSG     MSGID(CPF9841)                            /* (650 A) */
+
+   /*      IF COND(&CLIENT *NE &CAPCTY) THEN(DO)    */                 /* CCP*/
+          IF COND(&CLIENT *NE &CAPCTY *AND &CLIENT *NE *ROYAL) THEN(DO)/* CCP*/
+   /* Create selection criteria string. Repack Items 510 A */
+
+/*           OVRDBF     FILE(PIRITEM) SHARE(*YES) */
+
+   /* Select warehouse.                 */
+/*           CHGVAR     VAR(&QRYSLT) VALUE('ITWHSE *EQ ' *CAT &WHSE) */
+
+   /* Select department.                */
+  /*         IF         COND(&WHDP *NE '*ALL') THEN(DO)      */
+  /*     CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND') */
+ /*      CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'ITWHDP *EQ') */
+   /*    CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT &QUOTE *CAT &WHDP + */
+  /*             *CAT &QUOTE)   */
+  /*         ENDDO    */
+
+   /* Must be a repack item.  */
+
+  /*    CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')       */
+  /*    CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'ITTYPE *EQ + */
+  /*                      "R"')       */
+
+  /*         OPNQRYF    FILE((PIRITEM)) QRYSLT(&QRYSLT) +       */
+  /*                      KEYFLD((ITWHSE) (ITITEM))             */
+
+/* 510 A     repack Phase 2*/
+
+             CALL       PGM(LT110F) PARM(&WHSE &WHDP &REPLENB &RETURN)
+
+             DLTOVR     FILE(*ALL)
+
+/*           GOTO NOMSG                    */
+
+/* 510 A     repack Phase 2*/
+             CHGVAR     VAR(&PARENT) VALUE(' ')
+             CALL       PGM(LT110E) PARM(&WHSE &WHDP &REPLENB +
+                          &PARENT &PSLT &RETURN)                  /* 6.50b*/
+
+             ENDDO                                                /* (CCP A) */
+             IF         COND(&CLIENT = &YHATA *AND &CLIENTLOC = +
+                          'HILO') THEN(DO)                        /* (YHA A) */
+               RUNQRY     QRY(*LIBL/REPLLIST)                     /* (YHA A) */
+               IF         COND(&REPLENB = '*ORDQTY') THEN(DO)     /* (YHAaA) */
+                 RUNQRY     QRY(*LIBL/DROPSCD)                    /* (YHAaA) */
+               ENDDO                                              /* (YHAaA) */
+             enddo                                                /* (YHA A) */
+             IF         COND(&CLIENT = &CityLine +
+                        *AND &REPLENB = '*ORDQTY') THEN(DO)       /* (CLD A) */
+               OVRPRTF    file(QPQUPRFIL) save(*YES)              /* (CLD A) */
+/*             RUNQRY     QRY(*LIBL/REPLLIST)                        (CLDeD) */
+/*             RUNQRY     QRY(*LIBL/REPLLISTBK)                      (CLDeD) */
+               IF         COND(&SYSTIME >= '163000') THEN(DO)     /* (CLDbA) */
+                 ovrprtf file(PFMTPR) save(*Yes)                  /* (CLDcA) */
+                 CALL       PGM(PR320CL) PARM('001' 'DRY' 'B' '999' +
+                              '*ALL' 'PFMTZBRCT2' 'ZEBRA4' 'ORDQTYBRK')
+                 CALL       PGM(PR320CL) PARM('001' 'FRZ' 'B' '999' +
+                              '*ALL' 'PFMTZBRCT2' 'ZEBRA4' 'ORDQTYBRK')
+                 CALL       PGM(PR320CL) PARM('001' 'PLT' 'B' '999' +
+                              '*ALL' 'PFMTZBRCT2' 'ZEBRA4' 'ORDQTYBRK')
+                 CALL       PGM(PR320CL) PARM('001' 'REF' 'B' '999' +
+                              '*ALL' 'PFMTZBRCT2' 'ZEBRA4' 'ORDQTYBRK')
+               enddo                                              /* (CLDbA) */
+             enddo                                                /* (CLD A) */
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)                                /* (640 A) */
+             MONMSG     MSGID(CPF9841)                            /* (640 A) */
+             CLOF       OPNID(IT381)                              /* (640 A) */
+             MONMSG     MSGID(CPF4519 CPF4520)                    /* (640 A) */
+             CLOF       OPNID(PIRITEM)                            /* (640 A) */
+             MONMSG     MSGID(CPF4519 CPF4520)                    /* (640 A) */
+             CLOF       OPNID(SLOT)                               /* (640 A) */
+             MONMSG     MSGID(CPF4519 CPF4520)                    /* (640 A) */
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

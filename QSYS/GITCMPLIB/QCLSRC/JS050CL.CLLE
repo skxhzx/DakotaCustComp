@@ -1,0 +1,70 @@
+             PGM        PARM(&CMD &MSG)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+ /* General variables */
+
+             DCL        VAR(&MSG)        TYPE(*CHAR) LEN(70)
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(1)
+
+    /*  When command is M(menu) and blank message is sent in we will */
+    /*  try and submit both the iSeries and Java jobs for this       */
+    /*  instance/job id.  The user is able to define the first 9 of  */
+    /*  a jobid and JS050 will place either J(Java) or R(RPG) in     */
+    /*  position 10 of job                                           */
+
+             OVRDBF     FILE(JRNSCRAPTS) TOFILE(JRNWKLIB/JRNSCRAPTS) +
+                          OVRSCOPE(*JOB)
+             IF         COND(%SST(&MSG 1 10) *EQ ' ') THEN(DO)
+             IF         COND(%TRIM(&CMD) *EQ 'M') THEN(DO)
+             CHGVAR     VAR(&MSG) VALUE(' ')
+             CALL       PGM(JS050) PARM((&MSG))
+             CHGVAR     VAR(&MSG) VALUE('JAVA')
+             CALL       PGM(JS050) PARM((&MSG))
+               GOTO       CMDLBL(SENDMSG)
+             ENDDO
+             ENDDO
+
+             IF         COND(%SST(&MSG 1 4) *EQ 'JAVA') THEN(DO)
+             IF         COND(%TRIM(&CMD) *EQ 'M') THEN(DO)
+             CALL       PGM(JS050) PARM((&MSG))
+             ENDDO
+             ENDDO
+
+    /*  J is passed to cmd parm when this is called from JRNSCRAPER  */
+    /*  because the iSeries has started another journal receiver and */
+    /*  sent signal to shutdown the RCVJRNE command.  RCVJRNE is the */
+    /*  iSeries command being used to read the journal data in async */
+    /*  mode.  When this signal is received RCVJRNE calls JRNSCRAPER */
+    /*  the BFC RPG exit program.  The exit program submits this     */
+    /*  CL with a cmd of J.  If this receives the already running    */
+    /*  message it delays for 10 seconds and tries again.  This can  */
+    /*  happen because the RCVJRNE may not end before the submit     */
+    /*  runs                                                         */
+
+  TRYAGN:
+
+             IF         COND(&CMD *EQ 'J') THEN(DO)
+             DLYJOB     DLY(75)
+             CHGVAR     VAR(&MSG) VALUE(' ')
+             CALL       PGM(JS050) PARM((&MSG))
+             IF         COND(%SST(&MSG 1 3) *EQ 'ARP') THEN(DO)
+               DLYJOB     DLY(10)
+               GOTO       CMDLBL(TRYAGN)
+             ENDDO
+             ENDDO
+
+             IF         COND(%SST(&MSG 1 5) *EQ ' ') THEN(GOTO +
+                          CMDLBL(NOMSG))
+             IF         COND(&CMD *EQ 'J') THEN(GOTO CMDLBL(NOMSG))
+      /*     IF         COND(&MSG *EQ 'Journal Scraper Successfully +
+                          Submitted') THEN(GOTO CMDLBL(NOMSG))    */
+  SENDMSG:
+             SNDPGMMSG  MSG(&MSG) MSGTYPE(*COMP)
+
+ NOMSG:
+             DLTOVR     FILE(JRNSCRAPTS) LVL(*JOB)
+
+             ENDPGM

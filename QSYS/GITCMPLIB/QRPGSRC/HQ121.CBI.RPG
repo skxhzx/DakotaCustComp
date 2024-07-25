@@ -1,0 +1,547 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  HQ121     Update pick slot qty derived from host
+     F*  17 April, 2002
+     F*  Hemant Kapadia
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions:
+     F*
+     F*  04/17/02  HNK
+     F*   - Created - custom for CBI
+     F*
+     F*  07/18/03 HNK CBI
+     F*   - Update pick slot expiration date if date sensitive item
+     F*     in the slot.  Set to today's date.
+     F*
+CBIaAF*  08/01/03 HNK CBIa
+     F*   - Update ITEMQTY for each item.
+     F*
+CBIbAF*  08/20/03 DAS CBIb
+     F*   - Revised to set slot expiration date to Today + 1.
+     F*     Re: Slots were expiring after midnight, thus sending
+     F*     selectors to overflow slots.
+CBIcAF*  09/02/03  MLB  CBIc
+     F*   - Revised to only update slot expiration date when it
+     F*     is less than new date.
+CBIdAF*  09/15/03  MLB  CBId
+     F*   - Revised to not allow pick slot stock quantity to go
+     F*     negative. Set quantity to zero if new pick slot qty
+     F*     less than zero.
+     F*
+520 AF*  07/15/08  MLB  5.20
+     F*   - Revised PGM to allow pick slot qty to be set to zero
+     F*     for CBI only. All other clients, qty must go negative.
+     F*
+520aAF*  07/30/09  RBD  5.20a
+     F*   - Fix:  Wouldn't compile, added copysrc for Cheney.
+     F*
+     F*----------------------------------------------------------------
+TPC  F*  CUSTOM CHANGES TPC
+TPC AF*  10/04/07  RH   TPC
+     F*   - Add Client code for custom changes.
+     F*   - Allow pick slot quantity to go negative.
+     F*   - Do NOT update expiration date in pick slot.
+TPCaAF*  11/01/07  MLB  TPCa
+     F*   - Revised program to convert IJQTH1 into Total Eaches
+     F*     for Type B items and add IJTQH2 to Total Eaches and
+     F*     clear IJTQH2.
+TPCbAF*  12/03/07  MLB  TPCb
+     F*   - Revised program to clear item type (ITTYPE) if item
+     F*     not found on chain to PIRITEM.
+TPCcAF*  02/04/08  MLB  TPCc
+     F*   - Disabled TPCa mod. This mod no longer needed due to
+     F*     how items are configured on Stanpack. Each items can-
+     F*     not be defined as cases and eaches. Only Eaches are allowed.
+TPCdAF*  02/08/08  MLB  TPCd
+     F*   - Revised program to only update the pick slot for Type B=
+     F*     Breakdown items. This is being done to correct the qty in
+     F*     pick slot.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT1   UP  E           K        DISK
+     FSLOT3   IF  E           K        DISK
+     F            SLREC                             KRENAMERECORD
+     FIMPFPQTYIF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FHQ121PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        3  7 0
+     E*
+TPC  I*----------------------------------------------------------------
+TPC AI*  Customer id
+TPC AI*
+TPC A /COPY QCOPYSRC,IL#TPC
+520aA /COPY QCOPYSRC,IL#CHENEY
+     I*----------------------------------------------------------------
+     ISLREC
+     I                                              SLWHSEL1
+     I                                              SLWHDPL1
+     I                                              SLAISLL1
+     IRECORD
+     I              SLWHSE                          S3WHSE
+     I              SLWHDP                          S3WHDP
+     I              SLAISL                          S3AISL
+     I              SLLOC                           S3LOC
+     I              SLRLVL                          S3RLVL
+     I              SLHAND                          S3HAND
+     I              SLSIDE                          S3SIDE
+     I              SLSTYP                          S3STYP
+     I              SLDISP                          S3DISP
+     I              SLSTAT                          S3STAT
+     I              SLSDTE                          S3SDTE
+     I              SLSTIM                          S3STIM
+     I              SLSDEF                          S3SDEF
+     I              SLDESG                          S3DESG
+     I              SLACTV                          S3ACTV
+     I              SLBLD                           S3BLD
+     I              SLPICK                          S3PICK
+     I              SLPSEQ                          S3PSEQ
+     I              SLPRTY                          S3PRTY
+     I              SLENTD                          S3ENTD
+     I              SLEXPD                          S3EXPD
+     I              SLSLFD                          S3SLFD
+     I              SLRSRV                          S3RSRV
+     I              SLITEM                          S3ITEM
+     I              SLSTK1                          S3STK1
+     I              SLSTK2                          S3STK2
+     I              SLSTK3                          S3STK3
+     I              SLALC1                          S3ALC1
+     I              SLALC2                          S3ALC2
+     I              SLALC3                          S3ALC3
+     I              SLTFR1                          S3TFR1
+     I              SLTFR2                          S3TFR2
+     I              SLTFR3                          S3TFR3
+     I              SLPCK1                          S3PCK1
+     I              SLPCK2                          S3PCK2
+     I              SLPCK3                          S3PCK3
+     I              SLRCV1                          S3RCV1
+     I              SLRCV2                          S3RCV2
+     I              SLRCV3                          S3RCV3
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+CBI AI              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*
+CBI AI$CVTDT      DS
+CBI AI                                        1   8 $CVCMD
+CBI AI                                        9  18 $CVPRG
+CBI AI                                       19  24 $CVD6I
+CBI AI                                       25  32 $CVD8I
+CBI AI                                       33  380$CVD6O
+CBI AI                                       39  460$CVD8O
+CBI AI                                       47  64 $CVSTO
+CBI AI                                       65  72 $CVRTN
+CBI AI                                       73 132 $CVERM
+CBI AI                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+CBIaAI           SDS
+CBIaAI                                     *PROGRAM #PROG
+CBIaAI                                      244 253 #JOB
+CBIaAI                                      254 263 #USER
+CBIaAI                                      264 269 #JOBN
+CBIaAI                                      276 2810#JOBDT
+CBIaAI                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $WHDP   5
+     C                     PARM           $AISL   3
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Page overflow.
+     C*
+     C*  PAGE OVERFLOW
+     C*
+     C           FIRST     IFEQ *ON
+     C           *IN90     OREQ *ON
+     C           *INL1     OREQ *ON
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - Whse/Dept/Aisle
+     C*
+     C           *INL1     IFEQ *ON
+     C                     Z-ADD1         L
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*
+     C                     MOVE SLDISP    T#DISP
+     C                     MOVE SLITEM    T#ITEM
+     C*
+     C*  Get item description.
+     C*
+     C           KEYIT     CHAINPIRITEM              79
+     C           *IN79     IFEQ *ON
+     C                     MOVEL*BLANKS   ITDESC
+TPCbAC                     MOVE *BLANKS   ITTYPE
+     C                     ENDIF
+     C*
+     C                     EXSR OFLQTY
+     C           KEYIJ     CHAINIMPFPQTY             79
+     C           *IN79     IFEQ *ON
+     C                     Z-ADD0         IJTQH1
+     C                     Z-ADD0         IJTQH2
+     C                     ENDIF
+TPCaAC*
+TPCaAC           TPC       IFEQ CLIENT
+TPCaAC*
+TPCaAC*    If item is Breakdown, convert Cases to Total Eaches.
+TPCdAC*    Only allow Breakdown items to be updated.
+TPCaAC           ITTYPE    IFEQ 'B'
+TPCcDC*                    EXSR ZZCVQY
+TPCdAC                     ELSE
+TPCdAC*    Skip updates for all other item types.
+TPCdAC                     GOTO #SKIP
+TPCaAC                     ENDIF
+TPCaAC*
+TPCaAC                     ENDIF
+TPCaAC*
+     C           IJTQH1    SUB  OFQTY1    PCKQT1
+     C           IJTQH2    SUB  OFQTY2    PCKQT2
+     C*
+     C*  Write detail line.
+     C*
+     C                     WRITEDETAIL1
+     C*
+     C*  Update pick slot.
+     C*
+TPC AC           CLIENT    IFNE TPC
+CBI AC           ITFLGD    IFEQ 'Y'
+CBIcAC           SLEXPD    ANDLTTODAY
+CBIbDC**                   Z-ADDTODAY     SLEXPD
+CBIbMC                     Z-ADDTODAY1    SLEXPD
+CBI AC                     ENDIF
+TPC AC                     ENDIF
+CBIdAC           PCKQT1    IFLT 0
+520 DC*          CLIENT    ANDNETPC
+520 MC           CLIENT    ANDEQCHENEY
+CBIdAC                     MOVE *ZEROS    SLSTK1
+CBIdAC                     ELSE
+     C                     Z-ADDPCKQT1    SLSTK1
+CBIdAC                     ENDIF
+CBIdAC           PCKQT2    IFLT 0
+520 DC*          CLIENT    ANDNETPC
+520 MC           CLIENT    ANDEQCHENEY
+CBIdAC                     MOVE *ZEROS    SLSTK2
+CBIdAC                     ELSE
+     C                     Z-ADDPCKQT2    SLSTK2
+CBIdAC                     ENDIF
+     C                     UPDATSLREC
+     C* Recalculate item qty for slot item
+CBIaAC                     MOVE SLITEM    $ITEM  15
+CBIaAC                     EXSR ZZRCAL
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      FIRST
+     C                     MOVE *OFF      *IN91
+TPCdAC           #SKIP     TAG
+     C*----------------------------------------------------------------
+     C*
+     C* Whse/Dept/Aisle totals
+     C*
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD2         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+500zAC*
+500zAC* Get client id.
+500zAC*
+500zAC           *NAMVAR   DEFN PIRCLIENT CLIENT 10
+500zAC                     IN   CLIENT
+     C*
+     C*  Define key for main file.
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           SLWHSE
+     CSR                   KFLD           SLITEM
+     C*
+     C*  Define partial key for SLOT3 file.
+     C*
+     CSR         KEYSL3    KLIST
+     CSR                   KFLD           SLWHSE
+     CSR                   KFLD           SLITEM
+     C*
+     C*  Define key for IMPFPQTY FILE.
+     C*
+     CSR         KEYIJ     KLIST
+     CSR                   KFLD           SLWHSE
+     CSR                   KFLD           T#ITEM
+     C*
+     C*
+     C*  Convert today's date into century format.
+     C*
+CBI ACSR                   MOVE '*CURCMD '$CVCMD
+CBI ACSR                   CALL @CVTDT
+CBI ACSR                   PARM           $CVTDT
+CBI ACSR                   Z-ADD$CVD8O    TODAY   80
+     C                     TIME           TIME
+CBIbAC*
+CBIbAC*  Add 1 to today's date.
+CBIbAC*
+     C                     CALL 'CLCDUR2'
+     C                     PARM '*ADD'    $CMD    8
+     C                     PARM TODAY     $DATEI  80
+     C                     PARM 0         $TIMEI  60
+     C                     PARM 0         $YEARS  30
+     C                     PARM 0         $MONTH  30
+     C                     PARM 1         $DAYS   30
+     C                     PARM 0         $HOURS  30
+     C                     PARM 0         $MIN    30
+     C                     PARM 0         $SEC    30
+     C                     PARM 0         TODAY1  80
+     C                     PARM 0         $TIMEO  60
+     C*
+     C                     MOVE *ON       FIRST   1
+     C                     MOVE *ON       FOREVR  1
+     C                     Z-ADD2         L       10
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           OFLQTY    BEGSR
+     C*
+     C                     Z-ADD0         OFQTY1
+     C                     Z-ADD0         OFQTY2
+     C           KEYSL3    SETLLSLOT3
+     C           FOREVR    DOWEQ*ON
+     C           KEYSL3    READESLOT3                    79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C           S3PICK    IFEQ 'Y'
+     C                     ITER
+     C                     ENDIF
+     C*
+     C                     ADD  S3STK1    OFQTY1
+     C                     ADD  S3STK2    OFQTY2
+     C*
+     C                     ENDDO
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           SLWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*  Format Dept/Section/Aisle
+     C*
+     C           SLSTYP    IFEQ 'P'
+     C                     MOVE 'PIR  '   TYPE    5
+     C                     ELSE
+     C           SLSTYP    IFEQ 'F'
+     C                     MOVE 'Fixed'   TYPE
+     C                     ELSE
+     C                     MOVE '*None'   TYPE
+     C                     END
+     C                     END
+     C                     MOVE *BLANKS   P#DESC
+     C           'Type:'   CAT  TYPE:1    P#DESC
+     C           P#DESC    CAT  'Dept:':2 P#DESC
+     C           P#DESC    CAT  SLWHDP:1  P#DESC
+     C           P#DESC    CAT  'Aisle':2 P#DESC
+     C           P#DESC    CAT  ':':0     P#DESC
+     C           SLAISL    IFEQ *BLANKS
+     C           P#DESC    CAT  '*NONE':1 P#DESC
+     C                     ELSE
+     C           P#DESC    CAT  SLAISL:1  P#DESC
+     C                     END
+     C                     MOVELP#DESC    $LSTR  60
+     C                     Z-ADD40        $LLEN   30
+     C                     CALL 'CENTER'
+     C                     PARM           $LSTR
+     C                     PARM           $LLEN
+     C                     MOVEL$LSTR     P#DESC
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C           *INL1     IFEQ *ON
+     C                     EXSR ZRFRMT
+     C                     ELSE
+     C                     MOVE *ON       *IN91
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITEHEAD2
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C*                    ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C*                    Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+CBIaAC*  ZZRCAL   Recalculate item quantity from slots.
+     C*
+CBIaACSR         ZZRCAL    BEGSR
+     C*
+     C* Recalculate item qty.
+     C                     Z-ADDSLWHSE    $PWHS  155
+     C                     MOVE '0'       $JTYP   1
+     C                     MOVE #PROG     $LPRG  10
+     C                     MOVE *BLANKS   $LRTN   8
+     C                     MOVE *BLANKS   $LMSG   4
+     C                     CALL 'UT812'
+     C                     PARM           $PWHS
+     C                     PARM           $ITEM
+     C                     PARM           $JTYP
+     C                     PARM           $LPRG
+     C                     PARM           $LRTN
+     C                     PARM           $LMSG
+     C*
+CBIaACSR         ENDCAL    ENDSR
+TPCaAC*
+TPCaAC*----------------------------------------------------------------
+TPCaAC*
+TPCaAC*  ZZCVQY   Convert Total Cases to Total Eaches.
+TPCaAC*
+TPCaAC           ZZCVQY    BEGSR
+TPCaAC*
+TPCaAC*     Convert total cases into total eaches for
+TPCaAC*     Breakdown items.
+TPCaAC                     SELEC
+TPCaAC           ITTYPE    WHEQ 'B'
+TPCaAC*
+TPCaAC                     CALL 'GETBASE'
+TPCaAC                     PARM ITWHSE    $GWHSE  30
+TPCaAC                     PARM ITITEM    $GITEM 15
+TPCaAC                     PARM ' '       #BITEM 15
+TPCaAC                     PARM ' '       #BITYP  1
+TPCaAC                     PARM ' '       #BDESC 30
+TPCaAC                     PARM ' '       #BPDSC 15
+TPCaAC                     PARM ' '       #BWHDP  5
+TPCaAC                     PARM ' '       #BSTYP  1
+TPCaAC                     PARM ' '       #BUM    2
+TPCaAC                     PARM ' '       #BUM2   2
+TPCaAC                     PARM 0         #BUMQ2  30
+TPCaAC                     PARM ' '       #BUM3   2
+TPCaAC                     PARM 0         #BUMQ3  30
+TPCaAC                     PARM ' '       #BCITM 15
+TPCaAC                     PARM ' '       #BCTYP  1
+TPCaAC                     PARM ' '       #BCDSC 30
+TPCaAC                     PARM ' '       #BCPDS 15
+TPCaAC                     PARM ' '       #BCWDP  5
+TPCaAC                     PARM ' '       #BCSTP  1
+TPCaAC                     PARM ' '       #BCUM   2
+TPCaAC                     PARM ' '       #BCUM2  2
+TPCaAC                     PARM 0         #BCUQ2  30
+TPCaAC                     PARM ' '       #BCUM3  2
+TPCaAC                     PARM 0         #BCUQ3  30
+TPCaAC                     PARM ' '       #BRTN   8
+TPCaAC*
+TPCaAC           #BUMQ2    IFGT 0
+TPCaAC           #BUMQ2    MULT IJTQH1    IJTQH1
+TPCaAC                     ENDIF
+TPCaAC                     ADD  IJTQH2    IJTQH1
+TPCaAC                     MOVE *ZEROS    IJTQH2
+TPCaAC*
+TPCaAC                     ENDSL
+TPCaAC*
+TPCaAC           ENDCVQ    ENDSR
+TPCaAC*
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*

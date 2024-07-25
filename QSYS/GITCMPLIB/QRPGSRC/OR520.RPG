@@ -1,0 +1,1032 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  OR520     Pick orders - Build pallets
+     F*  15 September 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    11/28/94  DAS
+     F*      - Changed stops per pallet to 2 digits.
+     F*
+     F*    12/09/94  DAS
+     F*      - Created ORPHAN routine to create dummy "fixed" label
+     F*        record for pallets that don't contain any fixed items.
+     F*      - Revised FILL2 routine to not assume that all the PIR
+     F*        items will fit on one pallet.
+     F*
+     F*    12/12/94  DAS
+     F*      - Added OR statement in FILL2 routine to force an item to
+     F*        be put on a pallet even if it is larger than the maximum
+     F*        cube for the pallet.
+     F*
+     F*    12/18/94  DAS
+     F*      - Revised FILL2 to split a single item over multiple
+     F*        pallets.
+     F*
+     F*    01/13/95  DAS
+     F*      - Revised BULK routine. Moved initialization of DS
+     F*        variables outside of IF statement that gets a new
+     F*        pallet. Also added statment to set DSFFLG to *ON so
+     F*        a *PIRPICK label wouldn't be created for the pallet.
+     F*
+     F*    02/22/95 DAS  2.09
+     F*      - Revised program to work with *PICK options by dept.
+     F*        This effected files OPTIONS and RTEOPT and routines
+     F*        *INZSR, BLDFIX, BLDPIR, CASE1, FILL2, GETOPT and NEWPAL.
+     F*      - Added new option OPFBLD (fixed pallet building method).
+     F*        The BLDFIX routine uses this option.
+     F*
+     F*    04/26/95  DAS  2.10
+     F*      - Revised BLDFIX routine to use #DFBLD instead of #DFPAL.
+     F*
+213 AF*    05/21/96 DAS
+     F*      - Initialized new label fields LBGRP1, LBGRP2, LBRDTE
+     F*        and LBQAVL.
+     F*      - Added parameter $POTYP to identify the type of orders
+     F*        to work with (Normal, transfers ...).
+     F*
+214 AF*    07/01/96 DAS
+     F*      - Added file LABEL9 for building PIR pallets.
+     F*      - Revised BLDPIR to build pallets without regard to STOP.
+     F*      - Revised BLDPIR to start new PIR pallet at user defined
+     F*        PIR aisle.
+     F*      - Revised BLDPIR to handle a label cube greater than the
+     F*        maximum cube for the pallet.
+     F*      - Revised statement in FILL2 to examine #DINCL correctly.
+     F*      - Revised FILL2 to handle a unit cube greater than the
+     F*        maximum cube for the pallet.
+     F*
+215 AF*    07/30/96 DAS/HNK
+     F*      - Corrected to increment pallet number, if the pallet
+     F*        number reached the maximum stops allowed per pallet.
+     F*        (As defined in the OPTIOND file.)
+     F*
+217 AF*    09/16/96 DAS/RH
+     F*      - Corrected key to get overrides from RTEOPTD file.
+     F*
+218 AF*    01/27/97 DAS
+     F*      - Revise BLDPIR reset BRKFLG when department changes.
+     F*
+408 AF*    12/10/97 DAS  4.08
+     F*      - Added bulk pallet flag to pallet data structures.
+     F*      - Revised BULK routine to set bulk flag to *YES.
+     F*      - Revised NEWPAL routine to set bulk flag to *NO.
+     F*      - Revised FILL2 routine to set the starting pallet
+     F*        to a non-bulk pick pallet. Also, revised routine
+     F*        to skip bulk pick pallet.
+     F*
+     F*  Notes
+     F*
+     F*    The pallet number that is assigned to each label is a
+     F*    psuedo-pallet number. The actual number will be assigned
+     F*    when the label is printed.
+     F*
+     F*    Pallets are built in reverse stop order.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FOR520   IF  E           K        DISK
+     FLABEL1  UF  E           K        DISK                      A
+214 AFLABEL9  UF  E           K        DISK
+214 AF            LBREC                             KRENAMELBREC9
+209 DF*OPTIONS IF  E           K        DISK
+209 MFOPTIOND IF  E           K        DISK
+209 DF*RTEOPT  IF  E           K        DISK
+209 MFRTEOPTD IF  E           K        DISK
+     I*----------------------------------------------------------------
+     I*  Pallet data structure. Information is kept for a user defined
+     I*  number of pallets. This allows us to maximize the usage of a
+     I*  pallet by putting a stop in the empty space of a previous
+     I*  pallet.
+     I*
+     I              50                    C         MAXPAL
+     I*
+     IPALLET      DS                         50
+     I                                    P   1   40DSPAL#
+     I                                    P   5   83DSCUBE
+     I                                    P   9  123DSLEFT
+     I                                    P  13  140DSSTOP
+     I                                    P  15  190DSTRN#
+     I                                       20  24 DSWHDP
+     I                                       25  25 DSFFLG
+408 AI                                       26  26 DSBFLG
+     ISAVPAL      DS
+     I                                    P   1   40SVPAL#
+     I                                    P   5   83SVCUBE
+     I                                    P   9  123SVLEFT
+     I                                    P  13  140SVSTOP
+     I                                    P  15  190SVTRN#
+     I                                       20  24 SVWHDP
+     I                                       25  25 SVFFLG
+408 AI                                       26  26 SVBFLG
+     I*----------------------------------------------------------------
+     I*  *PICK  -  Picking options
+     I*
+     I*     11/28/94  DAS
+     I*       - Changed OPFSTP to 2 digits from 1.
+     I*
+     I*     02/16/95  DAS   2.09
+     I*       - Moved option from OPTIONS to OPTIOND in order to have
+     I*         the options by department.
+     I*       - Added option OPFBLD for identifying the method to use
+     I*         for building a fixed pallet.
+     I*
+213 AI*     06/11/96  DAS   2.13
+     I*       - Redefined OPBPCK to 3.0 from 2.0.
+     I*       - Added option OPPBRK.
+     I*
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPNXTP  -  Next pallet number.
+     I*    OPBPCK  -  Bulk pick definition.
+     I*    OPPCUB  -  Maximum cube for PIR.
+     I*    OPFPAL  -  Pallets on fixed fork lift.
+     I*    OPFCUB  -  Maximum cube per fixed pallet.
+     I*    OPFSTP  -  Maximum stops per fixed pallet.
+     I*    OPINCL  -  Include PIR in fixed cube.
+     I*    OPSRCH  -  Number of previous pallets to search for space.
+     I*    OPFBLD  -  Fixed pallet building method.
+     I*                1 = By piece without concern for splitting stop.
+     I*                2 = By stop without splitting stop between plts.
+214 AI*    OPPBRK  -  Break pallets by aisle (Y,N).
+     I*
+     I* Data structure
+     I*
+209 DI*OPDATA      DS
+209 MIOPDDTA      DS
+     I I            0                         1   70OPNXTP
+214 DI*I            0                         8   90OPBPCK
+     I I            0                        10  142OPPCUB
+     I I            0                        15  150OPFPAL
+     I I            0                        16  202OPFCUB
+    DI*I            0                        21  210OPFSTP
+     I                                       22  22 OPINCL
+     I I            0                        23  240OPSRCH
+    AI I            0                        25  260OPFSTP
+209 AI I            0                        27  270OPFBLD
+214 AI I            0                        28  300OPBPCK
+214 AI                                       31  33 OPPBRK
+209 DI*                                     117 117 OPTEND
+209 MI                                      117 117 OPDEND
+     I*
+209 DI*RTDATA      DS
+209 MIRTDDTA      DS
+     I I            0                         1   70RTNXTP
+214 DI*I            0                         8   90RTBPCK
+     I I            0                        10  142RTPCUB
+     I I            0                        15  150RTFPAL
+     I I            0                        16  202RTFCUB
+    DI*I            0                        21  210RTFSTP
+     I                                       22  22 RTINCL
+     I I            0                        23  240RTSRCH
+    AI I            0                        25  260RTFSTP
+209 AI I            0                        27  270RTFBLD
+214 AI I            0                        28  300RTBPCK
+214 AI                                       31  33 RTPBRK
+209 DI*                                     117 117 RTTEND
+209 MI                                      117 117 RTDEND
+209 AI*----------------------------------------------------------------
+209 AI*  Multiple occurance data structure for department options
+209 AI*
+209 AIOPTS        DS                         50
+209 AI                                        1   5 #DWHDP
+209 AI                                        6  102#DPCUB
+209 AI                                       11  110#DFPAL
+209 AI                                       12  162#DFCUB
+209 AI                                       17  17 #DINCL
+209 AI                                       18  190#DSRCH
+209 AI                                       20  210#DFSTP
+209 AI                                       22  220#DFBLD
+214 AI                                       23  25 #DPBRK
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PBAT   Batch number
+     C*      $PWHSE  Warehouse
+213 AC*      $POTYP  Order type.
+     C*      $PRTE   Route
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PBAT   70
+     C                     PARM           $PWHSE  30
+213 AC                     PARM           $POTYP  1
+     C                     PARM           $PRTE   5
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+209 DC*
+209 DC* Get picking options for route.
+209 DC*
+209 DC*                    EXSR GETOPT
+     C*
+     C* Build pallets for fixed section.
+     C*
+     C                     EXSR BLDFIX
+     C                     EXSR ORPHAN
+     C*
+     C* Build pallets for PIR section.
+     C*
+     C                     EXSR BLDPIR
+     C*
+     C* Close up shop and return home.
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Define partial key for LABEL file.
+     C*
+     CSR         *LIKE     DEFN LBSTYP    KYSTYP
+     CSR         *LIKE     DEFN LBTYPE    KYTYPE
+     CSR         *LIKE     DEFN LBWHDP    KYWHDP
+     CSR         *LIKE     DEFN LBSTOP    KYSTOP
+     CSR         KEYLB     KLIST
+     CSR                   KFLD           $PBAT
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTE
+     CSR                   KFLD           KYSTYP
+     CSR                   KFLD           KYTYPE
+     CSR                   KFLD           KYWHDP
+     CSR                   KFLD           KYSTOP
+214 AC*
+214 AC*  Define partial key for LABEL9 file.
+214 AC*
+214 ACSR         KEYLB9    KLIST
+214 ACSR                   KFLD           $PBAT
+214 ACSR                   KFLD           $PWHSE
+214 ACSR                   KFLD           $PRTE
+214 ACSR                   KFLD           KYSTYP
+214 ACSR                   KFLD           KYTYPE
+214 ACSR                   KFLD           KYWHDP
+     C*
+     C*  Define partial key for options file.
+     C*
+209 ACSR         *LIKE     DEFN OPDCOD    KYCODE
+209 DC*          KEYOP     KLIST
+209 DC*                    KFLD           $PWHSE
+209 DC*                    KFLD           OPCODE
+209 MCSR         KEYOPD    KLIST
+209 MCSR                   KFLD           KYCODE
+209 MCSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for route option file.
+     C*
+209 DC*          KEYRO     KLIST
+209 DC*                    KFLD           $PWHSE
+209 DC*                    KFLD           OPCODE
+209 DC*                    KFLD           $PRTE
+209 MCSR         KEYRTD    KLIST
+209 MCSR                   KFLD           OPDCOD
+209 MCSR                   KFLD           $PWHSE
+217 MCSR                   KFLD           OPDWDP
+209 MCSR                   KFLD           $PRTE
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*  Define variables.
+     C*
+     CSR         *LIKE     DEFN LBWHDP    LSTDPT
+209 AC*
+209 AC*    Get department options and store in data structure.
+209 AC*
+209 ACSR                   MOVE '*PICK   'KYCODE
+209 ACSR         KEYOPD    SETLLOPTIOND
+209 ACSR                   Z-ADD0         LSTOPT  20
+209 ACSR         FOREVR    DOUNEFOREVR
+209 ACSR         KEYOPD    READEOPTIOND                  79
+209 ACSR         *IN79     IFEQ *ON
+209 ACSR                   LEAVE
+209 ACSR                   ENDIF
+209 AC*
+209 AC*       Save needed options.
+209 AC*
+209 ACSR                   ADD  1         LSTOPT
+209 ACSR         LSTOPT    OCUR OPTS
+209 ACSR                   MOVE OPDWDP    #DWHDP
+209 ACSR                   Z-ADDOPPCUB    #DPCUB
+209 ACSR                   Z-ADDOPFPAL    #DFPAL
+209 ACSR                   Z-ADDOPFCUB    #DFCUB
+209 ACSR                   MOVE OPINCL    #DINCL
+209 ACSR                   Z-ADDOPSRCH    #DSRCH
+209 ACSR                   Z-ADDOPFSTP    #DFSTP
+209 ACSR                   Z-ADDOPFBLD    #DFBLD
+214 ACSR                   CALL 'ADJUST'
+214 ACSR                   PARM '*RIGHT  '$CCMD   8
+214 ACSR                   PARM OPPBRK    $CSTR  30
+214 ACSR                   MOVE $CSTR     #DPBRK
+209 AC*
+209 AC*       Get overrides.
+209 AC*
+209 ACSR         KEYRTD    CHAINRTEOPTD              78
+209 ACSR         *IN78     IFEQ *OFF
+209 ACSR                   Z-ADDRTPCUB    #DPCUB
+209 ACSR                   Z-ADDRTFPAL    #DFPAL
+209 ACSR                   Z-ADDRTFCUB    #DFCUB
+209 ACSR                   MOVE RTINCL    #DINCL
+209 ACSR                   Z-ADDRTSRCH    #DSRCH
+209 ACSR                   Z-ADDRTFSTP    #DFSTP
+209 ACSR                   Z-ADDRTFBLD    #DFBLD
+214 ACSR                   CALL 'ADJUST'
+214 ACSR                   PARM '*RIGHT  '$CCMD   8
+214 ACSR                   PARM RTPBRK    $CSTR  30
+214 ACSR                   MOVE $CSTR     #DPBRK
+209 ACSR                   ENDIF
+209 ACSR                   ENDDO
+209 AC*
+209 AC*       Initialize a "catch all" default.
+209 AC*
+209 ACSR                   ADD  1         LSTOPT
+209 ACSR         LSTOPT    OCUR OPTS
+209 ACSR                   MOVE *BLANKS   #DWHDP
+209 ACSR                   Z-ADD1         #DPCUB
+209 ACSR                   Z-ADD1         #DFPAL
+209 ACSR                   Z-ADD1         #DFCUB
+209 ACSR                   MOVE 'N'       #DINCL
+209 ACSR                   Z-ADD0         #DSRCH
+209 ACSR                   Z-ADD1         #DFSTP
+209 ACSR                   Z-ADD1         #DFBLD
+209 ACSR                   MOVE *BLANKS   #DPBRK
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BLDFIX  Build pallets for fixed section.
+     C*
+     CSR         BLDFIX    BEGSR
+     CSR                   MOVE *ON       FIRST   1
+     C*
+     C*  Loop through stops for route.
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     CSR                   READ OR520                    79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     If department changed then rest tran# and pallet #.
+     C*
+     CSR         FIRST     IFEQ *ON
+     CSR         LBWHDP    ORNE LSTDPT
+     CSR         FIRST     IFNE *ON
+     CSR                   EXSR ORPHAN
+     CSR                   ENDIF
+209 ACSR                   EXSR GETOPT
+     CSR                   Z-ADD0         BEGPAL  30
+     CSR                   Z-ADD0         BOTPAL  30
+     CSR                   EXSR NEWPAL
+     CSR                   MOVE *OFF      FIRST
+     CSR                   MOVE LBWHDP    LSTDPT
+     CSR                   ENDIF
+     C*
+     C*     Assign pallet numbers to bulk picks for stop.
+     C*
+     C                     EXSR BULK
+     C*
+     C*     See if we need to include the PIR cube in the pallet total.
+     C*
+209 DC*          OPINCL    IFEQ 'Y'
+209 MCSR         #DINCL    IFEQ 'Y'
+     CSR         OQPCUB    ADD  OQFCUB    TTLCUB  93
+     CSR                   ELSE
+     CSR                   Z-ADDOQFCUB    TTLCUB
+     CSR                   ENDIF
+209 AC*
+209 AC*     Build pallet using user choosen method.
+209 AC*
+209 ACSR                   SELEC
+209 AC*
+209 AC*        Method 1 fills the pallet piece by piece allowing a
+209 AC*        stop to be split between pallets.
+209 AC*
+210 DC*          #DFPAL    WHEQ 1
+210 ACSR         #DFBLD    WHEQ 1
+215 ACSR         DSSTOP    IFGE #DFSTP
+215 ACSR                   EXSR NEWPAL
+215 ACSR                   ENDIF
+215 ACSR                   ADD  1         DSSTOP
+209 ACSR                   EXSR FILL2
+209 AC*
+209 AC*        Otherwise fill the pallet without breaking it
+209 AC*        between stops.
+209 AC*
+209 ACSR                   OTHER
+     C*
+     C*          Try to put entire stop on an existing pallet.
+     C*
+     CSR                   EXSR CASE1
+     C*
+     C*          Otherwise, put stop on new pallet(s).
+     C*
+     CSR         DONE      IFNE *ON
+     CSR                   EXSR CASE2
+     CSR                   ENDIF
+     C*
+209 ACSR                   ENDSL
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BLDPIR  Build pallets for PIR section.
+     C*
+     CSR         BLDPIR    BEGSR
+     CSR                   MOVE *ON       FIRST
+214 ACSR                   MOVE *OFF      BRKFLG  1
+     C*
+     C*  Loop through PIR labels for route.
+     C*
+     CSR                   MOVE 'P'       KYSTYP
+     CSR                   MOVE 'O'       KYTYPE
+     CSR                   MOVE *BLANKS   KYWHDP
+214 DC*                    Z-ADD*HIVAL    KYSTOP
+214 DC*          KEYLB     SETLLLABEL1
+214 MCSR         KEYLB9    SETLLLABEL9
+     CSR         FOREVR    DOUNEFOREVR
+214 DC*                    READ LABEL1                   77
+214 MCSR                   READ LABEL9                   77
+     CSR         *IN77     IFEQ *ON
+     CSR         LBSTYP    ORNE 'P'
+     CSR         LBTYPE    ORNE 'O'
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     If department changed then rest tran# and pallet #.
+     C*
+     CSR         FIRST     IFEQ *ON
+     CSR         LBWHDP    ORNE LSTDPT
+209 ACSR                   EXSR GETOPT
+     CSR                   Z-ADD1         CURPAL  70
+209 DC*                    Z-ADDRTPCUB    CUBLFT  52
+209 MCSR                   Z-ADD#DPCUB    CUBLFT  52
+     CSR                   MOVE *OFF      FIRST
+218 ACSR                   MOVE *OFF      BRKFLG  1
+     CSR                   MOVE LBWHDP    LSTDPT
+     CSR                   ENDIF
+     C*
+     C*     If item won't fit on current pallet then start a new one.
+     C*     This program assumes that in the PIR section the quantity
+     C*     ordered will never be greater than one pallet.
+     C*
+214 AC*     Start a new pallet if user has entered a "Break" aisle.
+     C*
+209 DC****       RTPCUB    IFGT 0
+     C*
+209 MCSR         #DPCUB    IFGT 0
+214 ACSR         #DPCUB    ANDNECUBLFT
+     CSR         LBCUBE    ANDGTCUBLFT
+214 AC*
+214 ACSR         #DPBRK    ORNE *BLANKS
+214 ACSR         LBAISL    ANDGE#DPBRK
+214 ACSR         BRKFLG    ANDEQ*OFF
+214 AC*
+     CSR                   ADD  1         CURPAL
+209 DC*                    Z-ADDRTPCUB    CUBLFT
+209 MCSR                   Z-ADD#DPCUB    CUBLFT
+214 ACSR         LBAISL    IFGE #DPBRK
+214 ACSR                   MOVE *ON       BRKFLG
+214 ACSR                   ENDIF
+     C*
+     CSR                   ENDIF
+     C*
+     C*     Update label with pallet number.
+     C*
+     CSR                   Z-ADDCURPAL    LBPAL#
+     CSR                   MOVE 'B'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+214 DC*                    UPDATLBREC
+214 MCSR                   UPDATLBREC9
+     C*
+     C*     Reduce cube remaining on pallet.
+     C*
+209 DC*          RTPCUB    IFGT 0
+209 MCSR         #DPCUB    IFGT 0
+     CSR                   SUB  LBCUBE    CUBLFT
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BULK    Assign pallet number to bulk picks for current stop.
+     C*
+     CSR         BULK      BEGSR
+     C*
+     C*   Loop through bulk picks for stop.
+     C*
+     CSR                   MOVE 'F'       KYSTYP
+     CSR                   MOVE 'B'       KYTYPE
+     CSR                   MOVE LBWHDP    KYWHDP
+     CSR                   Z-ADDLBSTOP    KYSTOP
+     CSR         KEYLB     SETLLLABEL1
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYLB     READELABEL1                   77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*      Get new pallet number for bulk pick.  Don't allow
+     C*      anything else to be put on this pallet.
+     C*
+     CSR         DSCUBE    IFGT 0
+     CSR                   EXSR NEWPAL
+    DC*                    Z-ADDLBCUBE    DSCUBE
+    DC*                    Z-ADD0         DSLEFT
+    DC*                    Z-ADD1         DSSTOP
+     CSR                   ENDIF
+    ACSR                   Z-ADDLBCUBE    DSCUBE
+    ACSR                   Z-ADD0         DSLEFT
+    ACSR                   Z-ADD1         DSSTOP
+    ACSR                   MOVE *ON       DSFFLG
+408 ACSR                   MOVE *ON       DSBFLG
+     C*
+     C*      Update label record.
+     C*
+     CSR                   Z-ADDDSPAL#    LBPAL#
+     CSR                   MOVE 'B'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CASE1   See if order will fit entirely on a previous pallet.
+     C*
+     CSR         CASE1     BEGSR
+     CSR                   MOVE *OFF      DONE    1
+     C*
+     C*   Go through the currently used pallets looking for a space
+     C*   large enough for the entire stop.
+     C*
+     CSR         BEGPAL    DO   BOTPAL    CURPAL
+     CSR         CURPAL    OCUR PALLET
+     CSR         TTLCUB    IFLE DSLEFT
+209 DC*          DSSTOP    ANDLTRTFSTP
+209 MCSR         DSSTOP    ANDLT#DFSTP
+     CSR                   ADD  TTLCUB    DSCUBE
+     CSR                   SUB  TTLCUB    DSLEFT
+     CSR                   ADD  1         DSSTOP
+     CSR                   EXSR FILL1
+     CSR                   MOVE *ON       DONE
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CASE2   Start a new pallet for the stop.
+     C*
+     CSR         CASE2     BEGSR
+     C*
+     C*   Get new pallet occurrence.
+     C*
+     CSR         DSSTOP    IFNE 0
+     CSR                   EXSR NEWPAL
+     CSR                   ADD  1         DSSTOP
+     CSR                   ENDIF
+     C*
+     C*   Stop will fit on new pallet.
+     C*
+     CSR         TTLCUB    IFLE DSLEFT
+     CSR                   ADD  TTLCUB    DSCUBE
+     CSR                   SUB  TTLCUB    DSLEFT
+     CSR                   EXSR FILL1
+     C*
+     C*   Stop needs more than one pallet.
+     C*
+     CSR                   ELSE
+     CSR                   EXSR FILL2
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILL1   Entire stop will go on current pallet.
+     C*
+     CSR         FILL1     BEGSR
+     C*
+     C*   Loop through fixed labels for stop.
+     C*
+     CSR                   MOVE 'F'       KYSTYP
+     CSR                   MOVE 'O'       KYTYPE
+     CSR                   MOVE LBWHDP    KYWHDP
+     CSR                   Z-ADDLBSTOP    KYSTOP
+     CSR         KEYLB     SETLLLABEL1
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYLB     READELABEL1                   77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE *ON       DSFFLG
+     CSR                   Z-ADDDSPAL#    LBPAL#
+     CSR                   MOVE 'B'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+     C*
+     CSR                   ENDDO
+     C*
+     C*   Update corresponding PIR records with pallet number.
+     C*
+     CSR                   MOVE 'P'       KYSTYP
+     CSR                   MOVE 'O'       KYTYPE
+     CSR                   MOVE LBWHDP    KYWHDP
+     CSR                   Z-ADDLBSTOP    KYSTOP
+     CSR         KEYLB     SETLLLABEL1
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYLB     READELABEL1                   77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   Z-ADDDSPAL#    LBCTR#
+     CSR                   UPDATLBREC
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILL2   Stop needs more than one pallet. Start with current
+     C*          pallet and add new pallets as needed. One item can
+     C*          not be split between pallets.
+     C*
+     CSR         FILL2     BEGSR
+     C*
+    DC*                    Z-ADDCURPAL    START   70
+    MCSR                   Z-ADDBOTPAL    START   70
+408 AC*
+408 AC*   Make sure starting pallet is not a bulk pick pallet.
+408 AC*
+408 ACSR         START     DOUEQ0
+408 ACSR         START     OCUR PALLET
+408 ACSR         DSBFLG    IFEQ *OFF
+408 ACSR                   LEAVE
+408 ACSR                   ENDIF
+408 ACSR                   SUB  1         START
+408 ACSR                   ENDDO
+408 ACSR         START     IFEQ 0
+408 ACSR                   EXSR NEWPAL
+408 ACSR                   Z-ADDBOTPAL    START
+408 ACSR                   ENDIF
+     C*
+     C*   First put PIR items on pallet(s). Update the corresponding
+     C*   pallet number with the current fixed pallet number.
+     C*
+     CSR                   MOVE 'P'       KYSTYP
+     CSR                   MOVE 'O'       KYTYPE
+     CSR                   MOVE LBWHDP    KYWHDP
+     CSR                   Z-ADDLBSTOP    KYSTOP
+     CSR         KEYLB     SETLLLABEL1
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYLB     READELABEL1                   77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*      Maximize pallet usage by always looking for space
+     C*      on existing pallets.
+     C*
+     CSR                   MOVE *OFF      TMPFLG  1
+     CSR         START     DO   BOTPAL    CURPAL
+     CSR         CURPAL    OCUR PALLET
+408 ACSR         DSBFLG    IFEQ *ON
+408 ACSR                   ITER
+408 ACSR                   ENDIF
+209 DC**         OPINCL    IFNE 'Y'
+209 MCSR         #DINCL    IFNE 'Y'
+     CSR                   MOVE *ON       TMPFLG
+     CSR                   ELSE
+     CSR         LBCUBE    IFLE DSLEFT
+    ACSR         DSCUBE    OREQ 0
+     CSR                   ADD  LBCUBE    DSCUBE
+     CSR                   SUB  LBCUBE    DSLEFT
+     CSR                   MOVE *ON       TMPFLG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR         TMPFLG    IFEQ *ON
+     CSR                   Z-ADDDSPAL#    LBCTR#
+     CSR                   UPDATLBREC
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR         TMPFLG    IFEQ *OFF
+     CSR                   EXSR NEWPAL
+209 DC**         OPINCL    IFNE 'Y'
+214 DC**         #DINCL    IFNE 'Y'
+214 MCSR         #DINCL    IFEQ 'Y'
+     CSR                   ADD  LBCUBE    DSCUBE
+     CSR                   SUB  LBCUBE    DSLEFT
+     CSR                   ENDIF
+     CSR                   ADD  1         DSSTOP
+     CSR                   Z-ADDDSPAL#    LBCTR#
+     CSR                   UPDATLBREC
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     C*   Loop through fixed labels for stop.
+     C*
+     CSR                   MOVE 'F'       KYSTYP
+     CSR                   MOVE 'O'       KYTYPE
+     CSR                   MOVE LBWHDP    KYWHDP
+     CSR                   Z-ADDLBSTOP    KYSTOP
+     CSR         KEYLB     SETLLLABEL1
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYLB     READELABEL1                   77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*      Maximize pallet usage by always looking for space
+     C*      on existing pallets.
+     C*
+     CSR                   MOVE *OFF      TMPFLG  1
+     CSR         START     DO   BOTPAL    CURPAL
+     CSR         CURPAL    OCUR PALLET
+408 ACSR         DSBFLG    IFEQ *ON
+408 ACSR                   ITER
+408 ACSR                   ENDIF
+     CSR         LBCUBE    IFLE DSLEFT
+    ACSR         DSCUBE    OREQ 0
+209 DC*          LBCUBE    ANDLERTFCUB
+209 MCSR         LBCUBE    ANDLE#DFCUB
+     CSR                   MOVE *ON       DSFFLG
+     CSR                   ADD  LBCUBE    DSCUBE
+     CSR                   SUB  LBCUBE    DSLEFT
+     CSR                   Z-ADDDSPAL#    LBPAL#
+     CSR                   MOVE 'B'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+     CSR                   MOVE *ON       TMPFLG
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR         TMPFLG    IFEQ *OFF
+     C*
+     CSR                   SELEC
+209 DC*          LBCUBE    WHLE RTFCUB
+209 MCSR         LBCUBE    WHLE #DFCUB
+     C*
+    ACSR         DSCUBE    IFGT 0
+     CSR                   EXSR NEWPAL
+    ACSR                   ENDIF
+     CSR                   MOVE *ON       DSFFLG
+     CSR                   ADD  LBCUBE    DSCUBE
+     CSR                   SUB  LBCUBE    DSLEFT
+     CSR                   ADD  1         DSSTOP
+     CSR                   Z-ADDDSPAL#    LBPAL#
+     CSR                   MOVE 'B'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+     C*
+     CSR                   OTHER
+     CSR                   MOVE *OFF      UPDFLG  1
+     CSR         *LIKE     DEFN LBQALC    TMPQTY
+     CSR                   Z-ADDLBQALC    TMPQTY
+     CSR         *LIKE     DEFN LBQALC    MAXQTY
+209 DC*          RTFCUB    DIV  LBUCUB    MAXQTY
+209 MCSR         #DFCUB    DIV  LBUCUB    MAXQTY
+214 ACSR         MAXQTY    IFEQ 0
+214 ACSR                   Z-ADD1         MAXQTY
+214 ACSR                   ENDIF
+     CSR         TMPQTY    DOWGT0
+     CSR         DSCUBE    IFGT 0
+     CSR                   EXSR NEWPAL
+     CSR                   ENDIF
+     CSR                   MOVE *ON       DSFFLG
+     CSR         TMPQTY    IFGT MAXQTY
+     CSR                   Z-ADDMAXQTY    LBQALC
+     CSR                   ELSE
+     CSR                   Z-ADDTMPQTY    LBQALC
+     CSR                   ENDIF
+     CSR         LBQALC    MULT LBUCUB    LBCUBE
+     CSR         LBQALC    MULT LBUWGT    LBSWGT
+     CSR                   ADD  LBCUBE    DSCUBE
+     CSR                   SUB  LBCUBE    DSLEFT
+     CSR                   ADD  1         DSSTOP
+     CSR                   Z-ADDDSPAL#    LBPAL#
+     CSR                   MOVE 'B'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR         UPDFLG    IFEQ *OFF
+     CSR                   UPDATLBREC
+     CSR                   MOVE *ON       UPDFLG
+     CSR                   ELSE
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   WRITELBREC
+     CSR                   READ LABEL1              N    77
+     CSR                   ENDIF
+     CSR                   SUB  LBQALC    TMPQTY
+     CSR                   ENDDO
+     CSR                   ENDSL
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETOPT  Get picking options.
+     C*
+     CSR         GETOPT    BEGSR
+209 AC*
+209 AC*   Go through data structure to find options for department.
+209 AC*   If department hasn't changed then there is nothing to do.
+209 AC*
+209 ACSR         LBWHDP    IFNE #DWHDP
+209 ACSR         1         DO   LSTOPT    XOPT    20
+209 ACSR         XOPT      OCUR OPTS
+209 ACSR         #DWHDP    IFEQ LBWHDP
+209 ACSR                   LEAVE
+209 ACSR                   ENDIF
+209 ACSR                   ENDDO
+209 ACSR                   ENDIF
+209 DC*
+209 DC*   First get options from options file.
+209 DC*
+209 DC*                    MOVE '*PICK   'OPCODE
+209 DC*          KEYOP     CHAINOPTIONS              79
+209 DC*          *IN79     IFEQ *ON
+209 DC*                    Z-ADD0         OPFPAL
+209 DC*                    Z-ADD0         OPFSTP
+209 DC*                    Z-ADD0         OPFCUB
+209 DC*                    Z-ADD0         OPPCUB
+209 DC*                    Z-ADD0         OPSRCH
+209 DC*                    ENDIF
+209 DC*
+209 DC*   Then see if there are any overrides for the route.
+209 DC*
+209 DC*          KEYRO     CHAINRTREC                79
+209 DC*          *IN79     IFEQ *ON
+209 DC*                    MOVE OPDATA    RTDATA
+209 DC*                    ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  NEWPAL  Get new pallet occurrence.
+     C*
+     CSR         NEWPAL    BEGSR
+     C*
+     CSR                   SELEC
+     C*
+     C*   If we haven't reached the max occurrence yet, just add 1.
+     C*
+     CSR         BOTPAL    WHLT MAXPAL
+     CSR                   ADD  1         BOTPAL
+     C*
+     C*   Otherwise, move the active existing pallets to the
+     C*     beginning and reset the pointer. Occurrences are
+     C*     initialized as they are needed.
+     C*
+     CSR                   OTHER
+     C*
+     CSR                   EXSR ORPHAN
+     C*
+     CSR                   Z-ADD0         Y       30
+     CSR         BEGPAL    DO   MAXPAL    X       30
+     CSR                   ADD  1         Y
+     CSR         X         OCUR PALLET
+     CSR                   MOVE PALLET    SAVPAL
+     CSR         Y         OCUR PALLET
+     CSR                   MOVE SAVPAL    PALLET
+     CSR                   ENDDO
+     CSR         Y         ADD  1         BOTPAL
+     C*
+     CSR                   ENDSL
+     C*
+     C*   Update current pallet pointer and initialize fields.
+     C*
+     CSR                   Z-ADDBOTPAL    CURPAL
+     CSR         CURPAL    OCUR PALLET
+     CSR                   Z-ADDCURPAL    DSPAL#
+     CSR                   Z-ADD0         DSCUBE
+209 DC*                    Z-ADDRTFCUB    DSLEFT
+209 MCSR                   Z-ADD#DFCUB    DSLEFT
+     CSR                   Z-ADD0         DSSTOP
+     CSR                   MOVE *OFF      DSFFLG
+408 ACSR                   MOVE *OFF      DSBFLG
+     CSR                   MOVE LBWHDP    DSWHDP
+     C*
+     C*   Update pointer to first previous pallet that can be used.
+     C*
+209 DC*          BOTPAL    IFLE RTSRCH
+209 MCSR         BOTPAL    IFLE #DSRCH
+     CSR                   Z-ADD1         BEGPAL
+     CSR                   ELSE
+     CSR                   ADD  1         BEGPAL
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ORPHAN  Create dummy fixed labels for pallets with no
+     C*          fixed items.
+     C*
+     CSR         ORPHAN    BEGSR
+     C*
+     CSR                   MOVE LBWHDP    SVWHDP
+     CSR                   Z-ADDLBSTOP    SVSTOP
+     C*
+     CSR         1         DO   BOTPAL    X
+     CSR         X         OCUR PALLET
+     CSR         DSFFLG    IFEQ *ON
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     CSR                   CLEARLBREC
+     CSR                   Z-ADD$PWHSE    LBWHSE
+     CSR                   MOVE DSWHDP    LBWHDP
+     CSR                   MOVE 'F'       LBSTYP
+     CSR                   Z-ADD0         LBQRYF
+     CSR                   MOVE $PRTE     LBRTE
+     CSR                   MOVEL'*PIRPICK'LBITEM
+     CSR                   Z-ADD$PBAT     LBPBAT
+213 ACSR                   MOVE 'S'       LBGRP1
+213 ACSR                   MOVE $POTYP    LBGRP2
+     CSR                   MOVE 'O'       LBTYPE
+     CSR                   MOVE 'C'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+213 ACSR                   Z-ADDTODAY     LBRDTE
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   Z-ADDDSPAL#    LBPAL#
+     CSR                   WRITELBREC
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   MOVE SVWHDP    LBWHDP
+     CSR                   Z-ADDSVSTOP    LBSTOP
+     C*
+     CSR                   ENDSR

@@ -1,0 +1,187 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2000 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (630) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  QDA101    Delete ALL Open Purchase Orders
+     F*  Max Blacknik
+     F*  17 November 2000
+     F*
+     F*  Revisions
+     F*
+     F*
+     F*  NOTES:
+     F*
+     F*  This program needs to be run with extreme caution.  The only
+     F*  checks that are performed is that the purchase order header
+     F*  is at OPEN status.  Since timing issues could arise during the
+     F*  execution of this program, it should be run with no other
+     F*  users operating on FS-WMS.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPOHDR   UF  E           K        DISK
+     FPODTL   UF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     E                    DESC    1   1 50
+     E*
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                    P   1   30ERRECS
+     I                                        4  48 ERDESC
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PPRG   - Program to send message back to.
+     C*      &PWHSE  - Warehouse
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PPRG  10
+     C                     PARM           $PWHSE  3
+     C*
+     C                     MOVE $PWHSE    $KWHSE  30
+     C                     MOVELDESC,1    ERDESC
+     C*
+     C*  Key fields
+     C*
+     C*  Partial key for POHDR file
+     C           PHKEY     KLIST
+     C                     KFLD           $KWHSE
+     C*
+     C*  Partial key for PODTL file
+     C           PDKEY     KLIST
+     C                     KFLD           PHWHSE
+     C                     KFLD           PHPO
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C                     MOVE *OFF      FOREVR  1
+     C           $KWHSE    SETLLPOHDR
+     C*
+     C           FOREVR    DOWEQFOREVR
+     C           PHKEY     READEPOHDR                    79
+     C                     SELEC
+     C           *IN79     WHEQ *ON
+     C                     LEAVE                           Exit loop.
+     C*
+     C           PHSTAT    WHEQ '0'                        Open P/O
+     C*
+     C*    Remove ALL purchase order detail records.
+     C*
+     C                     MOVE *OFF      ERROR   1
+     C           PDKEY     SETLLPODTL
+     C           FOREVR    DOWEQFOREVR
+     C           PDKEY     READEPODTL                    78
+     C                     SELEC
+     C           *IN78     WHEQ *ON
+     C                     LEAVE                           Exit loop.
+     C*
+     C                     OTHER
+     C                     DELETPDREC                  77
+     C           *IN77     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     ENDIF
+     C                     ENDSL
+     C*
+     C                     ENDDO
+     C*
+     C*    Remove purchase order header. All detail rcds removed
+     C*    successfully.
+     C*
+     C           ERROR     IFEQ *OFF
+     C                     DELETPHREC                  76
+     C           *IN76     IFEQ *OFF
+     C                     ADD  1         ERRECS
+     C                     ENDIF
+     C                     ENDIF
+     C                     ENDSL
+     C                     ENDDO
+     C*
+     C                     MOVE *ON       *INLR
+     C*
+     C                     EXSR ZM0750
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   MOVE *ZEROS    ERRECS
+     C*
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR0750  Records removed.
+     C*
+     CSR         ZM0750    BEGSR
+     CSR                   MOVE 'PIR0750' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*
+**
+Open purchase orders

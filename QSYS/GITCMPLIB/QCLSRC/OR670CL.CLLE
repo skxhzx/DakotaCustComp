@@ -1,0 +1,164 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  OR670CL   Route summary by stop.                                 */
+/*  15 August 2000                                                   */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*  Revisions                                                        */
+/*                                                                   */
+/*    03/23/09  CWM  5.20a                                           */
+/*      - Added code for Report Distribution/Print Over Rides        */
+/*                                                                   */
+/*    06/03/13  RBD  6.50                                            */
+/*      - Enh: Changed key field for stop from label stop to         */
+/*        stop/drop from RTESTP file.                                */
+/*                                                                   */
+/*    01/15/19  RBD  7.30                                            */
+/*      - Fix: Change label71 to label71d.                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+/* 520AD     OR670CL:    PGM        PARM(&WHSEA &RTID &RETURN)       */
+/* 520AA */  OR670CL:    PGM        PARM(&WHSEA &RTID &RETURN &POVR)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR670CL)
+
+
+  /* Report program and printer file name. */
+
+/* 720 D     DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) VALUE(LABEL71) */
+/* 720 M*/   DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) VALUE(LABEL71D)
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) VALUE(OR670PR)
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Route summary by stop report')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing route summary by stop report')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&Q)          TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTID)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&UNQKEY)     TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&WHSEA)      TYPE(*CHAR) LEN(3)
+
+/*520AA*/    DCL        VAR(&CMD)    TYPE(*CHAR) LEN(1024)
+/*520AA*/    DCL        VAR(&LEN)    TYPE(*DEC)  LEN(15 5) VALUE(1024)
+/*520AA*/    DCL        VAR(&PARMS)  TYPE(*CHAR) LEN(80)
+/*520AA*/    DCL        VAR(&POVR)   TYPE(*CHAR) LEN(1)
+/*520AA*/    DCL        VAR(&PRTCTR) TYPE(*DEC)  LEN(15 5) VALUE(1)
+/*520AA*/    DCL        VAR(&ONETIM) TYPE(*CHAR) LEN(1)
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/*520AA*/    IF (&POVR = 'Y') THEN(DO)
+
+/*520AA*/    CHGVAR VAR(%SUBSTRING(&PARMS 1 8)) VALUE('*ADD    ')
+/*520AA*/    CHGVAR VAR(%SUBSTRING(&PARMS 9 10)) VALUE(&SBMPGM)
+/*520AA*/    CHGVAR VAR(%SUBSTRING(&PARMS 19 10)) VALUE('OR670PR   ')
+/*520AA*/    CHGVAR VAR(%SUBSTRING(&PARMS 29 3)) VALUE('000')
+/*520AA*/    CHGVAR VAR(%SUBSTRING(&PARMS 32 3)) VALUE(&WHSEA)
+/*520AA*/    CHGVAR VAR(%SUBSTRING(&PARMS 35 45)) VALUE(' ')
+/*520AA*/    CHGVAR VAR(%SUBSTRING(&PARMS 68 1)) VALUE('Y')
+
+ /*520AA*/   CALL       PGM(RP152) PARM(&PARMS)
+ /*520AA*/   CHGVAR VAR(&RETURN)  VALUE(%SST(&PARMS 69 8))
+ /*520AA*/   IF         COND(&RETURN *EQ '*CANCEL ') THEN(DO)
+ /*520AA*/   GOTO       CMDLBL(GETOUT)
+ /*520AA*/   ENDDO
+
+/*520AA*/    ENDDO
+
+/*520AA*/    DOUNTIL    COND(&PRTCTR *EQ 0)
+/*520AA*/    CALL       PGM(RPT120) PARM(&PRTF &PRTCTR &CMD &ONETIM)
+/*520AA*/    IF         COND(&PRTCTR *NE 0) THEN(DO)
+
+   /* Create selection criteria string. */
+
+
+   /* Select warehouse  */
+             CHGVAR     VAR(&QRYSLT) VALUE('LBWHSE *EQ ' *CAT &WHSEA)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select route ID   */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBRTE +
+                          *EQ ' *CAT &Q *CAT &RTID *CAT &Q)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select type  */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '((LBTYPE +
+                          *EQ ' *CAT &Q *CAT 'O' *CAT &Q *CAT ')'  +
+                          *BCAT '*OR' *BCAT '(LBTYPE *EQ ' *CAT &Q +
+                          *CAT 'B' *CAT &Q *CAT '))')
+
+
+   /* Use OPNQRYF to select and order the records we need */
+
+             OVRDBF     FILE(&FILE) SHARE(*YES)
+ /*          OPNQRYF    FILE((&FILE)) QRYSLT(&QRYSLT) +
+                          KEYFLD((LBSTOP) (OHCUST) (LBWHDP) (LBAISL))   (650 D) */
+
+             OPNQRYF    FILE((&FILE)) QRYSLT(&QRYSLT) +
+                          KEYFLD((RTSSD) (OHCUST) (LBWHDP) (LBAISL)) /* (650 M) */
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+/*520AA*/    CHGVAR     VAR(&PRTCTR) VALUE(&PRTCTR + 1)
+/*520AA*/    CALL       PGM(QCMDEXC) PARM(&CMD &LEN)
+             CALL       PGM(OR670)
+/*520AA*/    IF         COND(&ONETIM *EQ 'Y') THEN(DO)
+/*520AA*/    CHGVAR     VAR(&PRTCTR) VALUE(0)
+/*520AA*/    ENDDO
+/*520AA*/    CLOF       OPNID(&FILE)
+/*520AA*/    DLTOVR     FILE(&PRTF)
+/*520AA*/    MONMSG     MSGID(CPF9841)
+/*520AA*/    ENDDO
+/*520AA*/    ENDDO
+
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+   /* Clean up before leaving */
+
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

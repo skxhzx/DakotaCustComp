@@ -1,0 +1,178 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  UT130DS   Zero qtys in all Fixed pick slots.
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+416 AF*   12/11/01  DAS  4.16
+     F*     - Created.
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes
+     F*
+     F*   This is a VERY dangerous program.
+     F*
+     F*   Therefore, this program will work only if it is submitted to
+     F*   the jobq and only if the client is using the Locator system.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FOPTIONS IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  *FEATURE  -  PIR Feature options.
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPFEAT  -  PIR Installed feature.
+     I*                 1=Locator system installed.
+     I*                 2=Full system installed.
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPFEAT
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                    P   1   30ERCNT
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   *OK      - Program finished successfully.
+     C*              *JOBQ    - Program not run from jobq
+     C*              *LOCATOR - System not Locator
+     C*              *NORECS  - No records found matching criteria
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE 155
+     C                     PARM           $PRTN   8
+     C                     MOVE '*OK     '$PRTN
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*  If not being run from the job queue, then get out.
+     C*
+     C                     CALL 'GETJTYPE'
+     C                     PARM           $JTYPE  1
+     C           $JTYPE    IFNE '0'
+     C                     MOVE '*JOBQ   '$PRTN
+     C                     GOTO BOTTOM
+     C                     ENDIF
+     C*
+     C*  If installed feature is not Locator, then get out.
+     C*
+     C                     Z-ADD$PWHSE    KYWHSE
+     C                     MOVE '*FEATURE'KYCODE
+     C           OPKEY     CHAINOPTIONS              79
+     C           *IN79     IFEQ *ON
+     C           OPFEAT    ORNE '1'
+     C                     MOVE '*LOCATOR'$PRTN
+     C                     GOTO BOTTOM
+     C                     ENDIF
+     C*
+     C*  Count records to be changed.
+     C*
+     C                     Z-ADD0         W1CNT   50
+     C/EXEC SQL
+     C+  SELECT COUNT(*) INTO :W1CNT
+     C+  FROM   SLOT1
+     C+  WHERE      (SLWHSE = :$PWHSE)
+     C+         AND (SLSTYP = 'F')
+     C+         AND (SLPICK = 'Y')
+     C/END-EXEC
+     C*
+     C*  Get out if no records selected.
+     C*
+     C           W1CNT     IFEQ 0
+     C                     MOVE '*NORECS '$PRTN
+     C                     GOTO BOTTOM
+     C                     ENDIF
+     C*
+     C*  Initialize quantities.
+     C*
+     C/EXEC SQL
+     C+  UPDATE SLOT1
+     C+  SET    SLSTK1=0, SLSTK2=0, SLSTK3=0,
+     C+         SLALC1=0, SLALC2=0, SLALC3=0,
+     C+         SLPCK1=0, SLPCK2=0, SLPCK3=0,
+     C+         SLTFR1=0, SLTFR2=0, SLTFR3=0,
+     C+         SLRCV1=0, SLRCV2=0, SLRCV3=0
+     C+  WHERE      (SLWHSE = :$PWHSE)
+     C+         AND (SLSTYP = 'F')
+     C+         AND (SLPICK = 'Y')
+     C/END-EXEC
+     C*
+     C*  Recalculate warehouse quantities.
+     C*
+     C                     CALL 'UT812'
+     C                     PARM $PWHSE    $UWHS  155
+     C                     PARM '*ALL'    $UITEM 15
+     C                     PARM $JTYPE    $UJTYP  1
+     C                     PARM #PROG     $UPRG  10
+     C                     PARM           $URTN   8
+     C                     PARM           $UMSG   4
+     C*
+     C           BOTTOM    TAG
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*    Define key for OPTIONS file.
+     C*
+     CSR         *LIKE     DEFN OPWHSE    KYWHSE
+     CSR         *LIKE     DEFN OPCODE    KYCODE
+     CSR         OPKEY     KLIST
+     CSR                   KFLD           KYWHSE
+     CSR                   KFLD           KYCODE
+     C                     ENDSR

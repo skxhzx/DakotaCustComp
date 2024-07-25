@@ -1,0 +1,1375 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR530     Pick orders - Pick items
+     F*  27 September 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    11/28/94  DAS
+     F*      - Added pick slot department to OR532 parameters.
+     F*
+     F*    12/09/94  DAS
+     F*      - Revised FLOOR and PCKFIX routines to work with *PIRPICK
+     F*        labels that are created in OR520 for pallets without
+     F*        fixed items.
+     F*
+     F*    12/19/94  DAS
+     F*      - Revised OR530PR file.
+     F*      - Modified routine UNALOC to move LBITEM into $AITEM
+     F*        instead of ODITEM.
+     F*      - Modified program to not assign new pallet numbers from
+     F*        the PIRPAL# data area. Keeping pallet numbers assigned
+     F*        by OR520.
+     F*
+     F*    02/22/95 DAS  2.09
+     F*      - Revised program to work with *PICK options by dept.
+     F*        This effected files OPTIONS and RTEOPT and routines
+     F*        *INZSR, FLOOR, FLOORS, GETOPT, NEWPAL AND PCKPIR.
+     F*
+     F*    03/20/95 DAS  2.10
+     F*      - Revised FLOOR routine to call GETITM before making call
+     F*        to replenishment program OR532.
+     F*      - Revised call to OR532 to use unit of measure, cube and
+     F*        weight from item file instead of label record.
+     F*
+     F*    03/30/95 DAS  2.10
+     F*      - Revised FLOOR routine to adjust slot stock quantities
+     F*        when a breakdown is needed.
+     F*
+     F*    03/23/95 DAS  2.10 (marked as FIX)
+     F*      - Revised BULK routine to work with all quantities.
+     F*
+     F*    09/19/95 DAS  2.10
+     F*       - Revised FLOOR routine breakdown logic to only do a
+     F*         breakdown if qty needed is > qty available instead
+     F*         of >= qty available.
+     F*
+     F*    01/12/96  DAS  2.10
+     F*      - Revised to call ADDSTDTRN to add a record to PIRTRAN.
+     F*
+213 AF*    05/21/96 DAS
+     F*      - Added new transaction fields to parms (@PGRP1, @PGRP2)
+     F*      - Added parameter $POTYP to identify the type of orders
+     F*        to work with (Normal, transfers ...).
+     F*
+213 AF*    05/31/96 DAS
+     F*      - Added logic to write transaction numbers for an item to
+     F*        file ORDT when each label record is updated with the
+     F*        transaction number. Routine WRTODT added.
+     F*
+218 AF*    01/24/97 HNK
+     F*      - Added parameter @PCMD with '*CREATE' to call ADDSTDTRN
+     F*        program.
+     F*
+407 AF*    11/19/97 DAS  4.07/4.08
+408 AF*      - Revised to not call OR531 if item is date sensitive.
+     F*      - Added return parameters entered data and expiration date
+     F*        to OR532 call.  Updated pick slot with these dates.
+417AAF*    07/08/03 RH
+     F*      - Add OTEMP#, OTPCK1, OTPCK2, OTPCK3 to ORDT file.
+     F*        The transaction does not have emp # or qty at this time.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*  90        Overflow indicator for exception report
+     F*  91        Overflow indicator for catch weight report
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FLABEL2  UF  E           K        DISK
+     FLABEL6  UF  E           K        DISK
+     FSLOT2   UF  E           K        DISK
+209 DF*OPTIONS IF  E           K        DISK
+209 MFOPTIOND IF  E           K        DISK
+209 DF*RTEOPT  IF  E           K        DISK
+209 MFRTEOPTD IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+210eDF*IRTRAN O   E           K        DISK
+213 AFORDT    O   E                    DISK                      A
+     FOR530PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A40        40  1
+     E                    MSG     1   3 40
+     I*----------------------------------------------------------------
+     I*  *PICK  -  Picking options
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPNXTP  -  Next pallet number.
+     I*    OPBPCK  -  Bulk pick definition.
+     I*    OPPCUB  -  Maximum cube for PIR.
+     I*    OPFPAL  -  Pallets on fixed fork lift.
+     I*    OPFCUB  -  Maximum cube per fixed pallet.
+     I*    OPFSTP  -  Maximum stops per fixed pallet.
+     I*    OPINCL  -  Include PIR in fixed cube.
+     I*    OPSRCH  -  Number of previous pallets to search for space.
+     I*
+     I* Data structure
+     I*
+209 DI*OPDATA      DS
+209 MIOPDDTA      DS
+     I I            0                         1   70OPNXTP
+     I I            0                         8   90OPBPCK
+     I I            0                        10  142OPPCUB
+     I I            0                        15  150OPFPAL
+     I I            0                        16  202OPFCUB
+    DI*I            0                        21  210OPFSTP
+     I                                       22  22 OPINCL
+     I I            0                        23  240OPSRCH
+    AI I            0                        25  260OPFSTP
+209 DI*                                     117 117 OPTEND
+209 MI                                      117 117 OPDEND
+     I*
+209 DI*RTDATA      DS
+209 MIRTDDTA      DS
+     I I            0                         1   70RTNXTP
+     I I            0                         8   90RTBPCK
+     I I            0                        10  142RTPCUB
+     I I            0                        15  150RTFPAL
+     I I            0                        16  202RTFCUB
+    DI*I            0                        21  210RTFSTP
+     I                                       22  22 RTINCL
+     I I            0                        23  240RTSRCH
+    AI I            0                        25  260RTFSTP
+209 DI*                                     117 117 RTTEND
+209 MI                                      117 117 RTDEND
+209 AI*----------------------------------------------------------------
+209 AI*  Multiple occurance data structure for department options
+209 AI*
+209 AIOPTS        DS                         50
+209 AI                                        1   5 #DWHDP
+209 AI                                        6   60#DFPAL
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$AERM       DS
+     I                                        1  60 XAERM
+     I                                        1   4 $AMSG
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+210eAI              'ADDSTDTRN'           C         @ADDTR
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PBAT   Batch number
+     C*      $PWHSE  Warehouse
+213 AC*      $POTYP  Order type
+     C*      $PRTE   Route
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PBAT   70
+     C                     PARM           $PWHSE  30
+213 AC                     PARM           $POTYP  1
+     C                     PARM           $PRTE   5
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *OFF      PRFLAG  1
+209 DC*
+209 DC* Get picking options for route.
+209 DC*
+209 DC*                    EXSR GETOPT
+     C*
+     C* Pick items in PIR section.
+     C*
+     C                     EXSR PCKPIR
+     C*
+     C* Pick items in fixed section.
+     C*
+     C                     EXSR PCKFIX
+     C*
+     C* Close up shop and return home.
+     C*
+     C           PRFLAG    IFEQ *ON
+     C                     WRITEFOOT1
+     C                     ENDIF
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Define partial key for LABEL2 file.
+     C*
+     CSR         *LIKE     DEFN LBSTYP    KYSTYP
+     CSR         KEYLB2    KLIST
+     CSR                   KFLD           $PBAT
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTE
+     CSR                   KFLD           KYSTYP
+     C*
+     C*  Define partial key for LABEL6 file.
+     C*
+     CSR         *LIKE     DEFN LBSTYP    K6STYP
+     CSR         *LIKE     DEFN LBTYPE    K6TYPE
+     CSR         KEYLB6    KLIST
+     CSR                   KFLD           $PBAT
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTE
+     CSR                   KFLD           K6STYP
+     CSR                   KFLD           LBWHDP
+     CSR                   KFLD           K6TYPE
+     CSR                   KFLD           LBPAL#
+     C*
+     C*  Define key for SLOT2 file.
+     C*
+     CSR         KEYSL2    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           LBWHDP
+     CSR                   KFLD           LBDISP
+     C*
+     C*  Define partial key for OPTIOND file.
+     C*
+209 ACSR         *LIKE     DEFN OPDCOD    KYCODE
+209 DC*          KEYOP     KLIST
+209 DC*                    KFLD           $PWHSE
+209 DC*                    KFLD           OPCODE
+209 MCSR         KEYOPD    KLIST
+209 MCSR                   KFLD           KYCODE
+209 MCSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for RTEOPTD file.
+     C*
+209 DC*          KEYRO     KLIST
+209 DC*                    KFLD           $PWHSE
+209 DC*                    KFLD           OPCODE
+209 DC*                    KFLD           $PRTE
+209 MCSR         KEYRTD    KLIST
+209 MCSR                   KFLD           OPDCOD
+209 MCSR                   KFLD           $PWHSE
+209 MCSR                   KFLD           $PRTE
+209 ACSR                   KFLD           OPDWDP
+     C*
+     C*  Define key for PIRITEM file.
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           LBITEM
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR         *LIKE     DEFN SLAISL    $LAISL
+     CSR         *LIKE     DEFN SLLOC     $LLOC
+     CSR         *LIKE     DEFN SLRLVL    $LRLVL
+     CSR         *LIKE     DEFN SLHAND    $LHAND
+     CSR         *LIKE     DEFN SLDISP    $LDISP
+     C*
+     C*  Create report heading.
+     C*
+     C*    Start with batch number ...
+     C*
+     CSR                   MOVE $PBAT     TEMP30 30
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$ACMD   8
+     CSR                   PARM           TEMP30
+     CSR         'BATCH:'  CAT  TEMP30:1  HEDLN2
+     C*
+     C*    Then add warehouse ...
+     C*
+     CSR         HEDLN2    CAT  'WARE':2  HEDLN2
+     CSR         HEDLN2    CAT  'HOUSE:':0HEDLN2
+     CSR                   MOVE *BLANKS   TEMP30
+     CSR                   MOVE $PWHSE    TEMP30
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$ACMD
+     CSR                   PARM           TEMP30
+     CSR         HEDLN2    CAT  TEMP30:1  HEDLN2
+     C*
+     C*    Finish with route.
+     C*
+     CSR         HEDLN2    CAT  'ROUTE:':2HEDLN2
+     CSR         HEDLN2    CAT  $PRTE:1   HEDLN2
+     C*
+     C*    Center it so it will look pretty.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           HEDLN2
+     CSR                   PARM 60        $CLEN   30
+     C*
+     C*   Define variables.
+     C*
+     CSR         *LIKE     DEFN LBTRN#    CURTRN
+     CSR         *LIKE     DEFN LBPAL#    CURPAL
+210eDC*          *LIKE     DEFN PTTYPE    CURTYP
+     CSR         *LIKE     DEFN LBPAL#    LSTPAL
+     CSR         *LIKE     DEFN LBWHDP    LSTWDP
+     CSR         *LIKE     DEFN LBITEM    LSTITM
+     CSR         *LIKE     DEFN RTFPAL    PALCNT
+210eDC*          *LIKE     DEFN PTCUBE    TTLCUB
+210eDC*          *LIKE     DEFN PTSWGT    TTLWGT
+210eDC*          *LIKE     DEFN PTPCS     TTLPCS
+210eACSR         *LIKE     DEFN @PCUBE    TTLCUB
+210eACSR         *LIKE     DEFN @PSWGT    TTLWGT
+210eACSR         *LIKE     DEFN @PPCS     TTLPCS
+     CSR         *LIKE     DEFN LBQALC    DIFF1
+     CSR         *LIKE     DEFN LBQALC    DIFF2
+     CSR         *LIKE     DEFN LBQALC    DIFF3
+209 AC*
+209 AC*    Get department options and store in data structure.
+209 AC*
+209 ACSR                   MOVE '*PICK   'KYCODE
+209 ACSR         KEYOPD    SETLLOPTIOND
+209 ACSR                   Z-ADD0         LSTOPT  20
+209 ACSR         FOREVR    DOUNEFOREVR
+209 ACSR         KEYOPD    READEOPTIOND                  79
+209 ACSR         *IN79     IFEQ *ON
+209 ACSR                   LEAVE
+209 ACSR                   ENDIF
+209 AC*
+209 AC*       Save needed options.
+209 AC*
+209 ACSR                   ADD  1         LSTOPT
+209 ACSR         LSTOPT    OCUR OPTS
+209 ACSR                   MOVE OPDWDP    #DWHDP
+209 ACSR                   Z-ADDOPFPAL    #DFPAL
+209 AC*
+209 AC*       Get overrides.
+209 AC*
+209 ACSR         KEYRTD    CHAINRTEOPTD              78
+209 ACSR         *IN78     IFEQ *OFF
+209 ACSR                   Z-ADDRTFPAL    #DFPAL
+209 ACSR                   ENDIF
+209 ACSR                   ENDDO
+209 AC*
+209 AC*       Initialize a "catch all" default.
+209 AC*
+209 ACSR                   ADD  1         LSTOPT
+209 ACSR         LSTOPT    OCUR OPTS
+209 ACSR                   MOVE *BLANKS   #DWHDP
+209 ACSR                   Z-ADD1         #DFPAL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  AVAIL   Calculate available quantities for slot.
+     C*
+     CSR         AVAIL     BEGSR
+     C*
+     C*  Call program to calculate availabe slot quantities.
+     C*
+     CSR                   CALL 'SLOTQTY'
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     C*
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     C*
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     C*
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     C*
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     C*
+     CSR                   PARM           STOCK1  50
+     CSR                   PARM           STOCK2  30
+     CSR                   PARM           STOCK3  30
+     C*
+     CSR                   PARM           AVAIL1  50
+     CSR                   PARM           AVAIL2  30
+     CSR                   PARM           AVAIL3  30
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BULK    Process bulk pick label.
+     C*
+     C*    Note: It is assumed that bulk picks are "normal" quantities.
+     C*          Also, each bulk pick gets a unique tran# and pallet #.
+     C*
+     CSR         BULK      BEGSR
+     C*
+     C*  If partial pallet see if we can put remainder in pick slot.
+     C*
+     CSR                   MOVE *OFF      RPLFLG  1
+     CSR         LBQRMN    IFGT 0
+     C*
+     C*    First determine if quantity remaining is still available.
+     C*
+     CSR                   EXSR AVAIL
+     CSR         AVAIL1    IFGE LBQRMN
+     CSR                   Z-ADDLBQRMN    TRNQTY  70
+     CSR                   ELSE
+     CSR                   Z-ADDAVAIL1    TRNQTY
+     CSR                   ENDIF
+407 AC*
+407 AC*    Get item information.
+407 AC*
+407 ACSR                   EXSR GETITM
+     C*
+     C*    Then try to replenish pick slot with it.
+407 AC*    Note: Do not do this for data sensitive item.
+     C*
+     CSR         TRNQTY    IFGT 0
+407 ACSR         ITFLGD    ANDNE'Y'
+     CSR                   CALL 'OR531'
+     CSR                   PARM           LBWHSE
+     CSR                   PARM           LBITEM
+     CSR                   PARM           TRNQTY
+     CSR                   PARM           $LAISL
+     CSR                   PARM           $LLOC
+     CSR                   PARM           $LRLVL
+     CSR                   PARM           $LHAND
+     CSR                   PARM           $LDISP
+     CSR                   PARM           $LRTN
+     C*
+     CSR         $LRTN     IFEQ '*OK     '
+     CSR                   MOVE *ON       RPLFLG
+     CSR                   ENDIF
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDIF
+     C*
+     C*  Update slot record.
+     C*
+FIX DC*                    SUB  LBQALC    SLALC1
+FIX DC*          SLALC1    IFLT 0
+FIX DC*                    Z-ADD0         SLALC1
+FIX DC*                    ENDIF
+FIX DC*                    ADD  LBQALC    SLPCK1
+FIX DC*          RPLFLG    IFEQ *ON
+FIX DC*                    ADD  TRNQTY    SLTFR1
+FIX DC*                    ENDIF
+FIX ACSR                   SELEC
+FIX ACSR         LBUTYP    WHEQ 'N'
+FIX ACSR                   SUB  LBQALC    SLALC1
+FIX ACSR         SLALC1    IFLT 0
+FIX ACSR                   Z-ADD0         SLALC1
+FIX ACSR                   ENDIF
+FIX ACSR                   ADD  LBQALC    SLPCK1
+FIX ACSR         RPLFLG    IFEQ *ON
+FIX ACSR                   ADD  TRNQTY    SLTFR1
+FIX ACSR                   ENDIF
+FIX AC*
+FIX ACSR         LBUTYP    WHEQ '1'
+FIX ACSR                   SUB  LBQALC    SLALC2
+FIX ACSR         SLALC2    IFLT 0
+FIX ACSR                   Z-ADD0         SLALC2
+FIX ACSR                   ENDIF
+FIX ACSR                   ADD  LBQALC    SLPCK2
+FIX AC*
+FIX ACSR         LBUTYP    WHEQ '2'
+FIX ACSR                   SUB  LBQALC    SLALC3
+FIX ACSR         SLALC3    IFLT 0
+FIX ACSR                   Z-ADD0         SLALC3
+FIX ACSR                   ENDIF
+FIX ACSR                   ADD  LBQALC    SLPCK3
+FIX AC*
+FIX ACSR                   ENDSL
+     CSR                   UPDATSLREC
+     C*
+     C*  Create transaction record.
+     C*
+     CSR                   CALL 'PIRTRN#'
+210eMCSR                   PARM           PTTRN#  70
+     CSR                   SELEC
+     CSR         LBQRMN    WHEQ 0
+210eDC*                    MOVE 'BF'      PTTYPE
+210eACSR                   MOVE 'BULKF '  @PTASK
+     CSR         TRNQTY    WHGT 0
+     CSR         RPLFLG    ANDEQ*ON
+210eDC*                    MOVE 'BR'      PTTYPE
+210eACSR                   MOVE 'BULKR '  @PTASK
+     CSR                   OTHER
+210eDC*                    MOVE 'BP'      PTTYPE
+210eACSR                   MOVE 'BULKP '  @PTASK
+     CSR                   ENDSL
+210eDC*R                   Z-ADDLBCUBE    PTCUBE
+210eDC*R                   Z-ADDLBSWGT    PTSWGT
+210eDC*R                   Z-ADDLBQALC    PTPCS
+210eDC*R                   Z-ADDTODAY     PTSDTE
+210eDC*R                   TIME           PTSTIM
+210eDC*R                   Z-ADD0         PTEDTE
+210eDC*R                   Z-ADD0         PTETIM
+210eDC*R                   MOVE $PRTE     PTRTE
+210eDC*R                   WRITEPTREC
+210eAC*
+210eACSR                   CALL @ADDTR
+218 ACSR                   PARM '*CREATE '@PCMD   8
+210eACSR                   PARM           #JOB
+210eACSR                   PARM PTTRN#    @PTRN#  70
+210eACSR                   PARM           @PTASK  6
+210eACSR                   PARM LBWHSE    @PWHSE  30
+210eACSR                   PARM LBWHDP    @PWHDP  5
+210eACSR                   PARM LBSTYP    @PSTYP  1
+210eACSR                   PARM LBCUBE    @PCUBE  93
+210eACSR                   PARM LBSWGT    @PSWGT  92
+210eACSR                   PARM LBQPCK    @PPCS   50
+210eACSR                   PARM 1         @PAISL  50
+210eACSR                   PARM 1         @PQTY1  50
+210eACSR                   PARM 0         @PQTY2  50
+210eACSR                   PARM 0         @PQTY3  50
+210eACSR                   PARM $PRTE     @PRTE   5
+210eACSR                   PARM ' '       @PPO    9
+213 ACSR                   PARM 'S'       @PGRP1  1
+213 ACSR                   PARM $POTYP    @PGRP2  1
+210eACSR                   PARM ' '       @PRTN   8
+210eACSR                   PARM ' '       @PMSG   4
+210eAC*
+     C*
+     C*  Update label record.
+     C*
+     CSR         RPLFLG    IFEQ *ON
+     CSR                   Z-ADDLBWHSE    LBWHS2
+     CSR                   MOVE LBWHDP    LBWHD2
+     CSR                   MOVE $LAISL    LBASL2
+     CSR                   Z-ADD$LLOC     LBLOC2
+     CSR                   Z-ADD$LRLVL    LBLVL2
+     CSR                   MOVE $LHAND    LBHND2
+     CSR                   MOVE $LDISP    LBDSP2
+     CSR                   ENDIF
+     CSR                   Z-ADDLBQALC    LBQPCK
+     CSR                   Z-ADDTRNQTY    LBQRMN
+     CSR                   Z-ADDPTTRN#    LBTRN#
+    DC*                    CALL 'PIRPAL#'
+    DC*                    PARM           LBPAL#
+     CSR                   MOVE 'P'       LBSTAT
+210eDC*                    Z-ADDPTSDTE    LBSDTE
+210eDC*                    Z-ADDPTSTIM    LBSTIM
+210eMCSR                   Z-ADDTODAY     LBSDTE
+210eMCSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+213 AC*
+213 AC*   Add transaction number to order detail transaction file.
+213 AC*
+213 ACSR                   EXSR WRTODT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FLOOR   Process normal floor picks.
+     C*
+     C*    Note: There is a chance that there will not be enough stock
+     C*          in the slots to fulfill what was generally allocated.
+     C*          This would only occur if the ITEMQTY totals do not
+     C*          match the slot totals.  Also, now is the time for all
+     C*          good cartons to be broken down if necessary. For PIR
+     C*          items these checks were done during allocation.
+     C*
+     C*          Dummy fixed labels are created in OR520 for pallets
+     C*          that don't contain any fixed items. The item number
+     C*          of the label is *PIRPICK. This allows us to update
+     C*          this pallet correctly with the proper label number.
+     C*
+     CSR         FLOOR     BEGSR
+     C*
+     C*   See if we should get new tran# and/or pallet #.
+     C*
+     CSR                   SELEC
+     CSR         FIRST     WHEQ *ON
+     CSR         LBWHDP    ORNE LSTWDP
+209 ACSR                   EXSR GETOPT
+     CSR                   EXSR NEWTRN
+     CSR                   EXSR NEWPAL
+    DC*                    EXSR UPDPIR
+     CSR                   MOVE *OFF      FIRST
+     CSR                   MOVE LBWHDP    LSTWDP
+     CSR                   Z-ADDLBPAL#    LSTPAL
+     CSR                   MOVE 'FP'      CURTYP
+     C*
+     CSR         LBPAL#    WHNE LSTPAL
+     CSR                   EXSR NEWPAL
+    DC*                    EXSR UPDPIR
+     CSR                   Z-ADDLBPAL#    LSTPAL
+     C*
+     CSR                   ENDSL
+    AC*
+    AC*   Skip over picking logic for special *PIRPICK labels.
+    AC*
+    AC           LBITEM    CABEQ'*PIRPICK'UPDLBL
+     C*
+     C*   Get quantities for pick slot.
+     C*
+     CSR                   EXSR AVAIL
+     C*
+     C*   Loop until pick slot has enough stock in it or we run out
+     C*     of reserve stock trying to do a replenishment.
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     C*
+     C*      Breakdown carton if necessary.
+     C*
+     CSR                   SELEC
+     C*
+     C*        Breakdown 1 quantity.
+     C*
+     CSR         LBUTYP    WHEQ '1'
+210 DC*R         LBQALC    DOWGESTOCK2
+210 MCSR         LBQALC    DOWGTSTOCK2
+     CSR         STOCK1    ANDGT0
+     CSR                   EXSR GETITM
+     CSR         ITUMQ2    IFLE 0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   SUB  1         STOCK1
+     CSR                   ADD  ITUMQ2    STOCK2
+210 ACSR                   SUB  1         SLSTK1
+210 ACSR                   ADD  ITUMQ2    SLSTK2
+     CSR                   ENDDO
+     C*
+     C*        Breakdown 2 quantity.
+     C*
+     CSR         LBUTYP    WHEQ '2'
+210 DC*R         LBQALC    DOWGESTOCK3
+210 MCSR         LBQALC    DOWGTSTOCK3
+     CSR         STOCK1    IFLE 0
+     CSR         STOCK2    ANDLE0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   EXSR GETITM
+     CSR         ITUMQ2    IFLE 0
+     CSR         ITUMQ3    ORLE 0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR         STOCK2    IFGT 0
+     CSR                   SUB  1         STOCK2
+     CSR                   ADD  ITUMQ3    STOCK3
+210 ACSR                   SUB  1         SLSTK2
+210 ACSR                   ADD  ITUMQ3    SLSTK3
+     CSR                   ELSE
+     CSR                   SUB  1         STOCK1
+     CSR                   ADD  ITUMQ2    STOCK2
+210 ACSR                   SUB  1         SLSTK1
+210 ACSR                   ADD  ITUMQ2    SLSTK2
+     C*
+     CSR                   SUB  1         STOCK2
+     CSR                   ADD  ITUMQ3    STOCK3
+210 ACSR                   SUB  1         SLSTK2
+210 ACSR                   ADD  ITUMQ3    SLSTK3
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSL
+     C*
+     C*      If we have enough stock then get out of loop.
+     C*
+     CSR         LBUTYP    IFEQ 'N'
+     CSR         LBQALC    ANDLESTOCK1
+     CSR         LBUTYP    OREQ '1'
+     CSR         LBQALC    ANDLESTOCK2
+     CSR         LBUTYP    OREQ '2'
+     CSR         LBQALC    ANDLESTOCK3
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*      Otherwise, try to replenish slot.
+     C*
+210 ACSR                   EXSR GETITM
+     CSR                   CALL 'OR532'
+     CSR                   PARM           $PBAT
+     CSR                   PARM           $PWHSE
+     CSR                   PARM           $PRTE
+     CSR                   PARM           LBITEM
+210 DC*                    PARM           LBUCOD
+210 DC*                    PARM           LBUCUB
+210 DC*                    PARM           LBUWGT
+210 MCSR                   PARM           ITUM1
+210 MCSR                   PARM           ITCUBE
+210 MCSR                   PARM           ITSWGT
+     CSR                   PARM           CURTRN
+     CSR                   PARM           LBWHDP
+     CSR                   PARM           LBAISL
+     CSR                   PARM           LBLOC
+     CSR                   PARM           LBRLVL
+     CSR                   PARM           LBHAND
+     CSR                   PARM           LBDISP
+     CSR                   PARM 0         $LQTY   70
+407 ACSR                   PARM           $LENTD  80
+407 ACSR                   PARM           $LEXPD  80
+     CSR                   PARM ' '       $LRTN   8
+     C*
+     C*      If nothing was replenished then get out of loop.
+     C*
+     CSR         $LQTY     IFEQ 0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*      Otherwise, update stock qty and repeat loop.
+     C*
+     CSR                   ADD  $LQTY     STOCK1
+     CSR                   ADD  $LQTY     SLRCV1
+407  CSR                   Z-ADD$LENTD    SLENTD
+407  CSR                   Z-ADD$LEXPD    SLEXPD
+     C*
+     CSR                   ENDDO
+     C*
+     C*  Update slot record.
+     C*
+     C*    If there isn't enough stock on hand then reduce the
+     C*    slot allocation by the qty that was allocated but only
+     C*    pick the qty that is on hand.
+     C*
+     CSR                   SELEC
+     CSR         LBUTYP    WHEQ 'N'
+     CSR                   SUB  LBQALC    SLALC1
+     CSR         SLALC1    IFLT 0
+     CSR                   Z-ADD0         SLALC1
+     CSR                   ENDIF
+     CSR                   Z-ADDLBQALC    LBQPCK
+     CSR         LBQALC    IFGT STOCK1
+     CSR                   Z-ADDSTOCK1    PICKED
+     CSR                   MOVE MSG,3     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   Z-ADDSTOCK1    LBQPCK
+     CSR         LBQPCK    MULT LBUCUB    LBCUBE
+     CSR         LBQPCK    MULT LBUWGT    LBSWGT
+     CSR         LBQALC    SUB  LBQPCK    DIFF1
+     CSR                   Z-ADD0         DIFF2
+     CSR                   Z-ADD0         DIFF3
+     CSR                   EXSR UNALOC
+     CSR                   ENDIF
+     CSR                   ADD  LBQPCK    SLPCK1
+     C*
+     CSR         LBUTYP    WHEQ '1'
+     CSR                   SUB  LBQALC    SLALC2
+     CSR         SLALC2    IFLT 0
+     CSR                   Z-ADD0         SLALC2
+     CSR                   ENDIF
+     CSR                   Z-ADDLBQALC    LBQPCK
+     CSR         LBQALC    IFGT STOCK2
+     CSR                   Z-ADDSTOCK2    PICKED
+     CSR                   MOVE MSG,3     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   Z-ADDSTOCK2    LBQPCK
+     CSR         LBQPCK    MULT LBUCUB    LBCUBE
+     CSR         LBQPCK    MULT LBUWGT    LBSWGT
+     CSR                   Z-ADD0         DIFF1
+     CSR         LBQALC    SUB  LBQPCK    DIFF2
+     CSR                   Z-ADD0         DIFF3
+     CSR                   EXSR UNALOC
+     CSR                   ENDIF
+     CSR                   ADD  LBQPCK    SLPCK2
+     C*
+     CSR         LBUTYP    WHEQ '2'
+     CSR                   SUB  LBQALC    SLALC3
+     CSR         SLALC3    IFLT 0
+     CSR                   Z-ADD0         SLALC3
+     CSR                   ENDIF
+     CSR                   Z-ADDLBQALC    LBQPCK
+     CSR         LBQALC    IFGT STOCK3
+     CSR                   Z-ADDSTOCK3    PICKED
+     CSR                   MOVE MSG,3     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   Z-ADDSTOCK3    LBQPCK
+     CSR         LBQPCK    MULT LBUCUB    LBCUBE
+     CSR         LBQPCK    MULT LBUWGT    LBSWGT
+     CSR                   Z-ADD0         DIFF1
+     CSR                   Z-ADD0         DIFF2
+     CSR         LBQALC    SUB  LBQPCK    DIFF3
+     CSR                   EXSR UNALOC
+     CSR                   ENDIF
+     CSR                   ADD  LBQPCK    SLPCK3
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   UPDATSLREC
+     C*
+     C*  Update label record.
+     C*
+    ACSR         UPDLBL    TAG
+     C*
+     CSR                   Z-ADDCURTRN    LBTRN#
+    DC*                    Z-ADDCURPAL    LBPAL#
+     CSR         LBITEM    IFNE '*PIRPICK'
+     CSR                   MOVE 'P'       LBSTAT
+     CSR                   ENDIF
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+213 AC*
+213 AC*   Add transaction number to order detail transaction file.
+213 AC*
+213 ACSR                   EXSR WRTODT
+     C*
+     C*  Update transaction totals.
+     C*
+     CSR                   ADD  LBCUBE    TTLCUB
+     CSR                   ADD  LBSWGT    TTLWGT
+     CSR                   ADD  LBQPCK    TTLPCS
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FLOORS  Process special floor picks.
+     C*
+     C*    Note: This type of pick is similar to a PIR pick.
+     C*
+     CSR         FLOORS    BEGSR
+     C*
+     C*   See if we should get new tran# and/or pallet #.
+     C*
+     CSR                   SELEC
+     CSR         FIRST     WHEQ *ON
+     CSR         LBWHDP    ORNE LSTWDP
+209 ACSR                   EXSR GETOPT
+     CSR                   EXSR NEWTRN
+     CSR                   EXSR NEWPAL
+     CSR                   MOVE *OFF      FIRST
+     CSR                   MOVE LBWHDP    LSTWDP
+     CSR                   Z-ADDLBPAL#    LSTPAL
+     CSR                   MOVE 'FP'      CURTYP
+     C*
+     CSR         LBPAL#    WHNE LSTPAL
+     CSR                   EXSR NEWPAL
+     CSR                   Z-ADDLBPAL#    LSTPAL
+     C*
+     CSR                   ENDSL
+     C*
+     C*     Update slot record.
+     C*
+     C*       Note: With special orders the allocation and breakdown
+     C*             checks were done at allocation time.
+     C*
+     CSR                   SELEC
+     CSR         LBUTYP    WHEQ 'N'
+     CSR                   SUB  LBQALC    SLALC1
+     CSR         SLALC1    IFLT 0
+     CSR                   Z-ADD0         SLALC1
+     CSR                   ENDIF
+     CSR                   ADD  LBQALC    SLPCK1
+     C*
+     CSR         LBUTYP    WHEQ '1'
+     CSR                   SUB  LBQALC    SLALC2
+     CSR         SLALC2    IFLT 0
+     CSR                   Z-ADD0         SLALC2
+     CSR                   ENDIF
+     CSR                   ADD  LBQALC    SLPCK2
+     C*
+     CSR         LBUTYP    WHEQ '2'
+     CSR                   SUB  LBQALC    SLALC3
+     CSR         SLALC3    IFLT 0
+     CSR                   Z-ADD0         SLALC3
+     CSR                   ENDIF
+     CSR                   ADD  LBQALC    SLPCK3
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   UPDATSLREC
+     C*
+     C*     Update label record.
+     C*
+     CSR                   Z-ADDLBQALC    LBQPCK
+     CSR                   Z-ADDCURTRN    LBTRN#
+    DC*                    Z-ADDCURPAL    LBPAL#
+     CSR                   MOVE 'P'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+213 AC*
+213 AC*   Add transaction number to order detail transaction file.
+213 AC*
+213 ACSR                   EXSR WRTODT
+     C*
+     C*     Update transaction totals.
+     C*
+     CSR                   ADD  LBCUBE    TTLCUB
+     CSR                   ADD  LBSWGT    TTLWGT
+     CSR                   ADD  LBQPCK    TTLPCS
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETITM  Get item record.
+     C*
+     CSR         GETITM    BEGSR
+     C*
+     CSR         LBITEM    IFNE LSTITM
+     CSR         KEYIT     CHAINPIRITEM              78
+     CSR         *IN78     IFEQ *ON
+     CSR                   Z-ADD0         ITUMQ2
+     CSR                   Z-ADD0         ITUMQ3
+     CSR                   ENDIF
+     CSR                   MOVE LBITEM    LSTITM
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETOPT  Get picking options.
+     C*
+     CSR         GETOPT    BEGSR
+209 AC*
+209 AC*   Go through data structure to find options for department.
+209 AC*   If department hasn't changed then there is nothing to do.
+209 AC*
+209 ACSR         LBWHDP    IFNE #DWHDP
+209 ACSR         1         DO   LSTOPT    XOPT    20
+209 ACSR         XOPT      OCUR OPTS
+209 ACSR         #DWHDP    IFEQ LBWHDP
+209 ACSR                   LEAVE
+209 ACSR                   ENDIF
+209 ACSR                   ENDDO
+209 ACSR                   ENDIF
+209 DC*
+209 DC*   First get options from options file.
+209 DC*
+209 DC*                    MOVE '*PICK   'OPCODE
+209 DC*          KEYOP     CHAINOPTIONS              79
+209 DC*          *IN79     IFEQ *ON
+209 DC*                    Z-ADD0         OPFPAL
+209 DC*                    ENDIF
+209 DC*
+209 DC*   Then see if there are any overrides for the route.
+209 DC*
+209 DC*          KEYRO     CHAINRTREC                79
+209 DC*          *IN79     IFEQ *ON
+209 DC*                    MOVE OPDATA    RTDATA
+209 DC*                    ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  NEWPAL   Get new pallet number.
+     C*
+     CSR         NEWPAL    BEGSR
+     C*
+     C*  Increment pallet count.
+     C*
+     CSR                   ADD  1         PALCNT
+     C*
+     C*  Start new transaction if we exceed the pallets per pass.
+     C*
+209 DC*          PALCNT    IFGT RTFPAL
+209 MCSR         PALCNT    IFGT #DFPAL
+     CSR                   EXSR NEWTRN
+     CSR                   Z-ADD1         PALCNT
+     CSR                   ENDIF
+     C*
+     C*  Get new pallet number.
+     C*
+    DC*                    CALL 'PIRPAL#'
+    DC*                    PARM           CURPAL
+    ACSR                   Z-ADDLBPAL#    CURPAL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  NEWTRN   Get new transaction number.
+     C*
+     CSR         NEWTRN    BEGSR
+     C*
+     C*  Write out current transaction.
+     C*
+     CSR         CURTYP    IFNE *BLANKS
+     CSR                   EXSR WRTTRN
+     CSR                   ENDIF
+     C*
+     C*  Get new transaction number.
+     C*
+     CSR                   CALL 'PIRTRN#'
+     CSR                   PARM           CURTRN
+     C*
+     C*  Clear pallet count for transaction.
+     C*
+     CSR                   Z-ADD0         PALCNT
+     C*
+     C*  Inizialize transaction totals.
+     C*
+     CSR                   Z-ADD0         TTLCUB
+     CSR                   Z-ADD0         TTLWGT
+     CSR                   Z-ADD0         TTLPCS
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PCKFIX  Pick items in fixed section.
+     C*
+     CSR         PCKFIX    BEGSR
+     C*
+     CSR                   MOVE *ON       FIRST   1
+     CSR                   MOVE *BLANKS   LSTITM
+     CSR                   Z-ADD0         CURTRN
+     CSR                   Z-ADD0         CURPAL
+210eDC*                    MOVE *BLANKS   CURTYP
+210eMCSR                   MOVE *BLANKS   CURTYP  2
+     C*
+     C*  Loop through fixed labels for route.
+     C*
+     CSR                   MOVE 'F'       KYSTYP
+     CSR         KEYLB2    SETLLLABEL2
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     C*
+     CSR         KEYLB2    READELABEL2                   79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Ignore labels that have already been picked.
+     C*
+     CSR         LBSTAT    IFEQ 'P'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Get slot record.
+     C*
+     CSR         LBITEM    IFNE '*PIRPICK'
+     CSR                   Z-ADD0         PICKED  50
+     CSR         KEYSL2    CHAINSLOT2                7778
+     CSR         *IN77     IFEQ *ON
+     CSR                   MOVE MSG,1     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ITER
+     CSR                   ENDIF
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE MSG,2     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ITER
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*     Treat bulk picks and normal picks differently
+     C*
+     CSR                   SELEC
+     CSR         LBTYPE    WHEQ 'B'
+     CSR                   EXSR BULK
+     CSR         LBTYPE    WHEQ 'O'
+     CSR         LBSPCL    ANDEQ*BLANKS
+     CSR                   EXSR FLOOR
+     CSR         LBTYPE    WHEQ 'O'
+     CSR         LBSPCL    ANDNE*BLANKS
+     CSR                   EXSR FLOORS
+     CSR                   ENDSL
+     C*
+     CSR                   ENDDO
+     C*
+     CSR         CURTYP    IFNE *BLANKS
+     CSR                   EXSR WRTTRN
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PCKPIR  Pick items in PIR section.
+     C*
+     CSR         PCKPIR    BEGSR
+     C*
+     CSR                   MOVE *ON       FIRST
+     CSR                   Z-ADD0         CURTRN
+     CSR                   Z-ADD0         CURPAL
+     CSR                   MOVE *BLANKS   CURTYP
+     C*
+     C*  Loop through PIR labels for route.
+     C*
+     CSR                   MOVE 'P'       KYSTYP
+     CSR         KEYLB2    SETLLLABEL2
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     C*
+     CSR         KEYLB2    READELABEL2                   79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Ignore labels that have already been picked.
+     C*
+     CSR         LBSTAT    IFEQ 'P'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Get slot record.
+     C*
+     CSR         KEYSL2    CHAINSLOT2                7778
+     CSR         *IN77     IFEQ *ON
+     CSR                   MOVE MSG,1     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ITER
+     CSR                   ENDIF
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE MSG,2     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     See if we should get a new tran#.
+     C*
+     CSR         FIRST     IFEQ *ON
+     CSR         LBPAL#    ORNE LSTPAL
+     CSR         LBWHDP    ORNE LSTWDP
+209 ACSR                   EXSR GETOPT
+     CSR                   ADD  1         CURPAL
+     CSR                   EXSR NEWTRN
+     CSR                   MOVE 'PP'      CURTYP
+     CSR                   Z-ADDLBPAL#    LSTPAL
+     CSR                   MOVE LBWHDP    LSTWDP
+     CSR                   MOVE *OFF      FIRST
+     CSR                   ENDIF
+     C*
+     C*     Update slot record.
+     C*
+     C*       Note: With PIR the allocation and breakdown checks were
+     C*             done at allocation time.
+     C*
+     CSR                   SELEC
+     CSR         LBUTYP    WHEQ 'N'
+     CSR                   SUB  LBQALC    SLALC1
+     CSR         SLALC1    IFLT 0
+     CSR                   Z-ADD0         SLALC1
+     CSR                   ENDIF
+     CSR                   ADD  LBQALC    SLPCK1
+     C*
+     CSR         LBUTYP    WHEQ '1'
+     CSR                   SUB  LBQALC    SLALC2
+     CSR         SLALC2    IFLT 0
+     CSR                   Z-ADD0         SLALC2
+     CSR                   ENDIF
+     CSR                   ADD  LBQALC    SLPCK2
+     C*
+     CSR         LBUTYP    WHEQ '2'
+     CSR                   SUB  LBQALC    SLALC3
+     CSR         SLALC3    IFLT 0
+     CSR                   Z-ADD0         SLALC3
+     CSR                   ENDIF
+     CSR                   ADD  LBQALC    SLPCK3
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   UPDATSLREC
+     C*
+     C*     Update label record.
+     C*
+     CSR                   Z-ADDLBQALC    LBQPCK
+     CSR                   Z-ADDCURTRN    LBTRN#
+    DC*                    Z-ADDCURPAL    LBPAL#
+     CSR                   MOVE 'P'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+     CSR                   UPDATLBREC
+213 AC*
+213 AC*   Add transaction number to order detail transaction file.
+213 AC*
+213 ACSR                   EXSR WRTODT
+     C*
+     C*     Update transaction totals.
+     C*
+     CSR                   ADD  LBCUBE    TTLCUB
+     CSR                   ADD  LBSWGT    TTLWGT
+     CSR                   ADD  LBQPCK    TTLPCS
+     C*
+     CSR                   ENDDO
+     C*
+     CSR         CURTYP    IFNE *BLANKS
+     CSR                   EXSR WRTTRN
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTERR  Print error exception.
+     C*
+     CSR         PRTERR    BEGSR
+     C*
+     C*  See if we should printer header.
+     C*
+     CSR         PRFLAG    IFNE *ON
+     CSR         *IN90     OREQ *ON
+     CSR                   WRITEHEAD1
+     CSR         *IN90     IFEQ *ON
+     CSR                   WRITEHEAD2
+     CSR                   END
+     CSR                   WRITECOLUMNS
+     CSR                   MOVE *ON       PRFLAG
+     CSR                   MOVE *OFF      *IN90
+     CSR                   END
+     C*
+     C*   Print detail line.
+     C*
+     CSR                   WRITEDETAIL1
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UNALOC  Unallocate quantity from ITEMQTY file.
+     C*
+     CSR         UNALOC    BEGSR
+     C*
+     CSR                   MOVE '*UNALLOC'$ACMD
+     CSR                   MOVE #PROG     $APRG
+     CSR                   MOVE '*BATCH  '$ATYPE
+     CSR                   Z-ADD$PWHSE    $AWHSE
+    DC*                    MOVE ODITEM    $AITEM
+    MCSR                   MOVE LBITEM    $AITEM
+     CSR                   Z-ADDDIFF1     $AQTY1
+     CSR                   Z-ADDDIFF2     $AQTY2
+     CSR                   Z-ADDDIFF3     $AQTY3
+     C*
+     CSR                   CALL 'ADJQTY'
+     CSR                   PARM           $ACMD   8
+     CSR                   PARM           $APRG  10
+     CSR                   PARM           $ATYPE  8
+     CSR                   PARM           $AWHSE  30
+     CSR                   PARM           $AITEM 15
+     CSR                   PARM           $AQTY1  70
+     CSR                   PARM           $AQTY2  70
+     CSR                   PARM           $AQTY3  70
+     CSR                   PARM           $ARTQ1  70
+     CSR                   PARM           $ARTQ2  70
+     CSR                   PARM           $ARTQ3  70
+     CSR                   PARM           $ARTN   8
+     CSR                   PARM           $AERM
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UPDPIR  Update corresponding PIR records with new pallet.
+     C*
+     CSR         UPDPIR    BEGSR
+     C*
+     C*   Loop through PIR labels for stop.
+     C*
+     CSR                   MOVE 'P'       K6STYP
+     CSR                   MOVE 'O'       K6TYPE
+     CSR         KEYLB6    SETLLLABEL6
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYLB6    READELABEL6                   77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   Z-ADDCURPAL    L6CTR#
+     CSR                   UPDATL6REC
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+213 AC*----------------------------------------------------------------
+213 AC*
+213 AC*  WRTODT  Write out order detail transaction record.
+213 AC*
+213 ACSR         WRTODT    BEGSR
+213 ACSR                   Z-ADDLBWHSE    OTWHSE
+213 ACSR                   Z-ADDLBORD     OTORD
+213 ACSR                   Z-ADDLBSEQ     OTSEQ
+213 ACSR                   MOVE LBITEM    OTITEM
+213 ACSR                   Z-ADDLBTRN#    OTTRN#
+417aACSR                   Z-ADD0         OTEMP#
+417aACSR                   Z-ADD0         OTPCK1
+417aACSR                   Z-ADD0         OTPCK2
+417aACSR                   Z-ADD0         OTPCK3
+213 ACSR                   WRITEOTREC                  49
+213 AC*
+213 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  WRTTRN  Write out current transaction.
+     C*
+     CSR         WRTTRN    BEGSR
+210eDC*R                   Z-ADDCURTRN    PTTRN#
+210eDC*R                   MOVE CURTYP    PTTYPE
+210eDC*R                   Z-ADDTTLCUB    PTCUBE
+210eDC*R                   Z-ADDTTLWGT    PTSWGT
+210eDC*R                   Z-ADDTTLPCS    PTPCS
+210eDC*R                   Z-ADDTODAY     PTSDTE
+210eDC*R                   TIME           PTSTIM
+210eDC*R                   Z-ADD0         PTEDTE
+210eDC*R                   Z-ADD0         PTETIM
+210eDC*                    MOVE $PRTE     PTRTE
+210eDC*                    WRITEPTREC
+210eAC*
+210eACSR                   SELEC
+210eACSR         CURTYP    WHEQ 'PP'
+210eACSR                   MOVE 'PIR   '  @PTASK
+210eACSR                   MOVE 'P'       @PSTYP
+210eACSR                   OTHER
+210eACSR                   MOVE 'FIXED '  @PTASK
+210eACSR                   MOVE 'F'       @PSTYP
+210eACSR                   ENDSL
+210eAC*
+210eACSR                   CALL @ADDTR
+218 ACSR                   PARM '*CREATE '@PCMD   8
+210eACSR                   PARM           #JOB
+210eACSR                   PARM CURTRN    @PTRN#  70
+210eACSR                   PARM           @PTASK  6
+210eACSR                   PARM $PWHSE    @PWHSE  30
+210eACSR                   PARM LSTWDP    @PWHDP  5
+210eACSR                   PARM           @PSTYP  1
+210eACSR                   PARM TTLCUB    @PCUBE  93
+210eACSR                   PARM TTLWGT    @PSWGT  92
+210eACSR                   PARM TTLPCS    @PPCS   50
+210eACSR                   PARM 0         @PAISL  50
+210eACSR                   PARM 0         @PQTY1  50
+210eACSR                   PARM 0         @PQTY2  50
+210eACSR                   PARM 0         @PQTY3  50
+210eACSR                   PARM ' '       @PRTE   5
+210eACSR                   PARM $PRTE     @PPO    9
+213 ACSR                   PARM 'S'       @PGRP1  1
+213 ACSR                   PARM $POTYP    @PGRP2  1
+210eACSR                   PARM ' '       @PRTN   8
+210eACSR                   PARM ' '       @PMSG   4
+210eAC*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**   Error messages
+Slot does not exist
+Slot record was locked
+Not enough stock available

@@ -1,0 +1,416 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  II290CL   Import FTP item update 4                               */
+/*  23 February 2007                                                 */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*  Notes:                                                           */
+/*    Uses IMPFITM4 file for 4.16 version of ITEMMSC                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*                                                                   */
+/*   02/23/07  DAS  5.10                                             */
+/*     - Created.                                                    */
+/*                                                                   */
+/*   03/19/13  MLB  6.50                                             */
+/*     - Fix: Revised pgm to add FRCRATIO(1) to PIRITEM. Was causing */
+/*       false errors that a parent item didn't exist when it was    */
+/*       sent in the import file and processed.                      */
+/*                                                                   */
+/*   09/18/13  RTR  6.50b                                            */
+/*     - Enh: Adding debug option to write rec to BFCLOG             */
+/*                                                                   */
+/*   07/12/16  RTR  7.00a                                            */
+/*     - Enh: Save member as 'LAST' for debugging.                   */
+/*   07/28/16  RTR  7.00b                                            */
+/*      - Added check for records in members before processing.      */
+/*        If no records, remove members, send message and exit.      */
+/*                                                                   */
+/*   11/12/18  MLB  7.20                                             */
+/*     - Fix: Revised pgm to add MONMSG to CPYF to mbr(LAST) when    */
+/*       empty member is sent from Host.                             */
+/*                                                                   */
+/*   09/19/18  RTR  7.20a                                            */
+/*     - Enh: Added staging conversion program for *ITM4STF          */
+/*       and *ITM4STP.                                               */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &CMD   -  *ITM4FUL - Clear all item files.                     */
+/*           -  *ITM4PAR - No item files are cleared. Only items     */
+/*                         sent in file are processed and updated.   */
+/*           -  *ITEM4   - Same as *ITM4PAR.                         */
+/*    &MBR   -  Member to create. Must start with alpha character.   */
+/*    &RUN   -  *INTER  Run interactively                            */
+/*              *JOBQ   Run on Jobq                                  */
+/*    &OUTQ  -  Printer output queue (Default is *JOB)               */
+/*    &FORM  -  Printer form (Default is *STD)                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  FTP command sequence                                             */
+/*                                                                   */
+/*    PUT localitem PIRFTPF/IMPFITM4.N123456789                      */
+/*    PUT localitemM PIRFTPF/IMPFITMM.N123456789             (510 A) */
+/*    QUOTE RCMD PIRFTP/FTPLIBL *PROD                                */
+/*    QUOTE RCMD II290CL (I123456789 *INTER *JOB *STD)               */
+/*                                                                   */
+/*     where I123456789 is the unique member name                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Member name notes                                                */
+/*                                                                   */
+/*   - A member should only contain item upates for a single         */
+/*     warehouse.                                                    */
+/*                                                                   */
+/*   - Member name must be unique for each PUT operation.  If not,   */
+/*     PUT will delete any existing information and replace it       */
+/*     with the new information.                                     */
+/*                                                                   */
+/*   - The first character of the member name must be an alpha       */
+/*     character.  It is suggested that 'I' be used for the          */
+/*     item updates.                                                 */
+/*                                                                   */
+/*   - Do not use date and/or time to make the member name unique.   */
+/*     There is always a possibility that two terminals processing   */
+/*     item updates will generate the same date/time.                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*   FTP items are sent into a special FTP import file.  Unlike     */
+/*   the normal import where everything goes into a single member,   */
+/*   the FTP import files contain multiple members.  The member      */
+/*   that is used for a particular session is sent in as a           */
+/*   parameter.                                                      */
+/*                                                                   */
+/*   This is designed to be called from the command line or as a     */
+/*   remote command using the FTP Quote command. When called from    */
+/*   the command line the user will be prompted for the necessary    */
+/*   parameters.  When called as a remote command, the necessary     */
+/*   parameters are passed in.                                       */
+/*                                                                   */
+/*   Normally this program is called as a remote FTP command after   */
+/*   the data has been sent.  The option to call this from the       */
+/*   command line is mainly for testing and the instances when       */
+/*   something goes wrong with the import process.                   */
+/*                                                                   */
+/*   When called as a remote FTP command the job 'Type' is '0'       */
+/*   which means it looks like a batch job.                          */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ II290CL:    PGM        PARM(&CMD &MBR &RUN &OUTQ &FORM)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(II290CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(II290)
+
+  /* Report program and printer file names. */
+
+             DCL        VAR(&RPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(II295)
+             DCL        VAR(&STGPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(II296)                            /* (720aA) */
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) +
+                          VALUE(II295PR)
+
+  /* Informational messages */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Import FTP Item Updates')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Importing FTP Item Updates')
+
+  /* Message queues */
+
+             DCL        VAR(&FTPMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('IMPITEM')
+             DCL        VAR(&FTPERRMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('IMPITEMERR')
+
+  /* Import files */
+
+             DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) +
+                          VALUE('IMPFITM4')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&DEBUG)      TYPE(*CHAR) LEN(117)     /* (650bA) */
+             DCL        VAR(&DEBUGMSG)   TYPE(*CHAR) LEN(1024)    /* (650bA) */
+             DCL        VAR(&ERRCNT)     TYPE(*DEC)  LEN(1 0)
+             DCL        VAR(&EXIST)      TYPE(*LGL)
+             DCL        VAR(&FINISHED)   TYPE(*LGL)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&OUTQ)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&RECS)       TYPE(*DEC)  LEN(10 0)    /* (700bA) */
+             DCL        VAR(&RUN)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(15 5)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+             CHGVAR     VAR(&ERRCNT) VALUE(0)
+             CHGVAR     VAR(&EXIST) VALUE('0')
+             CHGVAR     VAR(&FINISHED) VALUE('0')
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Get debug flag */
+             CALL       PGM(UT881) PARM('000' '*DBGIMP' '001' '001' +
+                          &DEBUG)                                 /* (650bA) */
+             MONMSG     MSGID(CPF0000)                            /* (650bA) */
+
+/* If debug, log run */
+             IF         COND(&DEBUG *EQ 'Y') THEN(DO)             /* (650bA) */
+             CALL       PGM(WRTLOG) PARM(&SBMPGM &FILE &WORKINGMSG) +
+                                                                  /* (650bA) */
+             MONMSG     MSGID(CPF0000)                            /* (650bA) */
+             ENDDO                                                /* (650bA) */
+
+/* Get job information */
+
+             RTVJOBA    JOB(&JOB) USER(&USER) TYPE(&TYPE)
+
+/* See if user wants to run from Jobq. */
+
+             IF (&RUN = '*JOBQ') THEN(DO)
+               CHGVAR VAR(&RETURN) VALUE('*JOBQ')
+               GOTO CMDLBL(SKIP1)
+             ENDDO
+
+/* Don't get options if being run from JOBQ. */
+
+             IF ((&TYPE = '0') *OR (&MBR *NE ' ')) THEN(GOTO REPORT)
+
+/*  Get report options. */
+
+             CALL       PGM(&OPTPGM) PARM(&RETURN &CMD &MBR &OUTQ +
+                          &FORM)
+
+/*  See if user wants to proceed. */
+
+             IF         COND((&RETURN *EQ '*CANCEL') *OR (&RETURN +
+                          *EQ '*EXIT')) THEN(DO)
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+
+ SKIP1:
+
+/*  Make sure members exist                                          */
+
+             CHKOBJ     OBJ(&FILE) OBJTYPE(*FILE) MBR(&MBR)
+             CHGVAR     VAR(&EXIST) VALUE('1')
+
+/*  See if user wants to put report on JOBQ. */
+
+             IF (&RETURN *EQ '*JOBQ') THEN(DO)
+               SBMJOB  CMD(CALL PGM(&SBMPGM) PARM(&CMD &MBR '*JOBQ2' +
+                          &OUTQ &FORM)) JOB(&SBMPGM)
+               RMVMSG     CLEAR(*ALL)
+               CHGVAR  VAR(&FINISHED) VALUE('1')
+               GOTO    CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+ REPORT:
+
+/*  Make sure members exist                                          */
+
+             CHKOBJ     OBJ(&FILE) OBJTYPE(*FILE) MBR(&MBR)
+             CHGVAR     VAR(&EXIST) VALUE('1')
+
+/* If no records were sent, delete members and get out */         /* (700bA) */
+
+             RTVMBRD    FILE(&FILE) MBR(&MBR) NBRCURRCD(&RECS)    /* (700bA) */
+
+             IF         COND(&RECS = 0) THEN(DO)                  /* (700bA) */
+               RMVM       FILE(&FILE) MBR(&MBR)                   /* (700bA) */
+               MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (700bA) */
+               RMVM       FILE(IMPFITMM) MBR(&MBR)                /* (700bA) */
+               MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (700bA) */
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('No records sent from host, nothing done') +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+               GOTO       CMDLBL(BOTTOM)
+             ENDDO                                                /* (700bA) */
+
+/*  Make copy of member                                               700aA) */
+
+             CPYF       FROMFILE(&FILE) TOFILE(&FILE) FROMMBR(&MBR) +
+                          TOMBR(LAST) MBROPT(*REPLACE)
+             MONMSG     MSGID(CPF2816 CPF2817)                    /* (720 A) */
+
+/* Make sure &DEV and &FORM are not blank */
+
+               IF (&OUTQ = ' ') +
+                 THEN(CHGVAR VAR(&OUTQ) VALUE('*JOB'))
+               IF (&FORM = ' ') +
+                 THEN(CHGVAR VAR(&FORM) VALUE('*STD'))
+
+/* Clear any existing messages and display working message. */
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+/* Override printer file */
+
+             OVRPRTF    FILE(&PRTF) OUTQ(&OUTQ) FORMTYPE(&FORM)
+
+/* Override import files to correct member */
+
+             OVRDBF     FILE(&FILE) TOFILE(*FILE) MBR(&MBR)
+             OVRDBF     FILE(IMPFITMM) TOFILE(*FILE) MBR(&MBR)    /* (510 A) */
+
+/* Clear all item files. */
+
+          /* IF         COND(&CMD = '*ITM4FUL') THEN(DO)             (720aM) */
+             IF         COND(&CMD = '*ITM4FUL' *OR &CMD = +
+                          '*ITM4STF') THEN(DO)                    /* (720aM) */
+               CALL       PGM(II266)
+             ENDDO
+
+/* Import item updates. */
+
+             OVRDBF     FILE(PIRITEM) TOFILE(PIRITEM) FRCRATIO(1) /* (650 A) */
+
+          /* CALL PGM(&RPTPGM)                                    /* (720aD) */
+             CALL PGM(&STGPGM)                                    /* (720aM) */
+
+             CHGVAR     VAR(&FINISHED) VALUE('1')
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+
+/* If debug, leave member and messages */
+             IF         COND(&DEBUG *NE 'Y') THEN(DO)             /* (650bA) */
+             RMVM       FILE(&FILE) MBR(&MBR)
+             MONMSG     MSGID(CPF320A CPF3203 CPF3220 CPF3273 +
+                          CPF7301 CPF7310) /* Ignore not removed. */
+             RMVM       FILE(IMPFITMM) MBR(&MBR)                  /* (510 A) */
+             MONMSG     MSGID(CPF320A CPF3203 CPF3220 CPF3273 +
+                          CPF7301 CPF7310) /* Ignore not removed.    (510 A) */
+             RMVMSG     CLEAR(*ALL)
+             ENDDO                                                /* (650bA) */
+
+/*  Send 'Successful message */
+
+             IF COND(&FINISHED = '1') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import successful for' *BCAT &MBR +
+                          *TCAT '/' *CAT &RUN +
+                          *TCAT '/' *CAT &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+             ENDDO
+
+/* If debug, log run */
+             IF         COND(&DEBUG *EQ 'Y') THEN(DO)             /* (650bA) */
+             CHGVAR     VAR(&DEBUGMSG) VALUE('Import successful for' +
+                          *BCAT &MBR *TCAT '/' *CAT &RUN *TCAT '/' +
+                          *CAT &JOB *TCAT '/' *CAT &USER)         /* (650bA) */
+             CALL       PGM(WRTLOG) PARM(&SBMPGM &FILE &DEBUGMSG) +
+                                                                  /* (650bA) */
+             MONMSG     MSGID(CPF0000)                            /* (650bA) */
+             ENDDO                                                /* (650bA) */
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+
+             CHGVAR     VAR(&ERRCNT) VALUE(&ERRCNT + 1)
+             IF COND(&ERRCNT = 3) THEN(GOTO CMDLBL(BOTTOM))
+
+             IF COND(&FINISHED = '0') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import FAILED, see following +
+                          message(s):' *BCAT &MBR *TCAT '/' *CAT +
+                          &RUN *TCAT '/' *CAT +
+                          &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import FAILED, see following +
+                          message(s):' *BCAT &MBR *TCAT '/' *CAT +
+                          &RUN *TCAT '/' *CAT +
+                          &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPERRMSGQ) MSGTYPE(*INFO)
+/* If debug, log run */
+             IF         COND(&DEBUG *EQ 'Y') THEN(DO)             /* (650bA) */
+             CHGVAR     VAR(&DEBUGMSG) VALUE('Import FAILED, see +
+                          following message(s):' *BCAT &MBR *TCAT +
+                          '/' *CAT &RUN *TCAT '/' *CAT &JOB *TCAT +
+                          '/' *CAT &USER)                         /* (650bA) */
+             CALL       PGM(WRTLOG) PARM(&SBMPGM &FILE &DEBUGMSG) +
+                                                                  /* (650bA) */
+             MONMSG     MSGID(CPF0000)                            /* (650bA) */
+             ENDDO                                                /* (650bA) */
+
+             ENDDO
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+             IF COND(&TYPE = '1') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             ENDDO
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) TOMSGQ(&FTPMSGQ) MSGTYPE(*COMP)
+
+             IF COND(&FINISHED = '0') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) TOMSGQ(&FTPERRMSGQ) +
+                          MSGTYPE(*COMP)
+             ENDDO
+
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+ BOTTOM:
+
+               RCLRSC     LVL(*CALLER)
+
+/*  Send '*Escape' message to caller */
+
+             IF COND(&FINISHED = '0') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Error Occured Processing Member' +
+                          *BCAT &MBR) MSGTYPE(*ESCAPE)
+             ENDDO
+
+             ENDPGM

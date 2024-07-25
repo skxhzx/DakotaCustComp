@@ -1,0 +1,95 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  BFCUPDPRF  Builds revision file                                  */
+/*  16 May 2020                                                      */
+/*  Max Blacknik                                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    05/16/20  MLB  7.40                                            */
+/*      - Created.                                                   */
+/*    10/29/20  MLB  7.40a                                           */
+/*      - Enh: Revised pgm to add 3rd parm, &CURJOBD. This parm      */
+/*        will be used to update user profiles for only a single     */
+/*        warehouse. Or, *ALL/blanks can be passed in so that all    */
+/*        users matching that &CurLib value will be updated.         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions:                                         */
+/*                                                                   */
+/*    xx/xx/xx  xxx  xxx                                             */
+/*      -                                                            */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+             PGM        PARM(&CURLIB &NEWLIB &CURJOBD)            /* (740aM) */
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client ID's.    */                                           /* (740 A) */
+
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CURLIB)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&CURJOBD)    TYPE(*CHAR) LEN(10)      /* (740aA) */
+             DCL        VAR(&NEWLIB)     TYPE(*CHAR) LEN(10)
+             DCLF       FILE(QTEMP/USERS)                         /* (740 A) */
+
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+             DSPUSRPRF  USRPRF(*ALL) OUTPUT(*OUTFILE) +
+                          OUTFILE(QTEMP/USERS)
+             DSPUSRPRF  USRPRF(*ALL) OUTPUT(*OUTFILE) +
+                          OUTFILE(QTEMP/USERSBK)
+
+/*           Update Current JobD to *ALL when parm is blank.         (740aA) */
+             IF         COND(&CURJOBD = ' ') THEN(DO)             /* (740aA) */
+               CHGVAR     VAR(&CURJOBD) VALUE('*ALL')             /* (740aA) */
+             ENDDO                                                /* (740aA) */
+
+loop:
+             RCVF       DEV(*FILE)
+             MONMSG     MSGID(CPF0864) EXEC(GOTO CMDLBL(END))
+
+/*           Update Initial Menu to *LIBL.                           */
+             IF         COND(&UPINML *EQ &CURLIB) THEN(DO)
+               CHGUSRPRF  USRPRF(&UPUPRF) INLMNU(*LIBL/&UPINMN)
+             ENDDO
+
+/*           Update Job Description Library to New Library.          */
+             SELECT                                               /* (740aA) */
+             WHEN       COND(&CURJOBD = '*ALL') THEN(DO)          /* (740aA) */
+
+/*           Update Job Description Library for All Warehouses.      (740aA) */
+             IF         COND(&UPJBDL *EQ &CURLIB) THEN(DO)
+               CHGUSRPRF  USRPRF(&UPUPRF) JOBD(&NEWLIB/&UPJBDS)
+             ENDDO
+             ENDDO                                                /* (740aA) */
+
+/*           Update Job Description Library for One Warehouse.       (740aA) */
+             WHEN       COND(&CURJOBD *NE '*ALL' +
+                        *AND &CURJOBD > ' ') THEN(DO)             /* (740aA) */
+
+               IF         COND(&UPJBDS *EQ &CURJOBD +
+                          *AND &UPJBDL *EQ &CURLIB) THEN(DO)      /* (740aA) */
+                 CHGUSRPRF  USRPRF(&UPUPRF) JOBD(&NEWLIB/&UPJBDS) /* (740aA) */
+               ENDDO                                              /* (740aA) */
+             ENDDO                                                /* (740aA) */
+             ENDSELECT                                            /* (740aA) */
+
+             goto loop
+
+/*  Clean up before leaving */
+
+end:         RCLRSC     LVL(*CALLER)
+
+             ENDPGM

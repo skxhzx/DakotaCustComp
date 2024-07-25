@@ -1,0 +1,99 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  RH727CL   Export closed routes.                                  */
+/*  24 July 2017                                                     */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*  Revisions                                                        */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ RH727CL:    PGM        PARM(&WHSE &BATID)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(RH727CL)
+
+  /* Client ID's.                                                            */
+
+             DCL        VAR(&packers) TYPE(*CHAR) LEN(10) +
+                          VALUE(PACKERS)                          /* (PAK A) */
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&BATID)      TYPE(*CHAR) LEN(11)
+             DCL        VAR(&IFSPATH)    TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+             DCL        VAR(&client)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&clientloc)  TYPE(*CHAR) LEN(10)
+
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&QUOTE)      TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+ MAIN:
+
+/*  Get client code                                                          */
+
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)
+
+             DLTF       FILE(QTEMP/TEMPLBL)
+             MONMSG     MSGID(CPF0000)
+
+             CPYF       FROMFILE(EXPSPLBL) TOFILE(QTEMP/TEMPLBL) +
+                          MBROPT(*REPLACE) CRTFILE(*YES) +
+                          INCCHAR(LBEBATID 1 *EQ &BATID)
+
+             SELECT
+             WHEN       COND(&CLIENT *EQ 'PANOS') THEN(CHGVAR +
+                          VAR(&IFSPATH) VALUE('/Panos/Pick-' || +
+                          &BATID || '.csv'))
+             OTHERWISE  CMD(CHGVAR VAR(&IFSPATH) VALUE('/Pick-' || +
+                          &BATID || '.csv'))
+             ENDSELECT
+
+
+             CPYTOIMPF  FROMFILE(QTEMP/TEMPLBL) TOSTMF(&IFSPATH) +
+                          STMFCCSID(*PCASCII) STMFAUT(*INDIR) +
+                          RCDDLM(*CRLF) RMVBLANK(*TRAILING) +
+                          ADDCOLNAM(*SQL)
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+        /*   IF         COND(&SEV *LT 09) THEN(GOTO CMDLBL(NEXTMSG)) */
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

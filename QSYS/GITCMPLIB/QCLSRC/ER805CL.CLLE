@@ -1,0 +1,91 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  ER805CL   Export EPM Custom export trans data to CSV             */
+/*  January 10, 2020                                                 */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*  Revisions                                                        */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ ER805CL:    PGM        PARM(&WHSE &RUNDATE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client IDs.                                                     */
+
+             DCL        VAR(&PANOS) TYPE(*CHAR) LEN(10) +
+                          VALUE(PANOS)                            /* (PAN A) */
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&ACTION)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&BATID)      TYPE(*CHAR) LEN(11)
+             DCL        VAR(&IFSPATH)    TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             DCL        VAR(&RUNDATE)    TYPE(*CHAR) LEN(6)
+             DCL        VAR(&CLIENT)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&CLIENTLOC)  TYPE(*CHAR) LEN(10)
+
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+ MAIN:
+
+/*  Get client code                                                          */
+
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)
+
+             CLRPFM     FILE(ER805F)
+             CALL       PGM(ER805) PARM(&WHSE &RUNDATE)
+
+/*  Export file to IFS                                                       */
+               SELECT
+                WHEN       COND(&CLIENT *EQ &PANOS) THEN(CHGVAR +
+                           VAR(&IFSPATH) VALUE('/Panos/Tasks/Tasks-' || +
+                           &RUNDATE || '.csv'))
+                OTHERWISE  CMD(CHGVAR VAR(&IFSPATH) VALUE('/Tasks-' || +
+                           &RUNDATE || '.csv'))
+               ENDSELECT
+
+               CPYTOIMPF  FROMFILE(ER805F) TOSTMF(&IFSPATH) +
+                          STMFCCSID(*PCASCII) STMFAUT(*INDIR) +
+                          RCDDLM(*CRLF) RMVBLANK(*TRAILING) +
+                          ADDCOLNAM(*SQL)
+               MONMSG     MSGID(CPF0000)
+
+               GOTO       CMDLBL(GETOUT)
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

@@ -1,0 +1,417 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  IV520     Post inventory counts - Update warehouse counts
+     F*  05 March 1996
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+213 AF*    06/10/96  DAS
+     F*      - Added file EXPCNT.
+     F*      - Writing stock counts to EXPCNT.
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes
+     F*
+     F*    This program needs to be compiled with DEFER=*NO so the status
+     F*    messages can be displayed.
+     F*
+     F*    This program uses a revised method to display error messages.
+     F*    Instead of the program writting each message to the subfile
+     F*    using the message key the subfile has been revised to display
+     F*    all messages from the program message queue automatically.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  78        Chain indicator
+     F*  79        Chain indicator
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+DDD  F*V505FM CF  E                    WORKSTN                        UC
+DDD  F*NVSLOT IF  E           K        DISK
+     FPIRITEM1IF  E           K        DISK
+     FSLOT3   IF  E           K        DISK
+     FITEMQTYXUF  E           K        DISK                      A
+DDD  F*XPCNT  UF  E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                    P   1   20ERWHSE
+     I                                        3   7 ERWHDP
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *POSTINV - Posting inventory counts first time.
+     C*              *RESTART - Restarting abnormally ended batch.
+     C*      $PWHSE  Warehouse
+     C*      $PBAT   Batch number
+     C*      $PJOBQ  Running from JOBQ (Y,N)
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message sent to pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+DD   C*                    PARM           $PCMD   8
+DD   C*                    PARM           $PBAT   70
+DD   C                     PARM           XXWHSE  3
+DD   C*                    PARM           $PJOBQ  1
+DD   C*                    PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+AA   C                     Z-ADD2         $PWHSE  30
+DD   C*                    MOVE *BLANKS   $PRTN
+     C*
+     C*  Read item by item and update warehouse counts.
+     C*
+     C           KEYITW    SETLLPIRITEM1
+     C           FOREVR    DOUNEFOREVR
+     C*
+     C           KEYITW    READEPIRITEM1                 79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+DD   C*
+DD   C*    Make sure item's warehouse/dept exist in INVSLOT file.
+DD   C*    If not, skip items in that warehouse/dept.
+DD   C*    Keep user informed of warehouse/dept being worked on.
+DD   C*
+DD   C*          ITWHSE    IFNE LSTWHS
+DD   C*          ITWHDP    ORNE LSTWHD
+DD   C*          KEYIVS    SETLLINVSLOT                  50
+DD   C*          *IN50     IFEQ *OFF
+DD   C*          KEYIT1    SETLLPIRITEM1
+DD   C*                    ITER
+DD   C*                    ENDIF
+DD   C*                    Z-ADDITWHSE    ERWHSE
+DD   C*                    MOVE ITWHDP    ERWHDP
+DD   C*                    EXSR ZM21
+DD   C*                    EXSR ZMDMSG
+DD   C*                    EXSR ZMCPMQ
+DD   C*                    Z-ADDITWHSE    LSTWHS  30
+DD   C*                    MOVE ITWHDP    LSTWHD  5
+DD   C*                    ENDIF
+     C*
+     C*    Get ITEMQTY record.  Create it if it doesn't exist.
+     C*
+     C           KEYIQ     CHAINITEMQTYX             78
+     C           *IN78     IFEQ *ON
+     C                     CLEARIQREC
+     C                     Z-ADDITWHSE    IQWHSE
+     C                     MOVE ITITEM    IQITEM
+     C                     WRITEIQREC
+     C           KEYIQ     CHAINITEMQTYX             78
+     C           *IN78     IFEQ *ON
+     C                     ITER
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C*    Zero all warehouse quantities except transfer quantities.
+     C*
+     C                     CLEARIQSTK1
+     C                     CLEARIQSTK2
+     C                     CLEARIQSTK3
+     C                     CLEARIQALC1
+     C                     CLEARIQALC2
+     C                     CLEARIQALC3
+     C                     CLEARIQHLD1
+     C                     CLEARIQHLD2
+     C                     CLEARIQHLD3
+     C*
+     C*    Whip through slot records that contain item to get counts.
+     C*
+     C           KEYSL3    SETLLSLOT3
+     C           FOREVR    DOUNEFOREVR
+     C*
+     C           KEYSL3    READESLOT3                    77
+     C           *IN77     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*      Ignore slots with a status of 'V' or 'Z'.
+     C*
+     C           SLSTAT    IFEQ 'V'
+     C           SLSTAT    OREQ 'Z'
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*      Add slot stock and receive qtys to warehouse stock qty.
+     C*
+     C                     ADD  SLSTK1    IQSTK1
+     C                     ADD  SLSTK2    IQSTK2
+     C                     ADD  SLSTK3    IQSTK3
+     C                     ADD  SLRCV1    IQSTK1
+     C                     ADD  SLRCV2    IQSTK2
+     C                     ADD  SLRCV3    IQSTK3
+     C*
+     C*      Add slot allocated and pick qtys to warehouse alc qty.
+     C*
+     C                     ADD  SLALC1    IQALC1
+     C                     ADD  SLALC2    IQALC2
+     C                     ADD  SLALC3    IQALC3
+     C                     ADD  SLPCK1    IQALC1
+     C                     ADD  SLPCK2    IQALC2
+     C                     ADD  SLPCK3    IQALC3
+     C*
+     C*
+     C*      Add slot stock and receive qtys to warehouse hold qty
+     C*      for inactive slots.
+     C*
+     C           SLSTAT    IFNE 'A'
+     C                     ADD  SLSTK1    IQHLD1
+     C                     ADD  SLSTK2    IQHLD2
+     C                     ADD  SLSTK3    IQHLD3
+     C                     ADD  SLRCV1    IQHLD1
+     C                     ADD  SLRCV2    IQHLD2
+     C                     ADD  SLRCV3    IQHLD3
+     C                     ENDIF
+     C*
+     C                     ENDDO
+     C*
+     C*    After counts have been tallied from the slots try to up
+     C*    the breakdown quantities.
+     C*
+     C                     EXSR UPQTY
+DD  AC*
+DD  AC*     Add stock counts to export file.
+DD  AC*
+DD  AC*          KEYIQ     CHAINEXPCNT               77
+DD  AC*                    Z-ADDIQSTK1    CEQTY1
+DD  AC*                    Z-ADDIQSTK2    CEQTY2
+DD  AC*                    Z-ADDIQSTK3    CEQTY3
+DD  AC*                    Z-ADDCURDTE    CEDATE
+DD  AC*                    Z-ADDCURTIM    CETIME
+DD  AC*          *IN77     IFEQ *ON
+DD  AC*                    Z-ADDITWHSE    CEWHSE
+DD  AC*                    MOVE ITITEM    CEITEM
+DD  AC*                    WRITECEREC
+DD  AC*                    ELSE
+DD  AC*                    UPDATCEREC
+DD  AC*                    ENDIF
+     C*
+     C*     Finally, update the warehouse record.
+     C*
+     C                     UPDATIQREC
+     C*
+     C                     ENDDO
+     C*
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *ON       FOREVR  1
+DD   C*R                   MOVE #PROG     #PGMQ
+     C*
+     C*  Define keys.
+     C*
+     C*    PIRITEM file (Partial key)
+     C*
+     CSR         KEYITW    KLIST
+     CSR                   KFLD           $PWHSE
+     C*
+     C*    PIRITEM1 file
+     C*
+     CSR         *LIKE     DEFN ITITEM    HIVITM
+     CSR                   MOVE *HIVAL    HIVITM
+     CSR         KEYIT1    KLIST
+     CSR                   KFLD           ITWHSE
+     CSR                   KFLD           ITWHDP
+     CSR                   KFLD           HIVITM
+     C*
+     C*    INVSLOT file (Partial)
+     C*
+     CSR         KEYIVS    KLIST
+     CSR                   KFLD           ITWHSE
+     CSR                   KFLD           ITWHDP
+     C*
+     C*    ITEMQTY file
+     C*
+     CSR         KEYIQ     KLIST
+     CSR                   KFLD           ITWHSE
+     CSR                   KFLD           ITITEM
+     C*
+     C*    SLOT3 file (Partial key)
+     C*
+     CSR         KEYSL3    KLIST
+     CSR                   KFLD           ITWHSE
+     CSR                   KFLD           ITITEM
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    CURDTE  80
+     CSR                   TIME           CURTIM  60
+DD   C*
+DD   C*  Open workstation file if not on JOBQ.
+DD   C*
+DD   C*          $PJOBQ    IFNE 'Y'
+DD   C*                    OPEN IV505FM
+DD   C*                    ENDIF
+DD   C*
+DD   C*  Dummy read for compiler.
+DD   C*
+DD   C*R         1         IFNE 1
+DD   C*R                   READ IV505FM                  50
+DD   C*R                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UPQTY   Up breakdown quantities.
+     C*
+     CSR         UPQTY     BEGSR
+     C*
+     C*   Calculate available quantity (Taken from ADJQTY).
+     C*
+     C*      Normal quantity.
+     C*
+     CSR         *LIKE     DEFN IQSTK1    AVAIL1
+     CSR         IQSTK1    SUB  IQALC1    AVAIL1
+     CSR                   SUB  IQHLD1    AVAIL1
+     C*
+     C*      Breakdown 1 quantity.
+     C*
+     CSR         *LIKE     DEFN IQSTK2    AVAIL2
+     CSR         IQSTK2    SUB  IQALC2    AVAIL2
+     CSR                   SUB  IQHLD2    AVAIL2
+     C*
+     C*      Breakdown 2 quantity.
+     C*
+     CSR         *LIKE     DEFN IQSTK3    AVAIL3
+     CSR         IQSTK3    SUB  IQALC3    AVAIL3
+     CSR                   SUB  IQHLD3    AVAIL3
+     C*
+     C*      Make sure breakdown qty's are not greater than
+     C*        quantity in the unit of measure.
+     C*
+     CSR         AVAIL3    DOWGEITUMQ3
+     CSR         ITUMQ3    ANDNE0
+     CSR                   SUB  ITUMQ3    IQSTK3
+     CSR                   SUB  ITUMQ3    AVAIL3
+     CSR                   ADD  1         IQSTK2
+     CSR                   ADD  1         AVAIL2
+     CSR                   ENDDO
+     C*
+     CSR         AVAIL2    DOWGEITUMQ2
+     CSR         ITUMQ2    ANDNE0
+     CSR                   SUB  ITUMQ2    IQSTK2
+     CSR                   SUB  ITUMQ2    AVAIL2
+     CSR                   ADD  1         IQSTK1
+     CSR                   ADD  1         AVAIL1
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+DD   C*---------------------------------------------------------------
+DD   C*
+DD   C*  SUBROUTINE ZMxxxx  Control message display subfile
+DD   C*
+DD   C*    ZMCPMQ  Clear program message queue.
+DD   C*
+DD   C*R         ZMCPMQ    BEGSR
+DD   C*R                   MOVE '*CLEAR ' #MSGID  7
+DD   C*R                   MOVE '*NULL  ' #MSGTP  7
+DD   C*R                   EXSR ZMPMSG
+DD   C*R                   ENDSR
+DD   C*
+DD   C*    ZMDMSG  Display message record subfile
+DD   C*
+DD   C*R         ZMDMSG    BEGSR
+DD   C*R         $PJOBQ    IFNE 'Y'
+DD   C*R                   MOVE '1'       *IN97
+DD   C*R                   WRITEMSGCTL
+DD   C*R                   ENDIF
+DD   C*R                   ENDSR
+DD   C*
+DD   C*    ZMPMSG  Add message record to subfile
+DD   C*
+DD   C*R         ZMPMSG    BEGSR
+DD   C*R         $MSGF     IFEQ *BLANKS
+DD   C*R                   MOVE #MSGF     $MSGF  10
+DD   C*R                   END
+DD   C*R                   CALL 'PUTMSG'
+DD   C*R                   PARM           $MSGF
+DD   C*R                   PARM           #MSGID
+DD   C*R                   PARM           #MSGTP
+DD   C*R                   PARM           #MSGDT
+DD   C*R                   PARM           #PGMQ
+DD   C*R                   PARM           #MSGK
+DD   C*R                   MOVE *BLANKS   #MSGDT
+DD   C*R                   MOVE *BLANKS   $MSGF
+DD   C*R                   ENDSR
+DD   C*----------------------------------------------------------------
+DD   C*    ZMnnnn  Build and send message nnnn to this program
+DD   C*----------------------------------------------------------------
+DD   C*    IV52021  Updating slot records for whse/dept/section.
+DD   C*
+DD   C*R         ZM21      BEGSR
+DD   C*R                   MOVE 'IV52021' #MSGID
+DD   C*R                   MOVE '*DIAG  ' #MSGTP
+DD   C*R                   MOVEAERRMSG    $MD,1
+DD   C*R                   EXSR ZMPMSG
+DD   C*R                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*

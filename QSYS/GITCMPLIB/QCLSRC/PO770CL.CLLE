@@ -1,0 +1,153 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2014 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PO770CL   Export Closed P.O. Smartdock Appointments              */
+/*  27 June 2014                                                     */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    06/27/14  RTR  6.50                                            */
+/*      - Created from PO720CL.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions:                                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &WHSE   -  Warehouse                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ PO770CL:    PGM        PARM(&WHSE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(PO770CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(PO770)
+
+  /* FTP program. */
+
+             DCL        VAR(&FTPCL) TYPE(*CHAR) LEN(8) +
+                          VALUE(PO775CL)
+
+  /* Staging program. */
+
+             DCL        VAR(&STGCL) TYPE(*CHAR) LEN(10) +
+                          VALUE(PO775SCL)
+
+  /* Informational messages */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Export Smartdock Appts')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Exporting Smartdock Appts.')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&FTP)        TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Don't get options if being run from JOBQ. */
+
+             RTVJOBA    TYPE(&TYPE)
+             IF         COND(&TYPE = '0') THEN(GOTO CMDLBL(GETOUT))
+
+/*  Get report options. */
+
+             CALL       PGM(&OPTPGM) PARM(&RETURN &WHSE &FTP)
+
+/*  See if user wants to proceed. */
+
+             IF         COND((&RETURN *EQ '*CANCEL') *OR (&RETURN +
+                          *EQ '*EXIT')) THEN(DO)
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+
+/*  See if user wants to put report on JOBQ. */
+
+             IF (&RETURN *EQ '*JOBQ') THEN(DO)
+               SELECT
+       /*      FTP File Export method in use. */
+               WHEN (&FTP = 'Y') THEN(DO)
+                 SBMJOB  CMD(CALL PGM(&FTPCL) PARM(&WHSE)) JOB(&FTPCL)
+               ENDDO
+
+       /*      Staging File Export method in use. */
+               WHEN (&FTP = 'S') THEN(DO)
+                 SBMJOB  CMD(CALL PGM(&STGCL) PARM(&WHSE)) JOB(&STGCL)
+               Enddo
+               ENDSELECT
+               GOTO    CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+             MSGBFC     MESSAGE(&WORKINGMSG)
+             SELECT
+       /*    FTP File Export method in use. */
+             WHEN       COND(&FTP = 'Y') THEN(DO)
+               CALL PGM(&FTPCL) PARM(&WHSE)
+               GOTO GETOUT
+             ENDDO
+
+       /*    Staging File Export method in use. */
+             WHEN       COND(&FTP = 'S') THEN(DO)
+               CALL PGM(&STGCL) PARM(&WHSE)
+               GOTO GETOUT
+             ENDDO
+             ENDSELECT
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+        /*   IF         COND(&SEV *LT 09) THEN(GOTO CMDLBL(NEXTMSG)) */
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

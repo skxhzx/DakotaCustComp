@@ -1,0 +1,218 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1996 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W Roosevelt Rd.  #8-51
+     F*   West Chicago, IL 60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*
+     F*   Any changes made to this program, please check IV271 which
+     F*   is identical with the exception of no level check on LVL
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  IV271A    Assign inventory slots by slot.
+     F*  15 June 2007
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+510aAF*    06/15/07  RH    5.10
+     F*      - Created using IV121A
+510bAF*    06/19/07  RH    5.10b
+     F*      - Fix: Force to include handstack slots.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  78        Record locked.
+     F*  79        Not on file/End of file.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FINVSASN UP  E           K        DISK
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  Input record
+     I*
+     IIVGREC
+     I                                              IVGWHSL1
+     I                                              IVGWHDL1
+     I                                              IVGSTPL1
+     I                                              IVGASLL1
+     I                                              IVGSIDL1
+     I*                                             IVGLVLL1
+     I                                              IVGLOCL1
+     I                                              IVGLVLL1
+     I                                              IVGHNDL1
+     I*----------------------------------------------------------------
+     I*  Constants
+     I*
+     I              15                    C         @PAGMX
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHS   Warehouse
+     C*      $PCTDT  Inventory date
+     C*      $PTEAM  Inventory team
+     C*      $PWHDP  Inventory dept
+     C*      $PICK   Pick slot Y/N
+     C*      $PFDSP  From slot display
+     C*      $PTDSP  To slot display
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   *OK      - Records updated succesfully
+     C*              *PGMQ    - Error occured. Message sent to prv program.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS   3
+     C                     PARM           $PCTDT  8
+     C                     PARM           $PTEAM 10
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PICK   1
+     C                     PARM           $PFDSP 12
+     C                     PARM           $PTDSP 12
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main Line
+     C*
+     C*  Start new page if level break or page maximum was reached.
+     C*
+     C           *INL1     IFEQ *ON
+     C*
+     C           IVGDSP    IFGE $PFDSP
+510b C           IVGDSP    ANDLETODISP
+510b C*          IVGDSP    ANDLE$PTDSP
+     C* Create inventory assignment record.
+     C                     EXSR ZZASGN
+     C                     ENDIF
+     C           BOTTOM    TAG
+     C*
+     C                     ENDIF
+     CLR                   RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *ON       FOREVR  1
+     C*  Force to include all hand stack slots for slot
+     CSR         $PTDSP    CAT  'ZZ':0    TODISP 12
+     C*
+     C*
+     C*  Define keys
+     C*
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*   Clear previous program's message queue.
+     C*
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMSMSG
+     CSR                   ENDSR
+510a C*----------------------------------------------------------------
+510a C*
+510a C*  ZZASGN  Update Inventory Slot assignment record.
+510a C*
+510a CSR         ZZASGN    BEGSR
+     C                     MOVE $PTEAM    IVGTEM
+510b C                     MOVE '2'       IVGSTA
+510b C                     MOVE $PCTDT    IVGIDT
+510b C                     Z-ADDTODAY     IVGSDT
+510b C                     TIME           IVGSTM
+510b C                     UPDATIVGREC
+     C*
+510a CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMSMSG  Send program message to a previous program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSGP'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM #PROG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     INV7978  Record is locked.
+     C*
+     CSR         ZM78      BEGSR
+     CSR                   MOVE 'INV7978' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMSMSG
+     CSR                   ENDSR

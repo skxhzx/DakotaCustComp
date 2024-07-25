@@ -1,0 +1,144 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2020 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  EXPSTGINT   Export Staging Interfaces - Loop                     */
+/*  October 2, 2020                                                  */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    10/02/20  RTR  7.40                                            */
+/*     - Created for Chef's Warehouse.                               */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions:                                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &WHSE   -  Warehouse                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ EXPSTGINT:  PGM        PARM(&DELAYA)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(EXPSTGINT)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CMDLEN)     TYPE(*DEC) LEN(15 5)
+             DCL        VAR(&CUTOFF)     TYPE(*DEC) LEN(4 0) VALUE(2359)
+             DCL        VAR(&DELAY)      TYPE(*DEC) LEN(3 0)
+             DCL        VAR(&DELAYA)     TYPE(*CHAR) LEN(3)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&NEWTIME)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&NUMHOUR)    TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&NUMMIN)     TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&SEV)        TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&SYSTIME)    TYPE(*CHAR) LEN(6)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             DCLF       FILE(EXPSTGCFG)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT1))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Run report program. */
+
+ LOOP:       RCVF
+
+             /* If error reading file, we are done. */
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(DONE))
+
+             /* Skip non-active records. */
+             IF         COND(&EXACTIVE *NE 'Y') THEN(GOTO CMDLBL(LOOP))
+
+             /* Submit job. */
+             CALL       PGM(GETTXTLEN) PARM(&EXCMD &CMDLEN)
+             SBMJOB     CMD(CALL PGM(QCMDEXC) PARM(&EXCMD &CMDLEN)) +
+                          JOB(&EXJBNAME) JOBD(&EXJBDLIB/&EXJOBDSC) +
+                          JOBQ(&EXJBQLIB/&EXJOBQUE) USER(&EXUSER) +
+                          INLLIBL(*JOBD)
+
+             /* Get next record. */
+             GOTO       CMDLBL(LOOP)
+
+/* Determine next run time and put back on job queue. */
+
+ DONE:       RTVSYSVAL  SYSVAL(QTIME) RTNVAR(&SYSTIME)
+             CHGVAR     VAR(&DELAY) VALUE(&DELAYA)
+             CHGVAR     VAR(&NUMHOUR) VALUE(%SST(&SYSTIME 1 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(%SST(&SYSTIME 3 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN + &DELAY)
+             IF         COND(&NUMMIN *GE 60) THEN(DO)
+               CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN - 60)
+               CHGVAR     VAR(&NUMHOUR) VALUE(&NUMHOUR + 1)
+             ENDDO
+
+             IF         COND(&NUMHOUR *GE 24) THEN(GOTO CMDLBL(GETOUT2))
+             IF         COND(((&NUMHOUR * 100) + &NUMMIN) *GE +
+                          &CUTOFF) THEN(GOTO CMDLBL(GETOUT3))
+
+             CHGVAR     VAR(%SST(&SYSTIME 1 2)) VALUE(&NUMHOUR)
+             CHGVAR     VAR(%SST(&SYSTIME 3 2)) VALUE(&NUMMIN)
+             CHGVAR     VAR(&NEWTIME) VALUE(%SST(&SYSTIME 1 2) *CAT +
+                          ':' *CAT %SST(&SYSTIME 3 2) *CAT ':00')
+
+             SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&DELAYA)) +
+                          JOB(EXPSTGINT) JOBQ(QS36EVOKE) LOG(4 0 +
+                          *NOLIST) SCDTIME(&NEWTIME) MSGQ(*NONE)
+             GOTO       CMDLBL(NEXTMSG)
+
+ GETOUT1:
+             RTVJOBA    USER(&USER)
+             SNDMSG     MSG('Scheduled Staging Export FAILURE. Reason +
+                          1.') TOMSGQ(&USER)
+             GOTO       CMDLBL(NEXTMSG)
+ GETOUT2:
+             SNDMSG     MSG('Scheduled Staging Export FAILURE. Reason +
+                          2.') TOMSGQ(&USER)
+             GOTO       CMDLBL(NOMSG)
+ GETOUT3:
+             SNDMSG     MSG('Scheduled Staging Export ending +
+                          normally.') TOMSGQ(&USER)
+             GOTO       CMDLBL(NOMSG)
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

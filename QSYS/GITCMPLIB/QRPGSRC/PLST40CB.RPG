@@ -1,0 +1,1655 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1997 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  PLST40CB  Truck build picking list at allocate - CBI
+     F*  19 November 2003
+     F*  Roxanne Harrison
+     F*
+     F*  NOTE:  Custom to print PRODUCE pick list at A1A. See 4.17 chg.
+     F*         Only changed for selection, not bulk or replenish.
+     F*  Revisions
+     F*
+     F*    11/19/03  RH   4.17
+     F*      - Created using PLST40WS
+     F*      - Changed to use WORKLBL not LABEL file.
+     F*      - Changed to process for pallet id, not transaction #.
+     F*      - Changed to print A1A's item and slot from ODOITM.
+     F*
+409 AF*    03/19/98  DAS  4.09
+     F*      - Revised to print potential replenishments.
+409 AF*    03/23/98  RH   4.09
+     F*      - Revised to use LABEL34 file to print by stop/location
+     F*      - BFC DOES NOT RECOMMEND USING LABEL34 CHANGE.
+     F*      - NOT THE NORMAL PROCESS
+409 AF*    04/06/98  RH   4.09
+     F*      - Skip replenishment label if status is closed.
+410 AF*    12/01/98  RH   4.10
+     F*      - Print 'OUT' on exception label.
+     F*
+412 AF*    09/06/99  DAS 4.12
+     F*      - Created for West Side
+     F*
+412aAF*    09/08/99  DAS 4.12a
+     F*      - Changed format. Removed Cust name & Number. Rearranged
+     F*        columns.
+     F*
+412bAF*    09/15/99  DAS 4.12b
+     F*      - Added code to print 'OUT' for exception labels.
+     F*
+412cAF*    09/21/99  DAS 4.12c
+     F*      - Revised PRTBLK to print catchweight lines.
+     F*
+413 AF*    10/07/99  DAS 4.13
+     F*      - Revised PRTBLK to ignore extra PLTSUM3 and PLTSTP3 recs.
+     F*        Note: PLTSUM3 can have multiple bulk picks on a single
+     F*        pallet which then causes PLTSTP3 to create duplicate
+     F*        join records for a single label record because the files
+     F*        are only joined by pallet id.
+     F*
+413aAF*    03/09/00  DAS 4.13a
+     F*      - Revised PRTSEL to move LBASL2 into output field instead
+     F*        of doing check for 'OUT'.
+     F*
+415 AF*    02/28/01  HNK 4.15
+     F*      - Count lines to control overflow on pick and catch weight
+415aAF*    03/20/01  HNK 4.15a
+     F*      - Print overflow if count GE 27.
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes
+     F*
+     F*    This program prints on green bar paper instead of labels but
+     F*    uses the same basic logic as the labels. The biggest
+     F*    difference is that the layout is not defined in a table. The
+     F*    printer file defines all of the fields and record formats.
+     F*
+     F*    To print all of the labels exactly as they are in the tables,
+     F*    call this program like this:
+     F*
+     F*                      CALL PLBL40 *TEST1
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*  90        Overflow indicator for exception report
+     F*  91        Overflow indicator for catch weight report
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPLTSUM3 IF  E           K        DISK
+     FPLTSTP1 IF  E           K        DISK
+     FWORKLB13IF  E           K        DISK
+     FWORKLB31IF  E           K        DISK
+     FWORKLB32IF  E           K        DISK
+     FWORKLB33IF  E           K        DISK
+409 AF*ABEL34 IF  E           K        DISK
+213 AFPIRITEM IF  E           K        DISK
+213 AFITEMLNK IF  E           K        DISK
+405 AFOPTIONS IF  E           K        DISK
+     FPLST40PCO   E             90     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E*    General
+     E*
+     E                    CW        120  1
+     E                    A12        12  1
+     E                    A40        40  1
+     E                    A50        50  1
+     E                    A58        58  1
+     E                    A80        80  1
+     E                    STP         9  2 0
+     E*
+     E*    Printer override
+     E*
+     E                    OVRPRT  1   2 80
+405 AI*----------------------------------------------------------------
+405 AI*  *SYSTEM  -  System options.
+405 AI*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPEPM   -  Using EPM module (Y,N).
+     I*    OPRF    -  Using RF module (Y,N).
+     I*    OPCAPC  -  Capture catch weights at pick closing (Y,N).
+     I*    OPLETD  -  Print letdown labels (Y,N).
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPEPM
+     I                                        2   2 OPRF
+     I                                        3   3 OPCAPC
+     I                                        4   4 OPLETD
+     I                                      117 117 OPTEN2
+     I*----------------------------------------------------------------
+     I*  Data structure for label variables.
+     I*
+     IDSLBL       DS                         18
+     I                                        1 120 @VAR
+     I                                      121 240 @BEG
+     I                                      241 360 @END
+     I                                      361 480 @LEN
+     I*----------------------------------------------------------------
+     I*  Stop summary data structure for one set of labels.
+     I*  Maximum of 9 stops on one pallet, for fixed section items.
+213 MI*  Maximum of 99 stops on one pallet, for PIR section items.
+     I*
+213 MISTPSUM      DS                         99
+     I                                        1   20DSSSTP
+     I                                        3   83DSSCUB
+     I                                        9  152DSSWGT
+     I                                       16  180DSSPCS
+     I                                       19  58 DSSCNM
+     I*----------------------------------------------------------------
+     I*  Pallet summary data structure for one set of labels.
+     I*
+     IPALSUM      DS                          9
+     I                                        1   70DSPPAL
+     I                                        8   90DSPSTP
+     I                                       10  153DSPCUB
+     I                                       16  222DSPWGT
+     I                                       23  250DSPPCS
+     I                                       26  43 STP
+404 AI                                       44  500DSPPLI
+     I*----------------------------------------------------------------
+     I*  PIR stop summary data structure for route.
+     I*
+213 MIPIRSUM      DS                         99
+     I                                        1   20DSRSTP
+     I                                        3   83DSRCUB
+     I                                        9  152DSRWGT
+     I                                       16  180DSRPCS
+     I                                       19  23 DSRWDP
+     I                                       24  63 DSRCNM
+     I                                       64  64 DSRFLG
+     I*----------------------------------------------------------------
+     I*  *PICKLBL  -  Picking label options
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPCLVL  -  Qty level for combined labels.
+     I*    OPCWRB  -  Print combined label warning before.
+     I*    OPCWRA  -  Print combined label warning after.
+     I*    OPUWRB  -  Print unit of measure warning before.
+     I*    OPUWRA  -  Print unit of measure warning after.
+     I*    OPTEXT  -  Text for last line of label.
+     I*    OPERR   -  Error label ratio.
+     I*    OPCWGT  -  Catch weight label ratio.
+     I*    OPLPGM  -  Picking label program.
+     I*    OPPDEV  -  Printer device.
+     I*    OPPFRM  -  Printer form.
+     I*
+     I* Data structure
+     I*
+     IOPZDTA      DS
+     I                                        1   30OPCLVL
+     I                                        4   4 OPCWRA
+     I                                        5   5 OPCWRB
+     I                                        6   6 OPUWRA
+     I                                        7   7 OPUWRB
+     I                                        8  50 OPTEXT
+     I                                       51  520OPERR
+     I                                       53  540OPCWGT
+     I                                       55  64 OPLPGM
+     I                                       65  74 OPPDEV
+     I                                       75  84 OPPFRM
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+417 AI            DS
+417 AI                                        1  15 DSOITM
+417 AI                                        1   6 DSAITM
+417 AI                                        7   7 DSF1
+417 AI                                        8  14 DSALOC
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Command
+409 AC*              *REPLEN  -  Print potential replenishments.
+     C*      $PWHSE  Warehouse
+     C*      $PRTID  Route Id
+     C*      $PCOMP  Compartment
+     C*      $PTZON  Truck zone
+     C*      $PGEN   Generation
+     C*      $PSZON  Slot zone
+     C*      $PTRUK  Truck
+     C*      $PRTE   Route
+     C*      OPZDTA  Picking label options
+     C*      $PTRN#  Transaction number for reprints
+409 AC*              Batch number for *REPL
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PRTID  5
+     C                     PARM           $PCOMP  1
+     C                     PARM           $PTZON  6
+     C                     PARM           $PGEN   10
+     C                     PARM           $PSZON  6
+     C                     PARM           $PTRUK 10
+     C                     PARM           $PRTE   5
+     C                     PARM           OPZDTA
+     C                     PARM           $PTRN#  70
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C* Check to see if this is only a test.
+     C*
+     C           $PCMD     IFEQ '*TEST1  '
+     C                     EXSR TEST1
+     C                     GOTO BOTTOM
+     C                     ENDIF
+     C*
+     C* Open printer file for zone.
+     C*
+     C                     EXSR OPNPRT
+     C*
+     C* Print zone heading label.
+     C*
+     C****                 EXSR LBLZHD
+409 AC*
+409 AC* Print potential replenishments
+409 AC*
+409 AC           $PCMD     IFEQ '*REPLEN '
+409 AC           OPLETD    IFEQ 'Y'
+409 AC                     EXSR PRTPRP
+409 AC                     ENDIF
+409 AC                     GOTO BOTTOM
+409 AC                     ENDIF
+     C*
+     C* Print letdowns for zone.
+     C*
+405 AC           OPLETD    IFEQ 'Y'
+     C                     EXSR PRTRPL
+405 AC                     ENDIF
+     C*
+     C* Print bulk picks for zone.
+     C*
+     C                     EXSR PRTBLK
+     C*
+     C* Print selection labels for zone.
+     C*
+     C*    Note: First the pallet summary records will be read
+     C*          and the information saved.  Then, when the
+     C*          transaction number changes, we go and print
+     C*          the labels for the previous transacton
+     C*          number (LSTTRN).
+     C*
+     C*    Loop through truck pallets for zone.
+     C*
+     C                     MOVE *ON       FIRST   1
+     C*
+     C                     MOVE 'O'       KYTYPE
+     C           KEYPS3    SETLLPLTSUM3
+     C           FOREVR    DOUNEFOREVR
+     C           KEYPS3    READEPLTSUM3                  79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*     Skip pallet if nothing was picked.
+     C*
+     C           PSPCS     IFEQ 0
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*     First time through initialization.
+     C*
+     C           FIRST     IFEQ *ON
+417aDC*                    Z-ADDPSTRN#    LSTTRN
+417a C                     Z-ADDPSPLID    LSTPAL
+     C                     Z-ADD0         PALCNT  20
+     C                     MOVE *OFF      FIRST
+     C                     ENDIF
+     C*
+     C*     If transaction number changed, go and print the detail
+     C*       for the previous transaction (LSTTRN).
+     C*
+417aDC*          PSTRN#    IFNE LSTTRN
+417a C           PSPLID    IFNE LSTPAL
+404 AC                     Z-ADDPSUNLD    CURUNL
+404 AC                     Z-ADDPSROW     CURROW
+404 AC                     Z-ADDPSCOL     CURCOL
+     C                     EXSR PRTSEL
+404 AC           KEYPS     SETLLPLTSUM3
+404 AC                     READ PLTSUM3                  79
+417aDC*                    Z-ADDPSTRN#    LSTTRN
+417a C                     Z-ADDPSPLID    LSTPAL
+     C                     Z-ADD0         PALCNT
+     C                     ENDIF
+     C*
+     C*     Add pallet info to pallet summary data structure.
+     C*
+     C                     ADD  1         PALCNT
+     C           PALCNT    OCUR PALSUM
+     C                     Z-ADDPSPAL#    DSPPAL
+     C                     Z-ADDPSCUBE    DSPCUB
+     C                     Z-ADDPSSWGT    DSPWGT
+     C                     Z-ADDPSPCS     DSPPCS
+     C                     Z-ADD0         DSPSTP
+     C                     Z-SUB1         LSTSTP
+404 AC                     Z-ADDPSPLID    DSPPLI
+     C           KEYSS1    SETLLPLTSTP1
+     C           FOREVR    DOWEQFOREVR
+     C           KEYSS1    READEPLTSTP1                  78
+     C           *IN78     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C           PSSSTP    IFNE LSTSTP
+     C                     ADD  1         DSPSTP
+     C                     Z-ADDPSSSTP    LSTSTP
+     C                     ENDIF
+     C                     ENDDO
+     C*
+     C                     ENDDO
+     C*
+     C*   Print last pallet(s), if any.
+     C*
+     C           PALCNT    IFGT 0
+     C                     EXSR PRTSEL
+     C                     ENDIF
+     C*
+     C*
+     C*   Bye, Bye.
+     C*
+     C           BOTTOM    TAG
+     C                     MOVE *ON       *INLR
+     C****       PRTFLG    IFEQ *OFF
+     C****                 EXSR PRINT
+     C****                 ENDIF
+     C*
+     C*   Close up shop and return home.
+     C*
+     CLR         OPENED    IFEQ *ON
+     CLR                   CLOSEPLST40PC
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+QF  MCSR                   Z-ADD1         LMAX    10
+     CSR                   Z-ADD1         LCOUNT  30
+405 AC*
+405 AC*  Define key for OPTIONS file.
+405 AC*
+405 ACSR         OPKEY     KLIST
+405 ACSR                   KFLD           OPWHSE
+405 ACSR                   KFLD           OPCODE
+     C*
+     C*  Define partial key for PLTSUM3 file.
+     C*
+     CSR         *LIKE     DEFN PSTYPE    KYTYPE
+     CSR         KEYPS3    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYTYPE
+     CSR                   KFLD           $PCOMP
+     CSR                   KFLD           $PTZON
+     CSR                   KFLD           $PGEN
+     CSR                   KFLD           $PSZON
+404 AC*
+404 ACSR         *LIKE     DEFN PSUNLD    CURUNL
+404 ACSR         *LIKE     DEFN PSROW     CURROW
+404 ACSR         *LIKE     DEFN PSCOL     CURCOL
+404 ACSR         KEYPS     KLIST
+404 ACSR                   KFLD           $PWHSE
+404 ACSR                   KFLD           $PRTID
+404 ACSR                   KFLD           KYTYPE
+404 ACSR                   KFLD           $PCOMP
+404 ACSR                   KFLD           $PTZON
+404 ACSR                   KFLD           $PGEN
+404 ACSR                   KFLD           $PSZON
+404 ACSR                   KFLD           CURUNL
+404 ACSR                   KFLD           CURROW
+404 ACSR                   KFLD           CURCOL
+     C*
+     C*  Define partial key for PLTSTP1 file.
+     C*
+     CSR         KEYSS1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+402 ACSR                   KFLD           PSPLID
+     CSR                   KFLD           PSROW
+     CSR                   KFLD           PSCOL
+     C*
+     C*  Define partial key for WORKLB31 file.
+     C*
+     CSR         *LIKE     DEFN LWTYPE    KYLTYP
+     CSR         KEYL31    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYLTYP
+     CSR                   KFLD           PSPLID
+     C*
+     C*  Define partial key for WORKLB32 & WORKLB34 file.
+     C*
+     CSR         KEYL32    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYLTYP
+417a CSR                   KFLD           LSTPAL
+417aDC**                   KFLD           LSTTRN
+     C*
+     C*  Define partial key for WORKLB33 file.
+     C*
+     CSR         KEYL33    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+417a CSR                   KFLD           LSTPAL
+417aDC**                   KFLD           LSTTRN
+409 AC*
+409 AC*  Define partial key for WORKLB13 file.
+409 AC*
+409 ACSR         KEYL3F    KLIST
+409 ACSR                   KFLD           $PTRN#
+409 ACSR                   KFLD           $PWHSE
+216 AC*
+216 AC*  Define key for PIRITEM file. (FOR BROKEN CASE ITEM)
+216 AC*
+216 ACSR         KEYIB     KLIST
+216 ACSR                   KFLD           $PWHSE
+216 ACSR                   KFLD           LWITEM
+213 AC*
+213 AC*  Define key for PIRITEM file. (FOR LINK ITEM)
+213 AC*
+213 ACSR         KEYIT     KLIST
+213 ACSR                   KFLD           $PWHSE
+213 ACSR                   KFLD           ILITM2
+213 AC*
+213 AC*  Define key for ITEMLNK file.
+213 AC*
+213 ACSR         KEYIL     KLIST
+213 ACSR                   KFLD           $PWHSE
+213 ACSR                   KFLD           LWITEM
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*   Define variables.
+     C*
+413 ACSR         *LIKE     DEFN PSPLID    LSTPID
+413 ACSR         *LIKE     DEFN LWLBL#    LSTLB#
+     C****       *LIKE     DEFN LWTRN#    LSTTRN
+     CSR         *LIKE     DEFN LWSTOP    LSTSTP
+     C***        *LIKE     DEFN PSSZON    LSTZON
+     CSR         *LIKE     DEFN PSSZON    TMPZON
+     CSR         *LIKE     DEFN LWWHDP    LSTWDP
+     CSR         *LIKE     DEFN LWUTYP    LSTUM
+     C***        *LIKE     DEFN LWQPCK    W1QTY
+     CSR         *LIKE     DEFN LWQPCK    W1QTY2
+     CSR         *LIKE     DEFN LWQPCK    W1PICK
+     C***        *LIKE     DEFN LWPAL#    W1PAL#
+417a CSR         *LIKE     DEFN PSPLID    LSTPAL
+405 AC*
+405 AC*  Get system options.
+405 AC*
+405 ACSR                   Z-ADD0         OPWHSE
+405 ACSR                   MOVE '*SYSTEM 'OPCODE
+405 ACSR         OPKEY     CHAINOPTIONS              79
+405 ACSR         *IN79     IFEQ *ON
+405 ACSR                   MOVE 'Y'       OPLETD
+405 ACSR                   ENDIF
+     C*
+     C*  Get variable information for labels
+     C*
+     C***                  EXSR GETVR1
+     C*
+     CSR                   ENDSR
+404 AC*----------------------------------------------------------------
+404 AC*
+404 AC*  GETPAL  Get pallet number.
+404 AC*
+     CSR         GETPAL    BEGSR
+     CSR                   Z-ADD0         PAL#    70
+     CSR         1         DO   PALCNT    CURPAL  20
+     CSR         CURPAL    OCUR PALSUM
+     CSR         DSPPLI    IFEQ LWPAL#
+     CSR                   Z-ADDDSPPAL    PAL#
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  OPNPRT  Open printer file.
+     C*
+     CSR         OPNPRT    BEGSR
+     C*
+     C*   Open printer file for department.
+     C*
+     CSR         OPENED    IFNE *ON
+     C*
+     C*      If printer already open then close it.
+     C*
+     CSR         OPENED    IFEQ *ON
+     CSR                   CLOSEPLST40PC
+     CSR                   ENDIF
+     C*
+     C*      Override printer file.
+     C*
+     C*          OVRPRTF FILE(PLBL__PR) OUTQ(*DEV) DEV(rodev)
+     C*                  FORMTYPE(roform)
+     C*
+     CSR                   MOVEAOVRPRT,1  A80
+     CSR                   MOVEAOPPDEV    A80,39
+     CSR                   MOVEAOPPFRM    A80,60
+     CSR                   MOVEAA80       QCMD1  80
+     C**                   MOVEAA80       QCMD
+     CSR                   MOVEAOVRPRT,2  A80
+     CSR                   MOVEAA80       QCMD2  80
+     CSR         QCMD1     CAT  QCMD2:1   QCMD
+     CSR                   CALL 'QCMDEXC'
+     CSR                   PARM           QCMD  160
+     CSR                   PARM 160       QLEN   155
+     C*
+     C*      Open printer file.
+     C*
+     CSR                   OPEN PLST40PC
+     CSR                   MOVE *ON       OPENED  1
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTBLK  Print bulk pick labels for route/department.
+     C*
+     CSR         PRTBLK    BEGSR
+     C*
+     CSR                   MOVE *ON       FIRST
+     C*
+     C*  Loop bulk picks for zone.
+     C*
+413 AC*    Revised to only use a pallet id once.
+     C*
+413 ACSR                   Z-SUB1         LSTPID
+     CSR                   MOVE 'B'       KYTYPE
+     CSR         KEYPS3    SETLLPLTSUM3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYPS3    READEPLTSUM3                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+413 ACSR         PSPLID    IFEQ LSTPID
+413 ACSR                   ITER
+413 ACSR                   ENDIF
+413 ACSR                   Z-ADDPSPLID    LSTPID
+     C*
+     C*    Loop through bulk pick labels for pallet.
+     C*      Note: There should only be one label, but this keeps
+     C*            the coding consistant with replenishments.
+     C*
+413 AC*      The above statment is false. There can be more than
+     C*      one bulk pick to a pallet especially if an item didn't
+     C*      have home slot.
+     C*
+413 AC*      The 413 fix was necessary because the WORKLB31 file
+     C*      is joined to the PLTSUM file only using the pallet
+     C*      id. When there are multiple bulk picks on a pallet
+     C*      the WORKLB31 ends up with duplicate records. These
+     C*      dups are created in sequence so we can check the
+     C*      label number against the last one and skip the
+     C*      record if they are the same.
+     C*
+413 ACSR                   Z-SUB1         LSTLB#
+     CSR                   MOVE 'B'       KYLTYP
+     CSR         KEYL31    SETLLWORKLB31
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     C*
+     CSR         KEYL31    READEWORKLB31                 78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+413 ACSR         LWLBL#    IFEQ LSTLB#
+413 ACSR                   ITER
+413 ACSR                   ENDIF
+413 ACSR                   Z-ADDLWLBL#    LSTLB#
+     C*
+     C*       Skip label if nothing was picked.
+     C*
+     CSR         LWQPCK    IFEQ 0
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*       Print beginning bulk pick label.
+     C*
+     CSR         FIRST     IFEQ *ON
+     CSR                   MOVE *ON       *IN81
+     CSR                   WRITEBEGBLK
+     CSR                   MOVE *OFF      *IN81
+     C****                 EXSR LBLBBK
+     CSR                   MOVE *OFF      FIRST
+     CSR                   ENDIF
+     C*
+     C*       Print warning for bulk/replenishment combo.
+     C*
+     C*
+     C*       Print bulk label.
+     C*
+     CSR                   Z-ADDLWQPCK    W1QTY
+417 DC*R                   MOVELLWITEM    W1ITEM
+417  CSR                   MOVELODOITM    DSOITM
+417  CSR                   MOVELDSAITM    W1ITEM
+417  CSR                   MOVE *BLANKS   W1DISP
+417  CSR                   MOVELDSALOC    W1DISP
+412aDC**                   MOVELOHCNAM    W1CNAM
+     C********             EXSR CRTSTP
+     C***                  WRITESETHEAD
+     CSR                   WRITEBULK
+     C****                 EXSR LBLSHD
+     C****                 EXSR ZZFILL
+     C****                 EXSR PRINT
+     C****                 EXSR LBLBLK
+     CSR         *IN90     IFEQ *ON
+     CSR                   WRITEBEGBLK2
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+     C*
+     C*       Print replenishment label if necessary.
+     C*
+     C*
+     C* ***** Ignored. Call to OR631 was commented out 9/3/99 ********
+     C*
+     CSR         LWDSP2    IFNE *BLANKS
+     CSR                   Z-ADDLWQRMN    W1QTY
+     C***                  WRITETRANSFER
+     C******               EXSR LBLRP1
+     CSR                   ENDIF
+     C*
+412cACSR         ITCWGT    IFEQ 'Y'
+412cACSR         LWQPCK    DIV  10        LINS    30
+412cACSR                   MVR            REMAIN  20
+412cACSR         REMAIN    IFNE 0
+412cACSR                   ADD  1         LINS
+412cACSR                   ENDIF
+412cACSR         1         DO   LINS      Z1      30
+412cACSR         Z1        IFEQ LINS
+412cACSR         REMAIN    ANDGT0
+412cACSR                   Z-ADDREMAIN    DOX     20
+412cACSR                   ELSE
+412cACSR                   Z-ADD10        DOX
+412cACSR                   ENDIF
+412cACSR                   Z-ADD1         Z2      30
+412cACSR                   MOVE *BLANKS   CW
+412cACSR         1         DO   DOX
+412cACSR                   MOVEA'_____'   CW,Z2
+412cACSR                   ADD  5         Z2
+412cACSR                   MOVEA'_____'   CW,Z2
+412cACSR                   ADD  7         Z2
+412cACSR                   ENDDO
+412cACSR                   MOVEACW        W1WGT
+412cACSR                   WRITECACHWT
+412cACSR                   ENDDO
+415aACSR                   ADD  LINS      LINCNT
+412cACSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+409 AC*----------------------------------------------------------------
+409 AC*
+409 AC*  PRTPRP  Print potential replenishment labels.
+409 AC*
+409 ACSR         PRTPRP    BEGSR
+409 AC*
+409 ACSR                   MOVE *ON       FIRST
+409 AC*
+409 AC*    Loop through potential replenishment batch of labels.
+409 AC*
+409 ACSR         KEYL3F    SETLLWORKLB13
+409 AC*
+409 ACSR         FOREVR    DOUNEFOREVR
+409 AC*
+409 ACSR         KEYL3F    READEWORKLB13                 78
+409 ACSR         *IN78     IFEQ *ON
+409 ACSR                   LEAVE
+409 ACSR                   ENDIF
+409 AC*
+409 AC*       Skip label if nothing was picked.
+409 AC*
+409 ACSR         LWQPCK    IFEQ 0
+409 ACSR                   ITER
+409 ACSR                   ENDIF
+409 AC*
+409 AC*       Skip label if closed.
+409 AC*
+409 ACSR         LWSTAT    IFEQ 'C'
+409 ACSR                   ITER
+409 ACSR                   ENDIF
+409 AC*
+409 AC*       Print "Beginning Replenishment" pick label.
+409 AC*
+409 ACSR         FIRST     IFEQ *ON
+     CSR                   MOVE *ON       *IN81
+409 ACSR                   WRITEBEGRPL
+     CSR                   MOVE *OFF      *IN81
+409 AC****                 EXSR LBLBRP
+409 ACSR                   MOVE *OFF      FIRST
+409 ACSR                   ENDIF
+409 AC*
+409 AC*       Print replenishment label if necessary.
+409 AC*
+409 ACSR                   Z-ADDLWQPCK    W1QTY
+409 AC***                  WRITESETHEAD
+409 AC****                 EXSR LBLSHD
+409 AC****                 EXSR ZZFILL
+409 AC****                 EXSR PRINT
+417 DC*R                   MOVELLWITEM    W1ITEM
+417  CSR                   MOVELODOITM    DSOITM
+417  CSR                   MOVELDSAITM    W1ITEM
+417  CSR                   MOVE *BLANKS   W1DISP
+417  CSR                   MOVELDSALOC    W1DISP
+409 ACSR         ITTYPE    IFEQ 'B'
+409 ACSR                   MOVELLWITEM    TOITEM
+409 ACSR                   MOVE ITDESC    TODESC 30
+409 ACSR         KEYIL     CHAINITEMLNK              79
+409 ACSR                   MOVELILITM2    FRITEM
+409 ACSR         KEYIT     CHAINPIRITEM              79
+409 ACSR                   MOVE ITDESC    FRDESC 30
+409 ACSR                   Z-ADDITUMQ2    TOQTY   50
+409 ACSR                   MOVE ITUM2     TOUM    2
+409 ACSR                   WRITEREPL2
+409 AC****                 EXSR LWLRP2
+409 ACSR                   ELSE
+409 ACSR                   WRITEREPL1
+409 AC****                 EXSR LWLRP1
+409 ACSR                   ENDIF
+     CSR         *IN90     IFEQ *ON
+     CSR                   WRITEBEGRPL2
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+409 AC*
+409 ACSR                   ENDDO
+409 AC*
+409 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTRPL  Print replenishment labels for zone
+     C*
+     CSR         PRTRPL    BEGSR
+     C*
+     CSR                   MOVE *ON       FIRST
+     C*
+     C*  Loop through pallets for zone.
+     C*
+     CSR                   MOVE 'O'       KYTYPE
+     CSR         KEYPS3    SETLLPLTSUM3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYPS3    READEPLTSUM3                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*    Loop through replenishment labels for pallet.
+     C*
+     CSR                   MOVE 'R'       KYLTYP
+     CSR         KEYL31    SETLLWORKLB31
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     C*
+     CSR         KEYL31    READEWORKLB31                 78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*       Skip label if nothing was picked.
+     C*
+     CSR         LWQPCK    IFEQ 0
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*       Print "Beginning Replenishment" pick label.
+     C*
+     CSR         FIRST     IFEQ *ON
+     CSR                   MOVE *ON       *IN81
+     CSR                   WRITEBEGRPL
+     CSR                   MOVE *OFF      *IN81
+     C****                 EXSR LBLBRP
+     CSR                   MOVE *OFF      FIRST
+     CSR                   ENDIF
+     C*
+     C*       Print replenishment label if necessary.
+     C*
+     CSR                   Z-ADDLWQPCK    W1QTY
+     C****                 WRITESETHEAD
+     C****                 EXSR LBLSHD
+     C****                 EXSR ZZFILL
+     C****                 EXSR PRINT
+417 DC*R                   MOVELLWITEM    W1ITEM
+417  CSR                   MOVELODOITM    DSOITM
+417  CSR                   MOVELDSAITM    W1ITEM
+417  CSR                   MOVE *BLANKS   W1DISP
+417  CSR                   MOVELDSALOC    W1DISP
+213 ACSR         ITTYPE    IFEQ 'B'
+213 ACSR                   MOVELLWITEM    TOITEM
+213 ACSR                   MOVE ITDESC    TODESC 30
+213 ACSR         KEYIL     CHAINITEMLNK              79
+213 ACSR                   MOVELILITM2    FRITEM
+213 ACSR         KEYIT     CHAINPIRITEM              79
+213 ACSR                   MOVE ITDESC    FRDESC 30
+213 ACSR                   Z-ADDITUMQ2    TOQTY   50
+213 ACSR                   MOVE ITUM2     TOUM    2
+213 ACSR                   WRITEREPL2
+     C*****                EXSR LBLRP2
+213 ACSR                   ELSE
+     CSR                   WRITEREPL1
+     C****                 EXSR LBLRP1
+213 ACSR                   ENDIF
+     CSR         *IN90     IFEQ *ON
+     CSR                   WRITEBEGRPL2
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTSEL  Print normal selection labels for zone.
+     C*
+     CSR         PRTSEL    BEGSR
+     C*
+     C*   Print header for this set of selection labels.
+     C*
+     CSR                   EXSR SETBEG
+     C*
+     C*   Loop through selection labels for transaction.
+     C*
+     CSR                   Z-ADD0         COUNT   50
+     CSR                   MOVE 'O'       KYLTYP
+409 ACSR         $PGEN     IFEQ 1
+409 DC*R         KEYL32    SETLLLABEL34
+409 ACSR         KEYL32    SETLLWORKLB32
+409 ACSR                   ELSE
+     CSR         KEYL32    SETLLWORKLB32
+409 ACSR                   ENDIF
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+409 ACSR         $PGEN     IFEQ 1
+409 DC*R         KEYL32    READELABEL34                  78
+409 ACSR         KEYL32    READEWORKLB32                 78
+409 ACSR                   ELSE
+     CSR         KEYL32    READEWORKLB32                 78
+409 ACSR                   ENDIF
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+404 AC*     Skip label if cross dock.
+     C*
+404 ACSR         LWSTYP    IFEQ 'X'
+404 ACSR                   ITER
+404 ACSR                   ENDIF
+     C*
+     C*     Skip label if nothing was picked.
+     C*
+417aDC**         LWQPCK    IFEQ 0
+417a CSR         LWQALC    IFEQ 0
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     CSR                   ADD  1         COUNT
+     C*
+     C*     See if we should print the "before" um warning.
+     C*
+     CSR         LWUTYP    IFNE 'N'
+     CSR         OPUWRB    ANDEQ'Y'
+     C***                  WRITEWARNUMB
+     C****                 EXSR LBLUMB
+     CSR                   ENDIF
+     C*
+     C*     Initialize label fields.
+     C*
+     CSR                   Z-ADDLWQPCK    W1QTY2
+     C****                 EXSR CRTSTP
+     C*
+     C*     Either print a combination label ...
+     C*
+     C****                 SELEC
+     C****       LWQPCK    WHGE OPCLVL
+     C****                 MOVE *ON       COMBO   1
+     C*
+     C*        See if we should print the "before" combo warning.
+     C*
+     C****       OPCWRB    IFEQ 'Y'
+     C***                  WRITEWARNCMBB
+     C****                 EXSR LBLCMB
+     C****                 ENDIF
+     C*
+     C*        Print one label.
+     C*
+     CSR                   Z-ADDLWQPCK    W1PICK
+417 DC*R                   MOVELLWITEM    W1ITEM
+417  CSR                   MOVELODOITM    DSOITM
+417  CSR                   MOVELDSAITM    W1ITEM
+417  CSR                   MOVE *BLANKS   W1DISP
+417  CSR                   MOVELDSALOC    W1DISP
+413aDC**         LWASL2    IFEQ 'OUT'
+413aDC**                   MOVE 'OUT'     W1OUT
+413aDC**                   ELSE
+413aDC**                   MOVE '   '     W1OUT
+413aDC**                   ENDIF
+413aACSR                   MOVE LWASL2    W1OUT   3
+412aDC**                   MOVELOHCNAM    W2CNAM
+415 ACSR                   EXSR ZZOFLO
+     CSR                   WRITEPICK
+415 ACSR                   ADD  1         LINCNT
+     C****                 EXSR LWLPCK
+     CSR         *IN90     IFEQ *ON
+415 ACSR                   Z-ADD0         LINCNT
+     CSR                   WRITESETHD
+     CSR                   WRITESETHED2
+415 ACSR                   ADD  3         LINCNT
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+     C*
+     C*        See if we should print the "after" combo warning.
+     C*
+     C****       OPCWRA    IFEQ 'Y'
+     C***                  WRITEWARNCMBA
+     C****                 EXSR LBLCMA
+     C****                 ENDIF
+     C*
+     C****                 OTHER
+     C*
+     C*     Or print individual labels.
+     C*
+402 AC****                 MOVE *OFF      COMBO
+     C****       1         DO   LWQPCK    W1PICK
+     C***                  WRITEPICK
+     C****                 EXSR LBLPCK
+     C****                 ENDDO
+     C*
+     C****                 ENDSL
+     C*
+     C*     See if we should print the "after" um warning.
+     C*
+     C****       LWUTYP    IFNE 'N'
+     C****       OPUWRA    ANDEQ'Y'
+     C***                  WRITEWARNUMA
+     C****                 EXSR LBLUMA
+     C****                 ENDIF
+     C*
+     C*     Print catch weight labels.
+     C*
+     CSR         ITCWGT    IFEQ 'Y'
+     C****       OPCWGT    ANDNE0
+     CSR         LWQPCK    DIV  10        LINS    30
+     CSR                   MVR            REMAIN  20
+     CSR         REMAIN    IFNE 0
+     CSR                   ADD  1         LINS
+     CSR                   ENDIF
+     CSR         1         DO   LINS      Z1      30
+     CSR         Z1        IFEQ LINS
+     CSR         REMAIN    ANDGT0
+     CSR                   Z-ADDREMAIN    DOX     20
+     CSR                   ELSE
+     CSR                   Z-ADD10        DOX
+     CSR                   ENDIF
+     CSR                   Z-ADD1         Z2      30
+     CSR                   MOVE *BLANKS   CW
+     CSR         1         DO   DOX
+     CSR                   MOVEA'_____'   CW,Z2
+     CSR                   ADD  5         Z2
+     CSR                   MOVEA'_____'   CW,Z2
+     CSR                   ADD  7         Z2
+     CSR                   ENDDO
+     CSR                   MOVEACW        W1WGT
+     CSR                   WRITECACHWT
+     C****                 EXSR LBLCWT
+     CSR                   ENDDO
+415aACSR                   ADD  LINS      LINCNT
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     C*   Print summary for this set of selection labels.
+     C*
+     CSR                   EXSR SETEND
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+404 AC*  PRTXDK  Print cross dock labels.
+     C*
+404 ACSR         PRTXDK    BEGSR
+     C*
+     C*
+404 AC*   Loop through selection labels for transaction.
+404 AC*
+404 ACSR                   Z-ADD0         COUNT   50
+404 ACSR                   MOVE 'O'       KYLTYP
+404 AC*
+409 ACSR         $PGEN     IFEQ 1
+409 DC*R         KEYL32    SETLLLABEL34
+404 ACSR         KEYL32    SETLLWORKLB32
+409 ACSR                   ELSE
+404 ACSR         KEYL32    SETLLWORKLB32
+409 ACSR                   ENDIF
+404 AC*
+404 ACSR         FOREVR    DOUNEFOREVR
+409 ACSR         $PGEN     IFEQ 1
+409 DC*R         KEYL32    READELABEL34                  78
+404 ACSR         KEYL32    READEWORKLB32                 78
+409 ACSR                   ELSE
+404 ACSR         KEYL32    READEWORKLB32                 78
+409 ACSR                   ENDIF
+404 ACSR         *IN78     IFEQ *ON
+404 ACSR                   LEAVE
+404 ACSR                   ENDIF
+404 AC*
+404 AC*
+404 AC*     Skip label if not cross dock.
+404 AC*
+404 ACSR         LWSTYP    IFNE 'X'
+404 ACSR                   ITER
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     Skip label if nothing was picked.
+404 AC*
+404 ACSR         LWQPCK    IFEQ 0
+404 ACSR                   ITER
+404 ACSR                   ENDIF
+404 AC*
+404 ACSR                   ADD  1         COUNT
+404 AC*
+404 AC*   Print warning "Cross dock labels next".
+404 AC*
+404 ACSR         COUNT     IFEQ 1
+404 ACSR                   WRITEXDCK
+404 AC****                 EXSR LBLXDB
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     See if we should print the "before" um warning.
+404 AC*
+404 ACSR         LWUTYP    IFNE 'N'
+404 ACSR         OPUWRB    ANDEQ'Y'
+404 AC****                 EXSR LBLUMB
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     Initialize label fields.
+404 AC*
+404 ACSR                   Z-ADDLWQPCK    W1QTY2
+404 AC****                 EXSR CRTSTP
+404 AC*
+404 AC*     Either print a combination label ...
+404 AC*
+404 AC****                 SELEC
+404 AC****       LWQPCK    WHGE OPCLVL
+404 AC****                 MOVE *ON       COMBO   1
+404 AC*
+404 AC*        See if we should print the "before" combo warning.
+404 AC*
+404 AC****       OPCWRB    IFEQ 'Y'
+404 AC****                 EXSR LBLCMB
+404 AC****                 ENDIF
+404 AC*
+404 AC*        Print one label.
+404 AC*
+404 ACSR                   Z-ADDLWQPCK    W1PICK
+417 DC*R                   MOVELLWITEM    W1ITEM
+417  CSR                   MOVELODOITM    DSOITM
+417  CSR                   MOVELDSAITM    W1ITEM
+417  CSR                   MOVE *BLANKS   W1DISP
+417  CSR                   MOVELDSALOC    W1DISP
+412bACSR         LWASL2    IFEQ 'OUT'
+412bACSR                   MOVE 'OUT'     W1OUT
+412bACSR                   ELSE
+412bACSR                   MOVE '   '     W1OUT
+412bACSR                   ENDIF
+415 ACSR                   EXSR ZZOFLO
+404 ACSR                   WRITEPICK
+415 ACSR                   ADD  1         LINCNT
+404 AC****                 EXSR LBLPCK
+     CSR         *IN90     IFEQ *ON
+415 ACSR                   Z-ADD0         LINCNT
+     CSR                   WRITESETHD
+     CSR                   WRITESETHED2
+415 ACSR                   ADD  3         LINCNT
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+404 AC*
+404 AC*        See if we should print the "after" combo warning.
+404 AC*
+404 AC****       OPCWRA    IFEQ 'Y'
+404 AC****                 EXSR LBLCMA
+404 AC****                 ENDIF
+404 AC*
+404 AC****                 OTHER
+404 AC*
+404 AC*     Or print individual labels.
+404 AC*
+402 AC****                 MOVE *OFF      COMBO
+404 AC****       1         DO   LWQPCK    W1PICK
+404 AC****                 EXSR LBLPCK
+404 AC****                 ENDDO
+404 AC*
+404 AC****                 ENDSL
+404 AC*
+404 AC*     See if we should print the "after" um warning.
+404 AC*
+404 ACSR         LWUTYP    IFNE 'N'
+404 ACSR         OPUWRA    ANDEQ'Y'
+404 AC****                 EXSR LBLUMA
+404 ACSR                   ENDIF
+404 AC*
+404 AC*     Print catch weight labels.
+404 AC*
+404 ACSR         ITCWGT    IFEQ 'Y'
+     CSR         LWQPCK    DIV  10        LINS    30
+     CSR                   MVR            REMAIN  20
+     CSR         REMAIN    IFNE 0
+     CSR                   ADD  1         LINS
+     CSR                   ENDIF
+     CSR         1         DO   LINS      Z1      30
+     CSR         Z1        IFEQ LINS
+     CSR         REMAIN    ANDGT0
+     CSR                   Z-ADDREMAIN    DOX     20
+     CSR                   ELSE
+     CSR                   Z-ADD10        DOX
+     CSR                   ENDIF
+     CSR                   Z-ADD1         Z2      30
+     CSR                   MOVE *BLANKS   CW
+     CSR         1         DO   DOX
+     CSR                   MOVEA'_____'   CW,Z2
+     CSR                   ADD  5         Z2
+     CSR                   MOVEA'_____'   CW,Z2
+     CSR                   ADD  7         Z2
+     CSR                   ENDDO
+     CSR                   MOVEACW        W1WGT
+     CSR                   WRITECACHWT
+     C****                 EXSR LBLCWT
+     CSR                   ENDDO
+415aACSR                   ADD  LINS      LINCNT
+404 ACSR                   ENDIF
+404 AC*
+404 ACSR                   ENDDO
+404 AC*
+404 AC*
+404 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETBEG  Start new set of labels.
+     C*
+     CSR         SETBEG    BEGSR
+     C*
+     C*   Print set header label.
+     C*
+415 ACSR                   Z-ADD0         LINCNT  30
+     CSR                   Z-ADDLSTTRN    LWTRN#
+     CSR                   Z-ADDLWTRN#    W1TRN#
+     CSR                   MOVE *ON       *IN81
+     CSR                   WRITESETHD
+415 ACSR                   ADD  2         LINCNT
+     CSR                   MOVE *OFF      *IN81
+     C****                 EXSR LBLSHD
+     C*
+     C*   Print pallet summary.
+     C*
+     CSR                   WRITEPLTSUMH
+415 ACSR                   ADD  1         LINCNT
+     C****                 EXSR LBLPSH
+     CSR         1         DO   PALCNT    CURPAL  20
+     CSR         CURPAL    OCUR PALSUM
+     CSR                   Z-ADDDSPPAL    W1PAL#
+     CSR                   Z-ADDDSPSTP    W1PSTP  30
+     CSR                   Z-ADDDSPCUB    W1PCUB  63
+     CSR                   Z-ADDDSPWGT    W1PWGT  72
+     CSR                   Z-ADDDSPPCS    W1PPCS  50
+     CSR                   WRITEPLTSUMD
+415 ACSR                   ADD  1         LINCNT
+     C****                 EXSR LBLPSD
+     CSR                   ENDDO
+     C****                 EXSR ZZFILL
+     C****                 EXSR PRINT
+     C*
+     CSR                   WRITESETHED2
+415 ACSR                   ADD  1         LINCNT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SETEND  End set of labels.
+     C*
+     CSR         SETEND    BEGSR
+     C*
+404 AC*   Print cross dock labels.
+     C*
+404 ACSR                   EXSR PRTXDK
+     C*
+     C*   Print discrepancy labels.
+     C*
+     CSR         OPERR     IFNE 0
+     CSR         COUNT     DIV  OPERR     LBLS    30
+     CSR                   MVR            REMAIN  20
+     CSR         REMAIN    IFNE 0
+     CSR                   ADD  1         LBLS
+     CSR                   ENDIF
+     CSR         1         DO   LBLS
+     C***                  WRITEDISCREP
+     C****                 EXSR LBLDIS
+     CSR                   ENDDO
+     CSR                   ENDIF
+     C*
+     C*   Print merge summary(s) for transaction.
+     C*
+     C*     Loop through selection labels for transaction.
+     C*
+     CSR                   MOVE *ON       FIRST2  1
+     CSR                   MOVE 'M'       KYLTYP
+406 ACSR                   Z-ADD0         S
+     C*
+409 ACSR         $PGEN     IFEQ 1
+409 DC*R         KEYL32    SETLLLABEL34
+409 ACSR         KEYL32    SETLLWORKLB32
+409 ACSR                   ELSE
+     CSR         KEYL32    SETLLWORKLB32
+409 ACSR                   ENDIF
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+409 ACSR         $PGEN     IFEQ 1
+409 DC*R         KEYL32    READELABEL34                  78
+409 ACSR         KEYL32    READEWORKLB32                 78
+409 ACSR                   ELSE
+     CSR         KEYL32    READEWORKLB32                 78
+409 ACSR                   ENDIF
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*       Put together zone from label fields.
+     C*
+     CSR                   MOVELLWWHDP    TMPZON
+     CSR                   MOVE LWSTYP    TMPZON
+     C*
+417 DC*R                   MOVELLWITEM    W1ITEM
+417  CSR                   MOVELODOITM    DSOITM
+417  CSR                   MOVELDSAITM    W1ITEM
+417  CSR                   MOVE *BLANKS   W1DISP
+417  CSR                   MOVELDSALOC    W1DISP
+     C*
+     C*       First time through initialization.
+     C*
+     CSR         FIRST2    IFEQ *ON
+     CSR                   MOVE TMPZON    LSTZON
+     CSR                   Z-ADDLWSTOP    W1RSTP  20
+404 ACSR                   EXSR GETPAL
+404 ACSR                   Z-ADDPAL#      W1PAL#
+     CSR                   WRITEZONSUMH
+     C****                 EXSR LBLZPH
+     CSR                   Z-ADD0         TTLCUB  83
+     CSR                   Z-ADD0         TTLWGT  92
+     CSR                   Z-ADD0         TTLPCS  70
+404 ACSR                   Z-ADD0         W1RCUB  63
+404 ACSR                   Z-ADD0         W1RWGT  72
+404 ACSR                   Z-ADD0         W1RPCS  50
+     CSR                   Z-ADD0         S       30
+     CSR                   MOVE *OFF      FIRST2
+     CSR                   ENDIF
+405 DC*
+405 DC*       When zone or stop changes, print detail line.
+405 DC*
+405 DC*          TMPZON    IFNE LSTZON
+405 DC*          LWSTOP    ORNE W1RSTP
+404 ACSR                   EXSR GETPAL
+404 ACSR                   Z-ADDPAL#      W1PAL#
+405 DC***                  WRITEPIRSUMD
+405 DC*                    ADD  1         S
+405 DC*          S         IFGT 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ENDIF
+405 DC*                    EXSR LBLZSD
+405 DC*                    ADD  W1RCUB    TTLCUB
+405 DC*                    ADD  W1RWGT    TTLWGT
+405 DC*                    ADD  W1RPCS    TTLPCS
+405 DC*                    Z-ADD0         W1RCUB
+405 DC*                    Z-ADD0         W1RWGT
+405 DC*                    Z-ADD0         W1RPCS
+405 DC*                    Z-ADDLWSTOP    W1RSTP
+405 DC*                    ENDIF
+     C*
+     C*       When zone changes, print summary totals.
+     C*
+     CSR         TMPZON    IFNE LSTZON
+405 DC***                  WRITEPIRSUML
+405 DC***                  WRITEPIRSUMT
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S       30
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L       30
+405 DC*                    EXSR PIRSUL
+405 DC*
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L
+405 DC*                    EXSR PIRSUT
+     C****                 EXSR ZZFILL
+     C****                 EXSR PRINT
+     CSR                   Z-ADD0         TTLCUB  83
+     CSR                   Z-ADD0         TTLWGT  92
+     CSR                   Z-ADD0         TTLPCS  70
+     CSR                   Z-ADD0         S       30
+     CSR                   MOVE TMPZON    LSTZON
+403 ACSR                   WRITEZONSUMH
+403 AC****                 EXSR LBLZPH
+     CSR                   ENDIF
+     C*
+     C*       Update summary amounts for stop.
+     C*
+405 DC*                    ADD  LWCUBE    W1RCUB
+405 MCSR                   Z-ADDLWCUBE    W1RCUB
+405 DC*                    ADD  LWSWGT    W1RWGT
+405 MCSR                   Z-ADDLWSWGT    W1RWGT
+405 DC*                    ADD  LWQPCK    W1RPCS
+405 MCSR                   Z-ADDLWQPCK    W1RPCS
+     CSR                   MOVELOHCNAM    W1RCNM 30
+405 AC*
+405 AC*       Print detail line.
+405 AC*
+404 ACSR                   EXSR GETPAL
+404 ACSR                   Z-ADDPAL#      W1PAL#
+405 ACSR                   Z-ADDLWSTOP    W1RSTP
+405 AC***                  WRITEPIRSUMD
+405 ACSR                   ADD  1         S
+405 ACSR         S         IFGT 9
+405 ACSR                   Z-ADD1         S
+405 ACSR                   ENDIF
+     CSR         LWITEM    CAT  '-':1     IX        P
+     CSR         IX        CAT  ITDESC:1  IX        P
+     CSR         *IN90     IFEQ *ON
+415 ACSR                   Z-ADD0         LINCNT
+     CSR                   WRITESETHD
+     CSR                   WRITEZONSUMH
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+405 ACSR                   WRITEZONSUMD
+405 AC****                 EXSR LBLZPD
+405 ACSR                   ADD  W1RCUB    TTLCUB
+405 ACSR                   ADD  W1RWGT    TTLWGT
+405 ACSR                   ADD  W1RPCS    TTLPCS
+     C*
+     CSR                   ENDDO
+405 AC*
+405 AC*     Force printing of label.
+405 AC*
+405 ACSR         S         IFGT 0
+405 ACSR         S         ANDLT9
+405 AC****                 EXSR ZZFILL
+405 AC****                 EXSR PRINT
+405 ACSR                   ENDIF
+405 DC*
+405 DC*     Print leftovers.
+405 DC*
+405 DC*          FIRST2    IFEQ *OFF
+405 DC*
+405 DC*       Detail line.
+405 DC*
+405 DC***                  WRITEPIRSUMD
+405 DC*                    ADD  1         S
+405 DC*          S         IFGT 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ENDIF
+405 DC*                    EXSR PIRSUD
+405 DC*                    ADD  W1RCUB    TTLCUB
+405 DC*                    ADD  W1RWGT    TTLWGT
+405 DC*                    ADD  W1RPCS    TTLPCS
+405 DC*
+405 DC*       Summary totals.
+405 DC*
+405 DC***                  WRITEPIRSUML
+405 DC***                  WRITEPIRSUMT
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S       30
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L       30
+405 DC*                    EXSR PIRSUL
+405 DC*
+405 DC*          S         IFEQ 9
+405 DC*                    Z-ADD1         S
+405 DC*                    ELSE
+405 DC*                    ADD  1         S
+405 DC*                    ENDIF
+405 DC*                    Z-ADDS         L
+405 DC*                    EXSR PIRSUT
+405 DC*                    EXSR ZZFILL
+405 DC*                    EXSR PRINT
+405 DC*                    ENDIF
+     C*
+     C*
+     C*   Print set summary for transaction.
+     C*
+     C*     Print header label.
+     C*
+     CSR                   WRITESETSUMH
+     C****                 EXSR LBLSSH
+     C*
+     C*     Loop through all labels for transaction.
+     C*
+     CSR                   MOVE *ON       FIRST2  1
+     CSR         KEYL33    SETLLWORKLB33
+     C*
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYL33    READEWORKLB33                 78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*       First time through initialization.
+     C*
+     CSR         FIRST2    IFEQ *ON
+     CSR                   Z-ADDLWSTOP    W1SSTP  20
+     CSR                   Z-ADD0         W1SCUB  63
+403 ACSR                   Z-ADD0         W1SWGT  72
+403 DC**                   Z-ADD0         W1SWGT  70
+     CSR                   Z-ADD0         W1SPCS  50
+     CSR                   MOVE *BLANKS   W1SCNM 30
+     CSR                   Z-ADD0         TTLCUB  83
+     CSR                   Z-ADD0         TTLWGT  92
+     CSR                   Z-ADD0         TTLPCS  70
+     CSR                   Z-ADD0         S       30
+     CSR                   MOVE *OFF      FIRST2
+     CSR                   ENDIF
+     C*
+     C*       When stop changes, print detail line.
+     C*
+     CSR         LWSTOP    IFNE W1SSTP
+     C***                  WRITESETSUMD
+     CSR                   ADD  1         S
+     CSR         S         IFGT 9
+     CSR                   Z-ADD1         S
+     CSR                   ENDIF
+     CSR         *IN90     IFEQ *ON
+415 ACSR                   Z-ADD0         LINCNT
+     CSR                   WRITESETHD
+     CSR                   WRITESETSUMH
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+     CSR                   WRITESETSUMD
+     C****                 EXSR LBLSSD
+     CSR                   ADD  W1SCUB    TTLCUB
+     CSR                   ADD  W1SWGT    TTLWGT
+     CSR                   ADD  W1SPCS    TTLPCS
+     CSR                   Z-ADD0         W1SCUB
+     CSR                   Z-ADD0         W1SWGT
+     CSR                   Z-ADD0         W1SPCS
+     CSR                   Z-ADDLWSTOP    W1SSTP
+     CSR                   ENDIF
+     C*
+     C*       Update summary amounts for stop.
+     C*
+     CSR                   ADD  LWCUBE    W1SCUB
+     CSR                   ADD  LWSWGT    W1SWGT
+417 DC*R                   ADD  LWQPCK    W1SPCS
+417 MCSR                   ADD  LWQALC    W1SPCS
+     CSR                   MOVELOHCNAM    W1SCNM 30
+     C*
+     CSR                   ENDDO
+     C*
+     C*     Print last stop and totals.
+     C*
+     CSR         FIRST2    IFEQ *OFF
+     C*
+     C*       Detail line.
+     C*
+     C***                  WRITESETSUMD
+     CSR                   ADD  1         S
+     CSR         S         IFGT 9
+     CSR                   Z-ADD1         S
+     CSR                   ENDIF
+     CSR         *IN90     IFEQ *ON
+415 ACSR                   Z-ADD0         LINCNT
+     CSR                   WRITESETHD
+     CSR                   WRITESETSUMH
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+     CSR                   WRITESETSUMD
+     C****                 EXSR LBLSSD
+     CSR                   ADD  W1SCUB    TTLCUB
+     CSR                   ADD  W1SWGT    TTLWGT
+     CSR                   ADD  W1SPCS    TTLPCS
+     C*
+     C*       Summary totals.
+     C*
+     C***                  WRITESETSUML
+     C***                  WRITESETSUMT
+     CSR         S         IFEQ 9
+     CSR                   Z-ADD1         S       30
+     CSR                   ELSE
+     CSR                   ADD  1         S
+     CSR                   ENDIF
+     CSR                   Z-ADDS         L       30
+     CSR                   WRITESETSUML
+     C****                 EXSR LBLSSL
+     C*
+     CSR         S         IFEQ 9
+     CSR                   Z-ADD1         S
+     CSR                   ELSE
+     CSR                   ADD  1         S
+     CSR                   ENDIF
+     CSR                   Z-ADDS         L
+     CSR                   WRITESETSUMT
+     C****                 EXSR LBLSST
+     C****                 EXSR ZZFILL
+     C****                 EXSR PRINT
+     CSR                   ENDIF
+     C*
+     C*
+     C*  End of transaction, force print.
+     C*
+     CSR                   Z-ADDLMAX      LCOUNT
+     CSR                   WRITESETFOOT
+     C****                 EXSR PRINT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  TEST1   Test 1 - Print label definitions
+     C*
+     CSR         TEST1     BEGSR
+     C*
+     CSR                   MOVE *BLANKS   OPPDEV
+     CSR                   MOVEL'LABELS'  OPPDEV
+     CSR                   MOVE *BLANKS   OPPFRM
+     CSR                   MOVEL'*STD'    OPPFRM
+     CSR                   EXSR OPNPRT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+415 AC*  ZZOFLO  Page Overflow
+     C*
+415 ACSR         ZZOFLO    BEGSR
+     CSR                   Z-ADD0         WRKCNT  30
+     CSR                   Z-ADD0         LINS
+     C*  Count how many CW lines to be printed.
+     CSR         ITCWGT    IFEQ 'Y'
+     CSR         LWQPCK    DIV  10        LINS
+     CSR                   MVR            REMAIN
+     CSR         REMAIN    IFNE 0
+     CSR                   ADD  1         LINS
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*  Add CW lines to be printed to line count.
+     CSR         LINCNT    ADD  LINS      WRKCNT
+415aMC*  Go to next page, if total count >= 27.
+415aMCSR         WRKCNT    IFGE 27
+415aDC***        WRKCNT    IFGT 32
+     CSR                   MOVE *ON       *IN90
+415aACSR                   Z-ADD0         LINCNT
+     CSR                   WRITESETHD
+     CSR                   WRITESETHED2
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ENDIF
+     C*
+415 ACSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**   OVRPRTF statment
+OVRPRTF FILE(PLST40PC) OUTQ(*DEV) DEV(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)
+CPI(12) PAGRTT(90)

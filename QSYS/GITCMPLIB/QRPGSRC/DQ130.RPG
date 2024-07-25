@@ -1,0 +1,1640 @@
+     F*----------------------------------------------------------------
+     F***** THIS IS NOT A STANDARD LIST DISPLAY PROGRAM  *****
+     F*****                                              *****
+     F*****   - Uses a Load-All subfile technique.       *****
+     F*****   - Does not use allow options.              *****
+     F*****                                              *****
+     F*----------------------------------------------------------------
+     F*
+     F*  DQ130   Work with daily quantities - Item Quantities
+     F*  28 June 2001
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+415 AF*   06/28/01  DAS  4.15
+     F*     - Created.
+417aAF*    08/11/04  RH   4.17a
+     F*      - Fix: Revised to call GETSLOTITM, if the item was an
+     F*        alias item for a SSB item, GETBASE would return the SSB
+     F*        item which is not a slot item.
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes
+     F*
+     F*    The program uses a Load All subfile technique.
+     F*
+     F*    This program uses to display subfiles to show more than one
+     F*    view of the record. To see what was changed search for VW2
+     F*    starting in column 1.
+     F*
+     F*    Allowed F17 and F18 for positioning to top and bottom.
+     F*
+     F*    Created a second line for commands.
+     F*
+     F*    CMD5 changed to chain and update each view seperately.
+     F*
+     F*    RECNO used for all subfiles, SFLRCDNBR not used in format member.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  20        Position Cursor
+     F*  21 - 29   Field Input Error (Reverse Display)
+     F*  79        Chain Indicator
+     F*  81        Display subfile records (SFLDSP)
+     F*  82        Display subfile screen (SFLDSPCTL)
+     F*  83        Clear subfile (SFLCLR)
+     F*  84        Allow subfile to display '+' (SFLEND)
+     F*  85        Manually set subfile change flag (SFLNXTCHG)
+     F*  90        Protect Input Fields for Delete Display
+     F*  97        Always ON (Used for SFLEND Keyword)
+     F*  98        Error on screen (Sound Buzzer)
+     F*  99        Universal Record Indicator (Very Temporary Usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FDQ130FM CF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        RECNO KSFILE DSPSFL
+VW2 AF                                        RECNO KSFILE VW2SFL
+VW2 AF                                        RECNO KSFILE VW3SFL
+     F                                        MSGK  KSFILE MSGREC
+     FDLYQTY  IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+413 AFUNMESR  IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+413 AE                    A22        22  1
+     E                    $MD       128  1
+VW2 DE*                   CMDLN   1   1 79
+VW2 ME                    CMDLN   1   6 79
+     E                    DESC    1   2 30
+     E                    LBL     1   3 22
+     E                    TYP     1   1 10
+     E                    DSC     1  30 19
+     I*----------------------------------------------------------------
+     I*  Partial key redefinition
+     I*
+     I$PRTKY      DS
+     I                                        1  50 $LEN50
+     I                                        1   80$KRDTE
+     I                                        9  140$KRTIM
+     I                                       15  170$KWHSE
+     I                                       18  32 $KITEM
+     I*----------------------------------------------------------------
+     I*  Data structure for FKEY and UKEY
+     I*
+     I            DS
+     I                                        1  50 DSFKEY
+     I                                        1  50 DSUKEY
+     I I            0                         1   80DQRDTE
+     I I            0                         9  140DQRTIM
+     I I            0                        15  170DQWHSE
+     I                                       18  32 DQITEM
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'FRMTIT'              C         @FMTIT
+     I              'CVTDTE'              C         @CVTDT
+417aAI              'GETSLOTITM'          C         @GETSI
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERRCL1
+     I                                       11  16 ERRCL2
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PRTKY  Partial key
+     C*
+     C*    Returned Parameters
+     C*      $RTNCD  *EXIT    - CMD3 was entered
+     C*              *CANCEL  - CMD12 was entered
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PRTKY 50
+     C                     PARM           $RTNCD  8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE '1'       *IN97
+     C                     MOVE *BLANKS   $RTNCD
+     C                     EXSR ZZINZ2
+     C           NXTSCR    DOWNE'EOJ'
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+     C                     END
+     C                     END
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     EXSR ZSCLR
+     C                     SETON                     LR
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ '1'
+     CSR                   MOVE '1'       *IN98
+     CSR                   END
+     C*
+     C*   Set OFF command key indicators
+     C*
+     CSR                   SETOF                     KCKEKF
+     CSR                   SETOF                     KL
+     C*
+     C*   Overlay screen with title
+     C*
+     CSR                   WRITETITLE
+     C*
+     C*   Overlay screen with error messages
+     C*
+     CSR                   EXSR ZMDMSG
+     C*
+     C*   Overlay screen with subfile screen
+     C*
+     CSR         NXTSCR    IFEQ '01 '
+     CSR                   EXSR SFLDSP
+     C***                  READ DSPSFC                   50
+     CSR                   END
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     2021
+     CSR                   SETOF                     98
+     CSR                   MOVE '0'       WARN    1
+     CSR                   MOVE '0'       ERROR   1
+     CSR                   MOVE '0'       CANCEL  1
+     CSR                   Z-ADD0         E       20
+     C*
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+VW2 ACSR                   SELEC
+VW2 ACSR         VIEW      WHEQ 1
+     CSR                   READ DSPSFC                   50
+VW2 ACSR         VIEW      WHEQ 2
+VW2 ACSR                   READ VW2SFC                   50
+VW2 ACSR         VIEW      WHEQ 3
+VW2 ACSR                   READ VW3SFC                   50
+VW2 ACSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     Screen initialization and wrap-up routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 01 initialization
+     C*
+     CSR         SCR01I    BEGSR
+     CSR                   MOVE '01 '     NXTSCR  3
+     CSR                   EXSR ZZFIL1
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen 1
+     C*
+     CSR         SC1       BEGSR
+     CSR         STATUS    CASEQCOMAND    CMD01
+     CSR                   CAS            ENT01
+     CSR                   END
+     CSR         ENDSC1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01122     ROLLUP  50
+     C                     Z-ADD01123     ROLLDN  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*  Initialize subfile (DSPSFL) record
+     C*
+     C                     Z-ADD1         RECNO
+     C                     WRITEDSPSFL                 79
+VW2 AC                     WRITEVW2SFL                 79
+VW2 AC                     WRITEVW3SFL                 79
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CMD01    Screen 1 command key routine
+     C*
+     CSR         CMD01     BEGSR
+     C*
+     C*  TEST FOR CMD3 - EXIT
+     C*
+     CSR         *INKC     IFEQ '1'
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$RTNCD
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  TEST FOR CMD12 - PREVIOUS
+     C*
+     CSR         *INKL     IFEQ '1'
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$RTNCD
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*   Process non-standard function keys.
+     C*
+     CSR                   EXSR ZZCMD
+     CSR         CMD01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ENT01    Screen 1 enter key routine
+     C*
+     CSR         ENT01     BEGSR
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR         ENT01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLADD   Add record to subfile
+     C*
+     CSR         SFLADD    BEGSR
+     CSR                   ADD  1         RECCNT
+     CSR                   Z-ADDRECCNT    RECNO
+     C*
+     C*  WRITE DISPLAY LINE TO SUBFILE
+     C*
+     CSR                   WRITEDSPSFL
+VW2 ACSR                   WRITEVW2SFL
+VW2 ACSR                   WRITEVW3SFL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLCLR   Clear display subfile
+     C*
+     CSR         SFLCLR    BEGSR
+     C*
+     C*  CLEAR DISPLAY SUBFILE
+     C*
+     CSR                   MOVE *OFF      *IN81
+     CSR                   MOVE *OFF      *IN82
+     CSR                   MOVE *ON       *IN83
+     CSR                   MOVE *ON       *IN84
+     C*
+     CSR                   WRITEDSPSFC
+VW2 ACSR                   WRITEVW2SFC
+VW2 ACSR                   WRITEVW3SFC
+     CSR                   Z-ADD0         RECCNT  40
+     CSR                   Z-ADD1         POSREC  40
+     CSR                   Z-ADD0         RECNO   40
+     C*
+     CSR                   MOVE *ON       *IN82
+     CSR                   MOVE *OFF      *IN83
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLDSP   Display subfile
+     C*
+     CSR         SFLDSP    BEGSR
+     C*
+     C*  WRITE OPTION AND COMMAND LINES TO DISPLAY
+     C*
+     CSR                   WRITECMDREC
+     C*
+     C*  WRITE SUBFILE TO DISPLAY
+     C*
+     CSR                   MOVE *ON       *IN81
+     CSR                   Z-ADD1         RECNO
+VW2 ACSR                   SELEC
+VW2 ACSR         VIEW      WHEQ 1
+     CSR                   WRITEDSPSFC
+VW2 ACSR         VIEW      WHEQ 2
+VW2 ACSR                   WRITEVW2SFC
+VW2 ACSR         VIEW      WHEQ 3
+VW2 ACSR                   WRITEVW3SFC
+VW2 ACSR                   ENDSL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM #PROG     #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C*R                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM '*PREV'   #PGMQ
+     CSR                   PARM           #MSGK
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*      0101  Program not found.
+     C*
+     CSR         ZM0101    BEGSR
+     CSR                   MOVE 'PIR0101' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     C*R                   MOVE CLPRGM    ERRCL1
+     C*R                   MOVE CLINFO    ERRCL2
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0102  Program not found.
+     C*
+     CSR         ZM0102    BEGSR
+     CSR                   MOVE 'PIR0102' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     C*R                   MOVE CLPRGM    ERRCL1
+     C*R                   MOVE CLINFO    ERRCL2
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0103  Program not found while exec. subroutine.
+     C*
+     CSR         ZM0103    BEGSR
+     CSR                   MOVE 'PIR0103' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     C*R                   MOVE CLPRGM    ERRCL1
+     C*R                   MOVE CLINFO    ERRCL2
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0104  Pressed an invalid key.
+     C*
+     CSR         ZM0104    BEGSR
+     CSR                   MOVE 'PIR0104' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0105
+     C*
+     CSR         ZM0105    BEGSR
+     CSR                   MOVE 'PIR0105' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD    Process non-standard function keys
+     C*
+     CSR         ZZCMD     BEGSR
+     CSR         ENDCM1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFILL   Fill display line with values that need
+     C*           to be converted.
+     C*
+     CSR         ZZFIL1    BEGSR
+     C*
+     C*   Get DLYQTY record.
+     C*
+     CSR         KEYDQ     CHAINDLYQTY               79
+     C*
+     C*   Clear an existing subfile records.
+     C*
+     CSR                   EXSR SFLCLR
+     C*
+     C*   Start quantities
+     C*
+     CSR                   MOVELDSC,1     W1TYPE
+     CSR                   Z-ADD0         W1QTY1
+     CSR                   Z-ADD0         W1QTY2
+     CSR                   Z-ADD0         W1QTY3
+     CSR                   Z-ADDD1STK1    W1STK1
+     CSR                   Z-ADDD1STK2    W1STK2
+     CSR                   Z-ADDD1STK3    W1STK3
+     CSR                   Z-ADDD1ALC1    W1ALC1
+     CSR                   Z-ADDD1ALC2    W1ALC2
+     CSR                   Z-ADDD1ALC3    W1ALC3
+     CSR                   EXSR SFLADD
+     CSR                   Z-ADDW1STK1    @STK1
+     CSR                   Z-ADDW1STK2    @STK2
+     CSR                   Z-ADDW1STK3    @STK3
+     CSR                   Z-ADDW1ALC1    @ALC1
+     CSR                   Z-ADDW1ALC2    @ALC2
+     CSR                   Z-ADDW1ALC3    @ALC3
+     C*
+     C*   Adj-Out
+     C*
+     CSR                   MOVELDSC,2     W1TYPE
+     CSR                   Z-ADDDQAOC1    W1QTY1
+     CSR                   Z-ADDDQAOC2    W1QTY2
+     CSR                   Z-ADDDQAOC3    W1QTY3
+     CSR                   Z-SUBW1QTY1    W1STK1
+     CSR                   Z-SUBW1QTY2    W1STK2
+     CSR                   Z-SUBW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ENDIF
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Adj-In
+     C*
+     CSR                   MOVELDSC,3     W1TYPE
+     CSR                   Z-ADDDQAIC1    W1QTY1
+     CSR                   Z-ADDDQAIC2    W1QTY2
+     CSR                   Z-ADDDQAIC3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rcv-Direct-Open
+     C*
+     CSR                   MOVELDSC,4     W1TYPE
+     CSR                   Z-ADDDQRDO1    W1QTY1
+     CSR                   Z-ADDDQRDO2    W1QTY2
+     CSR                   Z-ADDDQRDO3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rcv-Direct-Closed
+     C*
+     CSR                   MOVELDSC,5     W1TYPE
+     CSR                   Z-ADDDQRDC1    W1QTY1
+     CSR                   Z-ADDDQRDC2    W1QTY2
+     CSR                   Z-ADDDQRDC3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rcv-Manual-Open
+     C*
+     CSR                   MOVELDSC,6     W1TYPE
+     CSR                   Z-ADDDQRMO1    W1QTY1
+     CSR                   Z-ADDDQRMO2    W1QTY2
+     CSR                   Z-ADDDQRMO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rcv-Manual-Closed
+     C*
+     CSR                   MOVELDSC,7     W1TYPE
+     CSR                   Z-ADDDQRMC1    W1QTY1
+     CSR                   Z-ADDDQRMC2    W1QTY2
+     CSR                   Z-ADDDQRMC3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rtn-Direct-Open
+     C*
+     CSR                   MOVELDSC,8     W1TYPE
+     CSR                   Z-ADDDQNDO1    W1QTY1
+     CSR                   Z-ADDDQNDO2    W1QTY2
+     CSR                   Z-ADDDQNDO3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rtn-Direct-Closed
+     C*
+     CSR                   MOVELDSC,9     W1TYPE
+     CSR                   Z-ADDDQNDC1    W1QTY1
+     CSR                   Z-ADDDQNDC2    W1QTY2
+     CSR                   Z-ADDDQNDC3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rtn-Manual-Open
+     C*
+     CSR                   MOVELDSC,10    W1TYPE
+     CSR                   Z-ADDDQNMO1    W1QTY1
+     CSR                   Z-ADDDQNMO2    W1QTY2
+     CSR                   Z-ADDDQNMO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rtn-Manual-Closed
+     C*
+     CSR                   MOVELDSC,11    W1TYPE
+     CSR                   Z-ADDDQNMC1    W1QTY1
+     CSR                   Z-ADDDQNMC2    W1QTY2
+     CSR                   Z-ADDDQNMC3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Picked - Open
+     C*
+     CSR                   MOVELDSC,12    W1TYPE
+     CSR                   Z-ADDDQPKO1    W1QTY1
+     CSR                   Z-ADDDQPKO2    W1QTY2
+     CSR                   Z-ADDDQPKO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADDW1QTY1    W1ALC1
+     CSR                   Z-ADDW1QTY2    W1ALC2
+     CSR                   Z-ADDW1QTY3    W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Picked - OUT - Open
+     C*
+     CSR                   MOVELDSC,29    W1TYPE
+     CSR                   Z-ADDDQPOO1    W1QTY1
+     CSR                   Z-ADDDQPOO2    W1QTY2
+     CSR                   Z-ADDDQPOO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Picked-Closed
+     C*
+     CSR                   MOVELDSC,13    W1TYPE
+     CSR                   Z-ADDDQPKC1    W1QTY1
+     CSR                   Z-ADDDQPKC2    W1QTY2
+     CSR                   Z-ADDDQPKC3    W1QTY3
+     CSR                   Z-SUBW1QTY1    W1STK1
+     CSR                   Z-SUBW1QTY2    W1STK2
+     CSR                   Z-SUBW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Picked - OUT - Closed
+     C*
+     CSR                   MOVELDSC,30    W1TYPE
+     CSR                   Z-ADDDQPOC1    W1QTY1
+     CSR                   Z-ADDDQPOC2    W1QTY2
+     CSR                   Z-ADDDQPOC3    W1QTY3
+     CSR                   Z-SUBW1QTY1    W1STK1
+     CSR                   Z-SUBW1QTY2    W1STK2
+     CSR                   Z-SUBW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Tfr-Out-Open
+     C*
+     CSR                   MOVELDSC,14    W1TYPE
+     CSR                   Z-ADDDQTOO1    W1QTY1
+     CSR                   Z-ADDDQTOO2    W1QTY2
+     CSR                   Z-ADDDQTOO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Tfr-Out-Closed
+     C*
+     CSR                   MOVELDSC,15    W1TYPE
+     CSR                   Z-ADDDQTOC1    W1QTY1
+     CSR                   Z-ADDDQTOC2    W1QTY2
+     CSR                   Z-ADDDQTOC3    W1QTY3
+     CSR                   Z-SUBW1QTY1    W1STK1
+     CSR                   Z-SUBW1QTY2    W1STK2
+     CSR                   Z-SUBW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Tfr-In-Open
+     C*
+     CSR                   MOVELDSC,16    W1TYPE
+     CSR                   Z-ADDDQTIO1    W1QTY1
+     CSR                   Z-ADDDQTIO2    W1QTY2
+     CSR                   Z-ADDDQTIO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Tfr-In-Closed
+     C*
+     CSR                   MOVELDSC,17    W1TYPE
+     CSR                   Z-ADDDQTIC1    W1QTY1
+     CSR                   Z-ADDDQTIC2    W1QTY2
+     CSR                   Z-ADDDQTIC3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rpl/Len-Out-Open
+     C*
+     CSR                   MOVELDSC,20    W1TYPE
+     CSR                   Z-ADDDQLOO1    W1QTY1
+     CSR                   Z-ADDDQLOO2    W1QTY2
+     CSR                   Z-ADDDQLOO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADDW1QTY1    W1ALC1
+     CSR                   Z-ADDW1QTY2    W1ALC2
+     CSR                   Z-ADDW1QTY3    W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rpl/Len-In-Open
+     C*
+     CSR                   MOVELDSC,18    W1TYPE
+     CSR                   Z-ADDDQLIO1    W1QTY1
+     CSR                   Z-ADDDQLIO2    W1QTY2
+     CSR                   Z-ADDDQLIO3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rpl/Len-Out-Closed
+     C*
+     CSR                   MOVELDSC,21    W1TYPE
+     CSR                   Z-ADDDQLOC1    W1QTY1
+     CSR                   Z-ADDDQLOC2    W1QTY2
+     CSR                   Z-ADDDQLOC3    W1QTY3
+     CSR                   Z-SUBW1QTY1    W1STK1
+     CSR                   Z-SUBW1QTY2    W1STK2
+     CSR                   Z-SUBW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Rpl/Len-In-Closed
+     C*
+     CSR                   MOVELDSC,19    W1TYPE
+     CSR                   Z-ADDDQLIC1    W1QTY1
+     CSR                   Z-ADDDQLIC2    W1QTY2
+     CSR                   Z-ADDDQLIC3    W1QTY3
+     CSR                   Z-ADDW1QTY1    W1STK1
+     CSR                   Z-ADDW1QTY2    W1STK2
+     CSR                   Z-ADDW1QTY3    W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Other-Open
+     C*
+     CSR                   MOVELDSC,23    W1TYPE
+     CSR                   Z-ADDDQOTO1    W1QTY1
+     CSR                   Z-ADDDQOTO2    W1QTY2
+     CSR                   Z-ADDDQOTO3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Other-Closed
+     C*
+     CSR                   MOVELDSC,24    W1TYPE
+     CSR                   Z-ADDDQOTC1    W1QTY1
+     CSR                   Z-ADDDQOTC2    W1QTY2
+     CSR                   Z-ADDDQOTC3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR         W1QTY1    IFNE 0
+     CSR         W1QTY2    ORNE 0
+     CSR         W1QTY3    ORNE 0
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     CSR                   ADD  W1STK1    @STK1
+     CSR                   ADD  W1STK2    @STK2
+     CSR                   ADD  W1STK3    @STK3
+     CSR                   ADD  W1ALC1    @ALC1
+     CSR                   ADD  W1ALC2    @ALC2
+     CSR                   ADD  W1ALC3    @ALC3
+     C*
+     C*   Inv-Closed
+     C*
+     CSR         DQIFLG    IFEQ 1
+     CSR                   MOVELDSC,22    W1TYPE
+     CSR                   Z-ADDDQIVC1    W1QTY1
+     CSR                   Z-ADDDQIVC2    W1QTY2
+     CSR                   Z-ADDDQIVC3    W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     C*
+     C*   Warehouse quantities recalculated using UT812.
+     C*
+     CSR         DQQFLG    IFEQ 1
+     CSR                   MOVELDSC,28    W1TYPE
+     CSR                   Z-ADD0         W1QTY1
+     CSR                   Z-ADD0         W1QTY2
+     CSR                   Z-ADD0         W1QTY3
+     CSR                   Z-ADD0         W1STK1
+     CSR                   Z-ADD0         W1STK2
+     CSR                   Z-ADD0         W1STK3
+     CSR                   Z-ADD0         W1ALC1
+     CSR                   Z-ADD0         W1ALC2
+     CSR                   Z-ADD0         W1ALC3
+     CSR                   EXSR SFLADD
+     CSR                   ENDIF
+     C*
+     C*   End quantities
+     C*
+     CSR                   MOVELDSC,25    W1TYPE
+     CSR                   Z-ADD0         W1QTY1
+     CSR                   Z-ADD0         W1QTY2
+     CSR                   Z-ADD0         W1QTY3
+     CSR                   Z-ADDD2STK1    W1STK1
+     CSR                   Z-ADDD2STK2    W1STK2
+     CSR                   Z-ADDD2STK3    W1STK3
+     CSR                   Z-ADDD2ALC1    W1ALC1
+     CSR                   Z-ADDD2ALC2    W1ALC2
+     CSR                   Z-ADDD2ALC3    W1ALC3
+     CSR                   EXSR SFLADD
+     C*
+     C*   Calculated quantities
+     C*
+     CSR                   MOVELDSC,26    W1TYPE
+     CSR                   Z-ADD0         W1QTY1
+     CSR                   Z-ADD0         W1QTY2
+     CSR                   Z-ADD0         W1QTY3
+     CSR                   Z-ADDD3STK1    W1STK1
+     CSR                   Z-ADDD3STK2    W1STK2
+     CSR                   Z-ADDD3STK3    W1STK3
+     CSR                   Z-ADDD3ALC1    W1ALC1
+     CSR                   Z-ADDD3ALC2    W1ALC2
+     CSR                   Z-ADDD3ALC3    W1ALC3
+     CSR                   EXSR SFLADD
+     C*
+     C*   Check quantities
+     C*
+     C*     * Not writting this out because it is impossible to
+     C*     * undo allocation from previously recorded open records.
+     C*
+     CSR                   MOVELDSC,27    W1TYPE
+     CSR                   Z-ADD0         W1QTY1
+     CSR                   Z-ADD0         W1QTY2
+     CSR                   Z-ADD0         W1QTY3
+     CSR                   Z-ADD@STK1     W1STK1
+     CSR                   Z-ADD@STK2     W1STK2
+     CSR                   Z-ADD@STK3     W1STK3
+     CSR                   Z-ADD@ALC1     W1ALC1
+     CSR                   Z-ADD@ALC2     W1ALC2
+     CSR                   Z-ADD@ALC3     W1ALC3
+     C****                 EXSR SFLADD
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+413 AC*  ZZHEAD   Create item headings
+     C*
+     CSR         ZZHEAD    BEGSR
+     C*
+     C*   Initialize headings
+     C*
+     CSR                   MOVE *BLANKS   W1LBL
+     CSR                   MOVE *BLANKS   W1ITEM
+     CSR                   MOVE *BLANKS   W1LBLB
+     CSR                   MOVE *BLANKS   W1BITM
+     C*
+     C*   Get selected item info.
+     C*
+     CSR         ITKEY     CHAINPIRITEM              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   CLEARITTYPE
+     CSR                   CLEARITDESC
+     CSR                   CLEARITPDSC
+     CSR                   CLEARITUM1
+     CSR                   CLEARITUM2
+     CSR                   CLEARITUM3
+     CSR                   MOVELDQITEM    ITITEM
+     CSR                   MOVELDESC,2    ITDESC
+     CSR                   GOTO ENDHED
+     CSR                   ENDIF
+     C*
+     C*  Save information about selected item (Item that was sent in)
+     C*
+     CSR                   MOVE ITTYPE    #OTYPE  1
+     CSR                   MOVE ITITEM    #OITEM 15
+     CSR                   MOVE ITDESC    #ODESC 30
+     CSR                   MOVE ITPDSC    #OPDSC 15
+     CSR                   MOVE ITUM1     #OUM1   2
+     CSR                   MOVE ITUM2     #OUM2   2
+     CSR                   MOVE ITUM3     #OUM3   2
+     C*
+     C*   Get short UOM descriptions for selected item.
+     C*
+     CSR                   MOVE *BLANKS   #OSU1   5
+     CSR                   MOVE *BLANKS   #OSU2   5
+     CSR                   MOVE *BLANKS   #OSU3   5
+     C*
+     CSR         ITUM1     IFNE *BLANKS
+     CSR         ITUM1     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #OSU1
+     CSR                   ELSE
+     CSR                   MOVELITUM1     #OSU1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ITUM2     IFNE *BLANKS
+     CSR         ITUM2     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #OSU2
+     CSR                   ELSE
+     CSR                   MOVELITUM2     #OSU2
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ITUM3     IFNE *BLANKS
+     CSR         ITUM3     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #OSU3
+     CSR                   ELSE
+     CSR                   MOVELITUM3     #OSU3
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Initialize base information.
+     C*
+     CSR                   MOVE ITITEM    #BITEM
+417a CSR                   MOVE ITITEM    #SITEM
+     CSR                   MOVE ITTYPE    #BITYP
+     CSR                   MOVE ITDESC    #BDESC
+     CSR                   MOVE ITPDSC    #BPDSC
+     CSR                   MOVE ITUM1     #BUM1
+     CSR                   MOVE ITUM2     #BUM2
+     CSR                   MOVE ITUM3     #BUM3
+     CSR                   MOVE #OSU1     #BSU1   5
+     CSR                   MOVE #OSU2     #BSU2   5
+     CSR                   MOVE #OSU3     #BSU3   5
+     C*
+     C*  If select item is a Base item  . . .
+     C*    Then try to get a corresponding SSB item.
+     C*
+     CSR         ITTYPE    IFEQ ' '
+     CSR                   CALL 'GETSSB'
+     CSR                   PARM ITWHSE    $GWHSE  30
+     CSR                   PARM ITITEM    $GITEM 15
+     CSR                   PARM ' '       #BITEM 15
+     CSR                   PARM           #BDESC 30
+     CSR                   PARM           #BPDSC 15
+     CSR                   PARM           #BWHDP  5
+     CSR                   PARM           #BSTYP  1
+     CSR                   PARM           #BUM    2
+     CSR                   PARM           #BUM2   2
+     CSR                   PARM           #BUMQ2  30
+     CSR                   PARM           #BUM3   2
+     CSR                   PARM           #BUMQ3  30
+     CSR                   PARM           #BRTN   8
+     CSR         #BRTN     IFEQ '*FOUND  '
+     CSR                   MOVE 'S'       #BITYP
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*  If selected item is a Contract, Alias, SSB or Breakdown item . . .
+     C*    Then get corresponding Base item.
+     C*
+     CSR         ITTYPE    IFEQ 'C'
+     CSR         ITTYPE    OREQ 'A'
+     CSR         ITTYPE    OREQ 'S'
+     CSR         ITTYPE    OREQ 'B'
+     CSR                   CALL 'GETBASE'
+     CSR                   PARM ITWHSE    $GWHSE  30
+     CSR                   PARM ITITEM    $GITEM 15
+     CSR                   PARM ' '       #BITEM
+     CSR                   PARM           #BITYP  1
+     CSR                   PARM           #BDESC 30
+     CSR                   PARM           #BPDSC 15
+     CSR                   PARM           #BWHDP  5
+     CSR                   PARM           #BSTYP  1
+     CSR                   PARM           #BUM1   2
+     CSR                   PARM           #BUM2   2
+     CSR                   PARM           #BUMQ2  30
+     CSR                   PARM           #BUM3   2
+     CSR                   PARM           #BUMQ3  30
+     CSR                   PARM ' '       #BCITM 15
+     CSR                   PARM           #BCTYP  1
+     CSR                   PARM           #BCDSC 30
+     CSR                   PARM           #BCPDS 15
+     CSR                   PARM           #BCWDP  5
+     CSR                   PARM           #BCSTP  1
+     CSR                   PARM           #BCUM1  2
+     CSR                   PARM           #BCUM2  2
+     CSR                   PARM           #BCUQ2  30
+     CSR                   PARM           #BCUM3  2
+     CSR                   PARM           #BCUQ3  30
+     CSR                   PARM           #BRTN   8
+     CSR                   ENDIF
+417aAC*   Get slot item.
+417aACSR                   CALL @GETSI
+417aACSR                   PARM ITWHSE    $GWHSE  30
+417aACSR                   PARM ITITEM    $GITEM 15
+417aACSR                   PARM ' '       #SITEM 15
+417aACSR                   PARM           #SITYP  1
+417aACSR                   PARM           #SDESC 30
+417aACSR                   PARM           #SPDSC 15
+417aACSR                   PARM           #SRTN  10
+417aACSR                   PARM           #SMSG  60
+     C*
+     C*   Get short UOM descriptions for base item.
+     C*
+     CSR         #BUM1     IFNE #OUM1
+     CSR         #BUM1     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #BSU1
+     CSR                   ELSE
+     CSR                   MOVEL#BUM1     #BSU1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         #BUM2     IFNE #OUM2
+     CSR         #BUM2     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #BSU2
+     CSR                   ELSE
+     CSR                   MOVEL#BUM2     #BSU2
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         #BUM3     IFNE #OUM2
+     CSR         #BUM3     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #BSU3
+     CSR                   ELSE
+     CSR                   MOVEL#BUM3     #BSU3
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Create label for selected item
+     C*
+     C*     If selected item is a SSB item . . .
+     C*        Then display the breakdown 1 UOM.
+     C*        Otherwise use the normal UOM.
+     C*
+     C*     Note: Except for the description, the SSB fields
+     C*           should be identical to its Base item's fields.
+     C*
+     CSR                   MOVEALBL,1     A22
+     CSR         #OTYPE    IFEQ 'S'
+     CSR                   MOVEA#OSU2     A22,16
+     CSR                   ELSE
+     CSR                   MOVEA#OSU1     A22,16
+     CSR                   ENDIF
+     CSR                   MOVEAA22       W1LBL
+     CSR         W1LBL     CAT  ')':0     W1LBL
+     CSR                   MOVE ':'       W1LBL
+     C*
+     C*   Create description for selected item
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#OTYPE    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+     CSR         #OITEM    CAT  TEMP10:1  W1ITEM
+     CSR         W1ITEM    CAT  '-':1     W1ITEM
+     CSR         W1ITEM    CAT  #ODESC:1  W1ITEM
+     C*
+     C*   Create label and description for corresponding item.
+     C*
+     CSR                   SELEC
+     C*
+     C*     If selected item is a Base item . . .
+     C*        Then display its corresponding SSB item (if any)
+     C*        Otherwise display nothing.
+     C*
+     CSR         #OTYPE    WHEQ ' '
+     CSR         #BITYP    IFEQ 'S'
+     CSR                   MOVEALBL,3     A22
+     CSR                   MOVEA#BSU2     A22,11
+     CSR                   MOVEAA22       W1LBLB
+     CSR         W1LBLB    CAT  ')':0     W1LBLB
+     CSR                   MOVE ':'       W1LBLB
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#BITYP    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+417aDC**         #BITEM    CAT  TEMP10:1  W1BITM
+417aMCSR         #SITEM    CAT  TEMP10:1  W1BITM
+     CSR         W1BITM    CAT  '-':1     W1BITM
+     CSR         W1BITM    CAT  #BDESC:1  W1BITM
+     CSR                   ENDIF
+     C*
+     C*     If selected item is a Breakdown item . . .
+     C*        Then display its corresponding Base item.
+     C*             Note: UOM is not applicable in this situation.
+     C*
+     CSR         #OTYPE    WHEQ 'B'
+     CSR                   MOVEALBL,2     A22
+     CSR                   MOVEA'N/A'     A22,12
+     CSR                   MOVEAA22       W1LBLB
+     CSR         W1LBLB    CAT  ')':0     W1LBLB
+     CSR                   MOVE ':'       W1LBLB
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#BITYP    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+417aDC**         #BITEM    CAT  TEMP10:1  W1BITM
+417aMCSR         #SITEM    CAT  TEMP10:1  W1BITM
+     CSR         W1BITM    CAT  '-':1     W1BITM
+     CSR         W1BITM    CAT  #BDESC:1  W1BITM
+     C*
+     C*     Otherwise . . .
+     C*        Then display its corresponding Base item w/UOM.
+     C*             Note: UOM of Base should match UOM of selected item.
+     C*
+     CSR                   OTHER
+     CSR                   MOVEALBL,2     A22
+     CSR                   MOVEA#BSU1     A22,12
+     CSR                   MOVEAA22       W1LBLB
+     CSR         W1LBLB    CAT  ')':0     W1LBLB
+     CSR                   MOVE ':'       W1LBLB
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#BITYP    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+417aDC**         #BITEM    CAT  TEMP10:1  W1BITM
+417aMCSR         #SITEM    CAT  TEMP10:1  W1BITM
+     CSR         W1BITM    CAT  '-':1     W1BITM
+     CSR         W1BITM    CAT  #BDESC:1  W1BITM
+     C*
+     CSR                   ENDSL
+     C*
+     CSR         ENDHED    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     CSR                   MOVE *ON       FOREVR  1
+     C*
+     C*  Define full key for DLYQTY file.
+     C*
+     CSR         KEYDQ     KLIST
+     CSR                   KFLD           DQRDTE
+     CSR                   KFLD           DQRTIM
+     CSR                   KFLD           DQWHSE
+     CSR                   KFLD           DQITEM
+     C*
+     C*  Define full key for item file.
+     C*
+     CSR         ITKEY     KLIST
+     CSR                   KFLD           DQWHSE
+     CSR                   KFLD           DQITEM
+     C*
+     C*  Setup option and command display lines.
+     C*
+VW2 ACSR                   Z-ADD1         VIEW    10
+VW2 ACSR                   Z-ADD1         MAXVW   10
+     CSR                   MOVE CMDLN,1   CMDLN1
+VW2 ACSR                   MOVE CMDLN,2   CMDLN2
+     C*
+     C*  Define variables.
+     C*
+     CSR         *LIKE     DEFN D1STK1    @STK1
+     CSR         *LIKE     DEFN D1STK2    @STK2
+     CSR         *LIKE     DEFN D1STK3    @STK3
+     CSR         *LIKE     DEFN D1ALC1    @ALC1
+     CSR         *LIKE     DEFN D1ALC2    @ALC2
+     CSR         *LIKE     DEFN D1ALC3    @ALC3
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ2    BEGSR
+     CSR                   MOVE $PRTKY    DSUKEY
+     C*
+413 ACSR                   EXSR ZZHEAD
+     C*
+     C*   Format warehouse description.
+     C*
+     CSR                   MOVE *BLANKS   WOWHSE
+     CSR         DQWHSE    CHAINWAREHS               79
+     CSR         *IN79     IFEQ *OFF
+213 ACSR                   MOVE *BLANKS   $CSTR
+     CSR                   MOVE WHCODE    $CSTR
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$CCMD   8
+     CSR                   PARM           $CSTR  30
+     CSR                   MOVEL$CSTR     WOWHSE
+     CSR         WOWHSE    CAT  '-':1     WOWHSE
+     CSR         WOWHSE    CAT  WHDESC:1  WOWHSE
+     CSR                   ENDIF
+     C*
+     C*   Format run date for heading
+     C*
+     CSR         $KRDTE    IFEQ 0
+     CSR                   Z-ADD0         WORDTE
+     CSR                   ELSE
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $KRDTE    $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    WORDTE
+     CSR                   ENDIF
+     C*
+     CSR                   Z-ADD$KRTIM    WORTIM
+     C*
+     CSR                   EXSR SCR01I
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**  CMDLN - Command display line
+F3=Exit  F5=Refresh  F12=Cancel
+
+F3=Exit  F5=Refresh  F12=Cancel
+F10=View 1  F11=View 3  F17=Top  F18=Bottom  F20=Move to top
+F3=Exit  F5=Refresh  F12=Cancel
+F10=View 2  F11=View 1  F17=Top  F18=Bottom  F20=Move to top
+**  DESC
+* * INVALID WAREHOUSE * *
+* * INVALID ITEM * *
+**  LBL
+Selected item (
+Base item (
+SSB item (
+**  TYP
+(Type ' ')
+**  DSC - Type descriptions
+Start Quantities
+  Adj-Out
+  Adj-In
+  Rcv-Direct-Open
+  Rcv-Direct-Closed
+  Rcv-Manual-Open
+  Rcv-Manual-Closed
+  Rtn-Direct-Open
+  Rtn-Direct-Closed
+  Rtn-Manual-Open
+  Rtn-Manual-Closed
+  Picked-Open
+  Picked-Closed
+  Tfr-Out-Open
+  Tfr-Out-Closed
+  Tfr-In-Open
+  Tfr-In-Closed
+  Rpl/Let-In-Open
+  Rpl/Let-In-Closed
+  Rpl/Let-Out-Open
+  Rpl/Let-Out-Close
+  Inventory
+  Other-Open
+  Other-Closed
+End Quantities
+Calculated Qtys
+Check Quantities
+  Whse Qty Recalc
+  Picked-OUT-Open
+  Picked-OUT-Closed

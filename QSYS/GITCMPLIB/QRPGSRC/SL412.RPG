@@ -1,0 +1,374 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  SL412     Pick slots only with overflow
+     F*  21 August, 2001
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+     F*  08/21/01  RH   4.16
+     F*   - Created
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSL411A  IP  E           K        DISK
+     F*LOT2   IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FSL412PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        5  7 0
+     E*
+     I*----------------------------------------------------------------
+     IWKREC
+     I                                              WKWHDPL4
+     I                                              WKSTYPL3
+     I                                              WKITEML2
+     I                                              WKDISPL1
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Page overflow.
+     C*
+     C*  PAGE OVERFLOW
+     C*
+     C           FIRST     IFEQ *ON
+     C           *IN90     OREQ *ON
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  L4 break - DEPARTMENT
+     C*
+     C           *INL4     IFEQ *ON
+     C           RECK,L    ANDGT0
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  L3 break - Section change.
+     C*
+     C           *INL3     IFEQ *ON
+     C           WKSTYP    IFEQ 'F'
+     C                     MOVEL'FIXED'   WOSTYP
+     C                     ELSE
+     C                     MOVEL'PIR  '   WOSTYP
+     C                     ENDIF
+     C                     WRITEDETAIL2
+     C                     ENDIF
+     C*
+     C*  L2 break - Item change.
+     C*
+     C           *INL2     IFEQ *ON
+     C                     MOVE '1'       *IN92
+     C                     ENDIF
+     C*
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - SLOT
+     C*
+     C           *INL1     IFEQ *ON
+     C                     MOVE '1'       *IN91
+     C                     MOVE WKDISP    W1DISP 12
+     C           WKPICK    IFEQ 'Y'
+     C                     MOVE WKPICK    W1PICK  1
+     C                     ELSE
+     C                     MOVE *BLANK    W1PICK
+     C                     ENDIF
+     C                     Z-ADD1         L
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*
+     C*  Calculate Qty available (stock + rcv) - (aloc + pick + trans)
+     C*
+     C*    Create a quantity string to print.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           WKSTK1
+     C                     PARM           WKSTK2
+     C                     PARM           WKSTK3
+     C*
+     C                     PARM           WKALC1
+     C                     PARM           WKALC2
+     C                     PARM           WKALC3
+     C*
+     C                     PARM           WKTFR1
+     C                     PARM           WKTFR2
+     C                     PARM           WKTFR3
+     C*
+     C                     PARM           WKPCK1
+     C                     PARM           WKPCK2
+     C                     PARM           WKPCK3
+     C*
+     C                     PARM           WKRCV1
+     C                     PARM           WKRCV2
+     C                     PARM           WKRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C                     Z-ADDAVAIL1    $PQTY1
+     C                     Z-ADDAVAIL2    $PQTY2
+     C                     Z-ADDAVAIL3    $PQTY3
+     C                     EXSR ZZCQTY
+     C                     MOVE $PQSTR    W1AVL  10
+     C*
+     C                     Z-ADDWKSTK1    $PQTY1
+     C                     Z-ADDWKSTK2    $PQTY2
+     C                     Z-ADDWKSTK3    $PQTY3
+     C                     EXSR ZZCQTY
+     C                     MOVE $PQSTR    W1STK  10
+     C*
+     C                     Z-ADDWKRCV1    $PQTY1
+     C                     Z-ADDWKRCV2    $PQTY2
+     C                     Z-ADDWKRCV3    $PQTY3
+     C                     EXSR ZZCQTY
+     C                     MOVE $PQSTR    W1RCV  10
+     C*
+     C                     Z-ADDWKALC1    $PQTY1
+     C                     Z-ADDWKALC2    $PQTY2
+     C                     Z-ADDWKALC3    $PQTY3
+     C                     EXSR ZZCQTY
+     C                     MOVE $PQSTR    W1ALC  10
+     C*
+     C                     Z-ADDWKTFR1    $PQTY1
+     C                     Z-ADDWKTFR2    $PQTY2
+     C                     Z-ADDWKTFR3    $PQTY3
+     C                     EXSR ZZCQTY
+     C                     MOVE $PQSTR    W1TFR  10
+     C*
+     C                     Z-ADDWKPCK1    $PQTY1
+     C                     Z-ADDWKPCK2    $PQTY2
+     C                     Z-ADDWKPCK3    $PQTY3
+     C                     EXSR ZZCQTY
+     C                     MOVE $PQSTR    W1PCK  10
+     C*
+     C*  Get item description.
+     C*
+     C           KEYIT     CHAINPIRITEM              79
+     C           *IN79     IFEQ *ON
+     C                     MOVEL*BLANKS   ITDESC
+     C                     ENDIF
+     C*
+     C*  Write detail line.
+     C*
+     C*                    WRITEDETAIL1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      FIRST
+     C                     MOVE *OFF      *IN91
+     C*----------------------------------------------------------------
+     C*
+     C* Customer totals
+     C*
+     CL1         RECK,L    IFGT 0
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     CL1         WKITEM    IFEQ SVITEM
+     CL1                   MOVE *OFF      *IN92
+     CL1                   ENDIF
+     CL1                   WRITEDETAIL1
+     CL1                   MOVE WKITEM    SVITEM
+     CL1                   ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* ITEM
+     C*
+     CL2                   Z-ADD2         L
+     CL2                   EXSR ZRROLL
+     CL2         RECK,L    IFGT 0
+     CL2                   MOVE '0'       *IN92
+     CL2                   WRITESKIP1
+     CL2                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Section
+     C*
+     CL3                   Z-ADD3         L
+     CL3                   EXSR ZRROLL
+     C****       RECK,L    IFGT 0
+     C****                 WRITEDETAIL2
+     C****                 ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* DEPARTMENT
+     C*
+     CL4                   Z-ADD4         L
+     CL4                   EXSR ZRROLL
+     C****       RECK,L    IFGT 0
+     C****                 EXSR ZRHEAD
+     C****                 ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD5         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C*  Define key for main file.
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           WKWHSE
+     CSR                   KFLD           WKITEM
+     C*
+     C*
+     C           *LIKE     DEFN WKITEM    SVITEM
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD2         L       10
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           WKWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*  Format department/section.
+     C*
+     C                     MOVE *BLANKS   TYPE   11
+     C           WKWHDP    CAT  '/':0     TYPE
+     C           WKSTYP    IFEQ 'P'
+     C           TYPE      CAT  'PIR':0   TYPE
+     C                     ELSE
+     C           TYPE      CAT  'FIXED':0 TYPE
+     C                     ENDIF
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C           *INL1     IFEQ *ON
+     C                     EXSR ZRFRMT
+     C                     ELSE
+     C                     MOVE *ON       *IN91
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITEHEAD2
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C*                    ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C*                    Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZZCQTY    BEGSR
+     C*
+     C                     MOVE '*QTY2STR'$PCMD
+     C*                    Z-ADDAVAIL1    $PQTY1
+     C*                    Z-ADDAVAIL2    $PQTY2
+     C*                    Z-ADDAVAIL3    $PQTY3
+     C                     MOVE *BLANKS   $PQSTR
+     C*
+     C                     CALL 'CVTQTY'
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PQTY1  70
+     C                     PARM           $PQTY2  70
+     C                     PARM           $PQTY3  70
+     C                     PARM           $PUM1   2
+     C                     PARM           $PUM2   2
+     C                     PARM           $PUM3   2
+     C                     PARM           $PQSTR 10
+     C                     PARM           $PUSTR 17
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*
+     C*                    MOVE $PQSTR    W1QTY  10
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*

@@ -1,0 +1,357 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  OR645CL   Reprint route - Traffic cop                            */
+/*  27 June,1997                                                     */
+/*  Hemant Kapadia                                                   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*    08/21/03  RH  4.17                                             */
+/*      -  FIX:Changed to call OR660CL with DEV & FORM               */
+/*    04/12/04  MLB  4.17                                            */
+/*      - Enh: Revised program to pass route id to OR645 - options   */
+/*        program.                                                   */
+/*    03/31/07  DAS  5.10                                            */
+/*      - Enh: Added call to OR660CCL for catchweight summary        */
+/*      - Enh: Added &CWSUM to OR645 parms.                          */
+/*    07/30/07  JCJ  5.10a                                           */
+/*      - Enh: Added client custom code support to program.          */
+/*                                                                   */
+/*    09/13/08  CWM  5.20                                            */
+/*      - Enh: Added Report Distribution Processing                  */
+/*    02/13/09  CWM  5.20                                            */
+/*      - Enh: Updated Report Distribution Processing To Use         */
+/*             current source.                                       */
+/*    03/14/11  JCJ  6.40                                            */
+/*      - Enh: Add additional reprint parms.                         */
+/*    06/30/11  JCJ  6.40b                                           */
+/*      - Enh: Add additional reprint parms.                         */
+/*    11/30/15  JCJ  7.00a                                           */
+/*      - Enh: Add reprint option for pallet labels.                 */
+/*    05/08/18  KDE  7.20                                            */
+/*      - Enh: Add call to OR627 for certain reports                 */
+/*        when DragDrop 2                                            */
+/*    04/23/19  DAS  7.20a                                           */
+/*      - Revised to call GETTBTYPE instead of OR660DD2CL            */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*    07/29/07  JCJ  PAK A                                           */
+/*      - Enh: Added call to OR661CL if client is Packers.           */
+/*    09/10/07  MLB  PAKaA                                           */
+/*      - Enh: Added call to OR661CL add new parm on call to         */
+/*        OR661CL, a string of 7 zeros in quotes.                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: City Wholesale                          */
+/*                                                                   */
+/*  11/14/12  RBD  CTWa                                              */
+/*    - Added call to OR660CLCTW to print custom Pallet Detail rpt.  */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Cheney Brothers                         */
+/*                                                                   */
+/*  12/07/17  NLK  CBIa                                              */
+/*    - Added new Printer file for RT 9998 WillCall only TruckPallet */
+/*-------------------------------------------------------------------*/
+
+/* OR645CL:    PGM        PARM(&CMD &RTYPE &WHSE &RTE &RTID &TRUK +
+                             &RETURN)                              */
+   OR645CL:    PGM        PARM(&CMD &TYPE &WHSEA &RTE &RTID &TRUK +
+                             &RETURN)
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client ID's.    */                                   /* (510aA) */
+
+             DCL        VAR(&PACKERS) TYPE(*CHAR) LEN(8) +
+                          VALUE('PACKERS ')               /* (PAK A) */
+
+             DCL        VAR(&CITYWH) TYPE(*CHAR) LEN(8) +
+                          VALUE('CITYWHO') /* CTWa  */
+
+             DCL        VAR(&CHENEY) TYPE(*CHAR) LEN(10) +
+                          VALUE('CHENEYBROS')                     /* (CBI A) */
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR645CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR645)
+
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Reprint route option')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&client)     TYPE(*CHAR) LEN(10)  /* (510aA) */
+             DCL        VAR(&clientloc)  TYPE(*CHAR) LEN(10)  /* (510aA) */
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&CODE)       TYPE(*CHAR) LEN(6)
+             DCL        VAR(&CWSUM)      TYPE(*CHAR) LEN(1)
+             DCL        VAR(&DS)         TYPE(*CHAR) LEN(1)
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&LBLS)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&QUOTE)      TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTE)        TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&RTYPE)      TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TRK)        TYPE(*CHAR) LEN(1)
+             DCL        VAR(&TRUK)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&TRPL)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&UNQKEY)     TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&WHSEA)      TYPE(*CHAR) LEN(3)
+/*           DCL        VAR(&ZONE)       TYPE(*CHAR) LEN(6)   640aD */
+             DCL        VAR(&ZONE)       TYPE(*CHAR) LEN(7) /*640aM */
+             DCL        VAR(&PFLBL)      TYPE(*CHAR) LEN(7) /*640bA */
+             DCL        VAR(&PTLBL)      TYPE(*CHAR) LEN(7) /*640bA */
+
+             DCL        VAR(&POTS)       TYPE(*CHAR) LEN(1)         /* 520 */
+             DCL        VAR(&POTP)       TYPE(*CHAR) LEN(1)         /* 520 */
+             DCL        VAR(&POCW)       TYPE(*CHAR) LEN(1)         /* 520 */
+             DCL        VAR(&POLB)       TYPE(*CHAR) LEN(1)         /* 520 */
+             DCL        VAR(&LTYPE)      TYPE(*CHAR) LEN(1) /*640aA */
+             DCL        VAR(&PTYPE)      TYPE(*CHAR) LEN(1) /*700aA */
+             DCL        VAR(&WC9998)     TYPE(*CHAR) LEN(1) /*CBIaA */
+/* 720aD     DCL        VAR(&PSTYPE) TYPE(*CHAR) LEN(1) VALUE('O')   */
+/* 720aA */  DCL        VAR(&TBTYPE) TYPE(*CHAR) LEN(1)
+
+             CHGVAR     VAR(&WHSE) VALUE(&WHSEA)            /* 720  */
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+
+/* 720aD     CALL       PGM(OR660DD2CL) PARM(&PSTYPE)  */
+
+/* 720aA */  CALL       PGM(GETTBTYPE) PARM(&WHSE &RTID &TBTYPE)
+
+/* Get Client ID */                                               /* (510aA) */
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (510aA) */
+
+/* CBIa - Is This a WillCall + Rt 9998, then call OR660PCL instead */
+             IF         COND((&client *eq &cheney) *AND +
+                        (&rte = '9998 ')) THEN(DO)
+             CHGVAR VAR(&WC9998) VALUE('Y')
+             ENDDO
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+/*  Don't get options, if being run from JOBQ. */
+
+START:
+             CHGVAR VAR(&RETURN) VALUE(' ')
+
+             RTVJOBA    TYPE(&TYPE)
+             IF (&TYPE = '0') THEN(GOTO REPORT)
+
+/*  Get report options. */
+
+ /*          CALL       PGM(&OPTPGM) PARM(&WHSE &RTE &RTID &LBLS &ZONE +
+                    &CODE &TRK &TRPL &DS &CWSUM &RETURN &DEV &FORM)  520 D  */
+
+/*640aD      CALL       PGM(&OPTPGM) PARM(&WHSEA &RTE &RTID &LBLS +
+                          &ZONE &CODE &TRK &TRPL &DS &CWSUM &RETURN +
+                          &DEV &FORM &POTS &POTP &POCW &POLB)        */
+
+/*640bM*/    CALL       PGM(&OPTPGM) PARM(&WHSEA &RTE &RTID &LBLS +
+                          &ZONE &CODE &TRK &TRPL &DS &CWSUM &RETURN +
+                          &DEV &FORM &POTS &POTP &POCW &POLB &LTYPE +
+                          &PFLBL &PTLBL)
+
+/*  See if user wants to proceed. */
+
+             IF (&RETURN = '*EXIT' *OR &RETURN = '*CANCEL') THEN(DO)
+
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) +
+                          MSGTYPE(*INFO)
+               RETURN
+               ENDDO
+
+/*  Run Reports  */
+
+ REPORT:
+
+/*  Print custom Pallet Detail report for City Wholesale. CTWaA*/
+
+/*CTWaA*/    IF         COND(&CLIENT = &CITYWH) THEN(DO)
+/*CTWaA*/    CALL       PGM(OR660CLCTW) PARM(&CMD '*DETAIL ' &WHSEA +
+/*CTWaA*/                            &RTID &RETURN 'N')
+/*CTWaA*/    ENDDO
+
+/*  ************************** */
+/*  Print Labels               */
+/*  ************************** */
+
+             IF (&LBLS = 'Y') THEN(DO)
+             CHGVAR VAR(&WORKINGMSG) VALUE('Printing labels.')
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+   /* Create selection criteria string. */
+
+/*           CALL       PGM(OR640) PARM(&CMD &WHSE &RTID &RTE &TRUK +
+                                     &ZONE)                             530  */
+             IF         COND(&LTYPE = 'Z') THEN(CALL PGM(OR640J) +
+                          PARM(&CMD &WHSEA &RTID &RTE &TRUK &ZONE +
+                          &LTYPE)) /* 640a*/
+             IF         COND(&LTYPE = 'T') THEN(CALL PGM(OR640J) +
+                          PARM(&CMD &WHSEA &RTID &RTE &TRUK &ZONE +
+                          &LTYPE)) /* 640a*/
+             IF         COND(&LTYPE = 'L') THEN(CALL PGM(OR640J) +
+                          PARM(&CMD &WHSEA &RTID &RTE &TRUK &ZONE +
+                          &LTYPE &PFLBL &PTLBL)) /* 640aM*/
+             ENDDO
+
+/*  ************************** */
+/*  Print Pallet Labels        */
+/*  ************************** */
+
+             IF (&LBLS = 'P') THEN(DO)
+             CHGVAR VAR(&WORKINGMSG) VALUE('Printing pallet labels.')
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+             IF         COND(&LTYPE = 'Z') THEN(DO)
+             CHGVAR     VAR(&PTYPE) VALUE('A')
+             CALL       PGM(OR640J) PARM(&CMD &WHSEA &RTID &RTE +
+                          &TRUK &ZONE &PTYPE) /* 700a*/
+             ENDDO
+
+             IF         COND(&LTYPE = 'T') THEN(DO)
+             CHGVAR     VAR(&PTYPE) VALUE('B')
+             CALL       PGM(OR640J) PARM(&CMD &WHSEA &RTID &RTE +
+                          &TRUK &ZONE &PTYPE) /* 700a*/
+             ENDDO
+
+             IF         COND(&LTYPE = 'P') THEN(DO)
+             CHGVAR     VAR(&PTYPE) VALUE('C')
+             CALL       PGM(OR640J) PARM(&CMD &WHSEA &RTID &RTE +
+                          &TRUK &ZONE &PTYPE) /* 700a*/
+             ENDDO
+
+             ENDDO
+
+/*  ************************** */
+/*  Print Truck Summary        */
+/*  ************************** */
+
+             IF (&TRK = 'Y') THEN(DO)
+
+/*           CALL       PGM(PS310CL) PARM(&WHSE &RTID &RETURN &DEV +
+                                     &FORM)                           520 D */
+
+         /*  IF (&PSTYPE = 'P') THEN(DO)                     720aD */
+             IF (&TBTYPE = 'E') THEN(DO)                  /* 720aM */
+                CALL       PGM(OR627) PARM(&WHSE &RTID)   /* 720  A*/
+             ENDDO                                        /* 720  A*/
+             CALL       PGM(PS310CL) PARM(&WHSEA &RTID &RETURN &POTS) /* 520 */
+             IF (&RETURN = '*CANCEL ') THEN(DO)
+             GOTO  START
+             ENDDO
+
+             ENDDO
+
+/* ************************** */
+/* Print Truck Pallet Report  */
+/* ************************** */
+
+             IF (&TRPL = 'Y') THEN(DO)
+
+/* Set Detail Or Summary Print */
+
+             IF (&DS = 'D') THEN(DO)
+             CHGVAR VAR(&RTYPE) VALUE('*DETAIL')
+             ENDDO
+
+             IF (&DS = 'S') THEN(DO)
+             CHGVAR VAR(&RTYPE) VALUE('*SUMMARY')
+             ENDDO
+
+/* 520 D     CALL       PGM(OR660CL) PARM(&CMD &RTYPE &WHSE &RTID +
+                                     &RETURN &DEV &FORM)     */    /* 4.17 */
+
+/* CBIa  */  IF (&WC9998 = 'Y') THEN(DO)
+             CALL       PGM(OR660PCL) PARM(&CMD &RTYPE &WHSEA &RTID +
+                                     &RETURN &POTP)
+             ENDDO
+             ELSE (DO)
+
+         /*  IF (&PSTYPE = 'P') THEN(DO)                     720aD */
+             IF (&TBTYPE = 'E') THEN(DO)                  /* 720aM */
+                CALL       PGM(OR627) PARM(&WHSE &RTID)   /* 720  A*/
+             ENDDO                                        /* 720  A*/
+             CALL       PGM(OR660CL) PARM(&CMD &RTYPE &WHSEA &RTID +
+                                     &RETURN &POTP)                 /*520*/
+/* CBIa  */  ENDDO
+
+             IF (&RETURN = '*CANCEL ') THEN(DO)
+             GOTO  START
+             ENDDO
+             ENDDO
+
+/*  Print catch weight summary report  */    /* 510 A */
+
+             IF (&CWSUM = 'Y') THEN(DO)
+
+/*  if client is packers use catch weight report    (PAK A) */
+/*  that uses the ucicw file instead of ordc file.  (PAK A) */
+
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+             CALL       PGM(OR661CL) PARM(&CMD &RTYPE &WHSEA &RTID +
+                                     &RETURN &DEV &FORM '0000000')
+             ENDDO                               /* (PAK A) */
+             ELSE (DO)                           /* (PAK A) */
+/*           CALL       PGM(OR660CCL) PARM(&CMD &RTYPE &WHSE &RTID +
+                                     &RETURN &DEV &FORM)            520 D */
+
+             CALL       PGM(OR660CCL) PARM(&CMD &RTYPE &WHSEA &RTID +
+                                     &RETURN &POCW)   /* 520    */
+             IF (&RETURN = '*CANCEL ') THEN(DO)
+             GOTO  START
+             ENDDO
+             ENDDO                                   /* (PAK A) */
+
+             ENDDO
+
+             RMVMSG     CLEAR(*ALL)
+
+
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO       (NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+   /* Clean up before leaving */
+
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

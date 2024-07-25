@@ -1,0 +1,460 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  CW113     Catch Weight Total - Verify
+     F*  05 August 1999
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions
+     F*
+412BAF*    08/23/99  RH
+     F*      - Add LBL# to PARMS, key for ORDC1 changed.
+     F*      - Change to use LABEL file.
+416 AF*    07/02/02  RH   4.16
+     F*      - Recompiled, ITEMMSC changed.
+416aAF*    08/02/02  MLB  4.16a
+     F*      - Fix: Revised ZZCHKT to test LVSKP,HVSKP separately.
+417aAF*    04/03/03  RH   4.17a
+     F*      - ENH: Recompiled, ITEMMSC file changed.
+     F*
+     F*  CUSTOM
+CBIaAF*    10/06/03  RH   CBIa
+     F*      - ENH: Get OHMISC, if type E=Export, allow total CW entry.
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  79        - EOF for
+     F*  91        - Overflow indicator
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     FORDC1   IF  E           K        DISK
+     FITEMMSC IF  E           K        DISK
+     FOPTIONS IF  E           K        DISK
+412BMFLABEL   IF  E           K        DISK
+412BDF*ABEL7  IF  E           K        DISK
+CBIaAFORDH    IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E*                   DESC    1   2 30
+CBIa I*----------------------------------------------------------------
+CBIa I            DS
+CBIa I                                        1  20 DSMISC
+CBIa I                                        1   8 DSSDTE
+CBIa I                                        9  11 DSSPCL
+CBIa I                                       12  12 DSRPCK
+CBIa I                                       13  14 DSDOOR
+CBIa I                                       15  15 DSMEAT
+CBIa I                                       16  16 DSCODE
+CBIa I*
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  280$PTRN#
+     I                                       29  43 $PITEM
+     I                                       44  480$PSEQ#
+412B I                                       49  550$PLBL#
+     I*----------------------------------------------------------------
+     I*  *SYSTEM  -  System options.
+     I*
+     I* Fields
+     I*
+     I*    OPEPM   -  Using EPM module (Y,N).
+     I*    OPRF    -  Using RF module (Y,N).
+     I*    OPCAPC  -  Capture catch weights at pick closing (Y,N).
+     I*    OPLETD  -  Print letdown labels (Y,N).
+     I*    OPWRNC  -  Perform catch weight variance check (Y,N).
+     I*    OPRG1C  -  Catch weight low variance percentage.
+     I*    OPRG2C  -  Catch weight high variance percentage.
+     I*    OPIMPI  -  Import item fields from host.(Y,N).
+     I*    OPICW   -  Individual catch weight entry (Y,N).
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPEPM
+     I                                        2   2 OPRF
+     I                                        3   3 OPCAPC
+     I                                        4   4 OPLETD
+     I                                        5   5 OPWRNC
+     I                                        6   81OPRG1C
+     I                                        9  111OPRG2C
+     I                                       12  12 OPIMPI
+     I                                       13  13 OPICW
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD
+     C*              *EDIT    - Edit batch.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains key for everything by *ADD.
+     C*
+     C*    Returned Parameters
+     C*      $PUKY   Contains new batch number for *ADD.
+     C*              Unchanged for everything else.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C* Main line
+     C*
+     C                     MOVE *OFF      ERROR   1
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C                     EXSR ZZINZ2
+     C*
+     C* Calculate variance range.
+     C                     EXSR ZZCALC
+     C*
+     C* Whip through all the CW records.
+     C                     EXSR ZZTOTL
+     C*
+     C* Check for errors.
+     C                     EXSR ZZCHKT
+     C*
+     C*
+     C*
+     C*  We are finished so get out
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C* Key definitions
+     C*
+     C*
+     C*  Define full key for detail file.
+     C*
+     CSR         CWKEY     KLIST
+     CSR                   KFLD           $PWHSE
+412BDC*R                   KFLD           OCTRAN
+412BDC*R                   KFLD           OCITEM
+412BMCSR                   KFLD           OCLBL#
+     CSR                   KFLD           OCSEQ
+     C*
+     C*  Define partial key for detail file.
+     C*
+     CSR         CWKEYP    KLIST
+     CSR                   KFLD           $PWHSE
+412BMCSR                   KFLD           $PLBL#
+412BDC*R                   KFLD           $PTRN#
+412BDC*R                   KFLD           $PITEM
+     C*
+     C*  Define key for OPTIONS file.
+     C*
+     CSR         *LIKE     DEFN OPWHSE    WKWHSE
+     CSR         *LIKE     DEFN OPCODE    WKCODE
+     CSR         OPKEY     KLIST
+     CSR                   KFLD           WKWHSE
+     CSR                   KFLD           WKCODE
+     C*
+412BDC*  Define full key for LABEL7 file.
+412BDC*
+412BDC*R         LBKEY     KLIST
+412BDC*R                   KFLD           $PTRN#
+412BDC*R                   KFLD           $PITEM
+412BDC*R                   KFLD           $PSEQ#
+     C*
+412BAC*  Define full key for LABEL file.
+412BAC*
+412BACSR         LBKEY     KLIST
+412BACSR                   KFLD           $PLBL#
+     C*
+     C*  Define full key for ITEMMSC file.
+     C*
+     CSR         IMKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     C*
+CBIa C*  Define key for ORDH file.
+CBIa C*
+CBIa CSR         OHKEY     KLIST
+CBIa CSR                   KFLD           LBWHSE
+CBIa CSR                   KFLD           LBORD
+     C*
+     CSR                   MOVE #PROG     $LPRG
+     C*
+     C*  Variables and constants.
+     C*
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   EXSR ZZINZ2
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCALC   Calculate total expected catch weight and ranges
+     C*
+     CSR         ZZCALC    BEGSR
+     CSR                   MOVE *OFF      ERROR
+404 AC*
+410 AC*   If verify catch weight = yes,
+410 AC*     Calculate total expected catch weight,
+410 AC*     Calculate low/high ranges.
+410 ACSR         OPWRNC    IFEQ 'Y'
+410 ACSR                   Z-ADD0         LWVAR   92
+410 ACSR                   Z-ADD0         HIVAR   92
+410 ACSR                   Z-ADD0         LWRNG   92
+410 ACSR                   Z-ADD0         HIRNG   92
+410 ACSR                   Z-ADD0         EXWGT   92
+412 ACSR                   Z-ADD0         ILVAR   92
+412 ACSR                   Z-ADD0         IHVAR   92
+412 ACSR                   Z-ADD0         ILRNG   92
+412 ACSR                   Z-ADD0         IHRNG   92
+410 ACSR         LBQPCK    MULT LBUWGT    EXWGT
+     C**   Iniz. flag used to skip variance check if = *ON.
+     CSR                   MOVE *OFF      LVSKP   1
+     CSR                   MOVE *OFF      HVSKP   1
+     C**   Use item variance % if it exists
+     CSR         IMKEY     CHAINITEMMSC              79
+     CSR         *IN79     IFEQ *OFF
+     CSR         IMRG1C    IFNE 0
+     CSR         IMRG1C    DIV  100       PRG1C   43
+     CSR         IMRG1C    IFEQ 99
+     CSR                   MOVE *ON       LVSKP
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         IMRG2C    IFNE 0
+     CSR         IMRG2C    DIV  100       PRG2C   43
+     CSR         IMRG2C    IFEQ 99
+     CSR                   MOVE *ON       HVSKP
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDIF
+     CSR         PRG1C     IFEQ 0
+410 ACSR         OPRG1C    DIV  100       PRG1C
+     CSR                   ENDIF
+     CSR         PRG2C     IFEQ 0
+410 ACSR         OPRG2C    DIV  100       PRG2C
+     CSR                   ENDIF
+410 AC*
+412 DC*          OPRG1C    IFGT 0
+412 MCSR         PRG1C     IFGT 0
+410 ACSR         EXWGT     MULT PRG1C     LWVAR
+412 ACSR         LBUWGT    MULT PRG1C     ILVAR
+410 ACSR                   ENDIF
+410 ACSR         EXWGT     SUB  LWVAR     LWRNG
+412 ACSR         LBUWGT    SUB  ILVAR     ILRNG
+412 DC*          OPRG2C    IFGT 0
+412 MCSR         PRG2C     IFGT 0
+410 ACSR         EXWGT     MULT PRG2C     HIVAR
+412 ACSR         LBUWGT    MULT PRG2C     IHVAR
+410 ACSR                   ENDIF
+410 ACSR         EXWGT     ADD  HIVAR     HIRNG
+412 ACSR         LBUWGT    ADD  IHVAR     IHRNG
+410 AC*
+410 ACSR                   ENDIF
+     C*
+410 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHKT   Error check totals
+     C*
+     CSR         ZZCHKT    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*     Check # of entrys >0 if OPCAPC (capture cw at closing) = Y
+     C*
+     CSR         OPCAPC    IFEQ 'Y'
+     CSR         WOCW#     ANDLE0
+410 ACSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*ERROR  '$PRTN
+410 ACSR                   ENDIF
+     C*
+     C*
+     C*     Check # of entrys if individual catchweight entry = Y
+     C*
+     CSR         OPICW     IFEQ 'Y'
+     CSR         WOCW#     IFNE LBQPCK
+410 ACSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*ERROR  '$PRTN
+410 ACSR                   ENDIF
+410 ACSR                   ENDIF
+     C*
+410 AC*
+410 AC*
+410 AC*     Compare total catchweight to expected catchweight
+410 AC*
+410 ACSR         OPWRNC    IFEQ 'Y'
+     C*
+412 ACSR                   SELEC
+412 ACSR         LVSKP     WHEQ *OFF
+412 ACSR         WOTCW     IFLT LWRNG
+412 AC**         WOTCW     ORGT HIRNG
+410 ACSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*ERROR  '$PRTN
+410 ACSR                   ENDIF
+416aACSR                   ENDSL
+416aAC*
+416aACSR                   SELEC
+412 ACSR         HVSKP     WHEQ *OFF
+412 AC***        WOTCW     IFLT LWRNG
+412 ACSR         WOTCW     IFGT HIRNG
+410 ACSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*ERROR  '$PRTN
+410 ACSR                   ENDIF
+     C*
+412 ACSR                   ENDSL
+     C*
+410 ACSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Program initialization. Called from main line.
+     C*
+     CSR         ZZINZ2    BEGSR
+     C*
+     CSR                   MOVE '*SYSTEM 'WKCODE
+     CSR                   Z-ADD0         WKWHSE
+     CSR         OPKEY     CHAINOPTIONS              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE 'Y'       OPCAPC
+     CSR                   MOVE 'N'       OPWRNC
+     CSR                   Z-ADD0         OPRG1C
+     CSR                   Z-ADD0         OPRG2C
+     CSR                   MOVE 'N'       OPICW
+     CSR                   ENDIF
+     C*
+412BDC*R         LBKEY     CHAINLABEL7               79
+412BMCSR         LBKEY     CHAINLABEL                79
+     CSR         *IN79     IFEQ *ON
+     CSR                   Z-ADD0         LBQPCK
+     CSR                   Z-ADD0         LBUWGT
+     CSR                   ENDIF
+     C*
+CBIa C*   If order is type 'E', set system options to allow total cw.
+CBIa CSR         OHKEY     CHAINORDH                 79
+CBIa CSR         *IN79     IFEQ *OFF
+CBIa CSR                   MOVELOHMISC    DSMISC
+CBIa CSR         DSCODE    IFEQ 'E'
+CBIa CSR                   MOVE 'N'       OPICW
+CBIa CSR                   ENDIF
+CBIa CSR                   ENDIF
+     C*
+     C*   Initialize counter and total fields.
+     CSR                   Z-ADD0         WOCW#   70
+     CSR                   Z-ADD0         WOTCW   92
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZTOTL   Recalculate total cw and entered cw.
+     C*
+     CSR         ZZTOTL    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     CSR                   Z-ADD0         WOTCW
+     CSR                   Z-ADD0         WOCW#
+     C*
+     C*   Loop through CW records and recaluclate.
+     C*
+     CSR         CWKEYP    SETLLORDC1
+     CSR                   MOVE *OFF      STOP    1
+     CSR         STOP      DOUEQ*ON
+     CSR         CWKEYP    READEORDC1                    79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       STOP
+     CSR                   ELSE
+     CSR                   ADD  OCCWGT    WOTCW
+     CSR                   ADD  1         WOCW#
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*
+     CSR                   ENDSR
+     C*
+     C*----------------------------------------------------------------
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*

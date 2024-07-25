@@ -1,0 +1,521 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  IT970CL   Item Quantity Compare Report                           */
+/*  15 January 2010                                                  */
+/*  Retha Davis                                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*                                                                   */
+/*    01/15/10  RBD  5.30                                            */
+/*      - Created.                                                   */
+/*    02/21/10  MLB  5.30a                                           */
+/*      - Enh: Revised pgm to reference new import file, IMPFCQTY    */
+/*        instead of IMPFPQTY which was used with other pgms.        */
+/*      - Added support for receiving import mbr from calling pgm.   */
+/*                                                                   */
+/*    02/30/11  MLB  6.40                                            */
+/*      - Enh: Revised pgm to use cmd CPYFRMIMPF cmd along with      */
+/*        field definition file IMPFCQTYFD so that negative qty's    */
+/*        sent from the Host server will be converted correctly.     */
+/*    04/09/12  MLB  6.40a                                           */
+/*      - Enh: Revised pgm to support for new cmd, *EXCIFST to       */
+/*        process import files for the Test environment.             */
+/*    04/16/12  MLB  6.40b                                           */
+/*      - Enh: Revised pgm to run rtvmbrd cmd starting in PIRCSTM.   */
+/*        If not found, try PIRMODS and then PIR looking for mbr     */
+/*        IMPFCQTYFD.                                                */
+/*    10/17/12  MLB  6.40c                                           */
+/*      - Fix: Revised pgm to verify that mbr passed to pgm exists   */
+/*        in file IMPFCQTY when &cmd = *EXCPIFS or *EXCIFST.         */
+/*                                                                   */
+/*    03/14/13  RTR  6.50a                                           */
+/*      - Enh: Added call to IT972 for Non-Glazier customers         */
+/*        for sort by whse/dept/item.                                */
+/*    11/18/14  MLB  6.50b                                           */
+/*      - Fix: Added MONMSG to CPYFRMIMPF cmds for msg CPF2817.      */
+/*    01/25/15  RTR  6.50c                                           */
+/*      - Enh: Added client specific printer selection before        */
+/*        override.                                                  */
+/*                                                                   */
+/*    02/06/17  MLB  7.10                                            */
+/*      - Enh: Revised mod 6.40 to update library parms on cmd       */
+/*        RTVMBRD for new version references.                        */
+/*    02/01/17  RTR  7.10a                                           */
+/*      - Enh: Added GUI build and recalc all.                       */
+/*                                                                   */
+/*    05/01/18  MLB  7.20                                            */
+/*      - Enh: Revised mod 6.40 to update library parms on cmd       */
+/*        RTVMBRD for new version references.                        */
+/*    01/02/19  RTR  7.20b                                           */
+/*      - Enh: Changed GUI build program in 7.10a to the Staging     */
+/*        conversion program.                                        */
+/*                                                                   */
+/*    03/07/22  MLB  7.50                                            */
+/*      - Enh: Revised pgm to update parms passed to IT970CL when    */
+/*        &RUN = *JOBQ. Found at SOF.                                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Graves Menu Maker                       */
+/*                                                                   */
+/*    03/14/13  RTR  GMMa                                            */
+/*      - Enh: Added call to IT972 for sort by whse/dept/item.       */
+/*      - Enh: Added client custom code support to program.          */
+/*      - Enh: Added handling for IFS paths for different warehouses.*/
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Hearn Kirkwood                          */
+/*                                                                   */
+/*    03/16/13  RTR  HKWa                                            */
+/*      - Enh: Added call to IT972 for sort by whse/dept/item.       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: ICB                                     */
+/*                                                                   */
+/*    03/16/13  RTR  ICBa                                            */
+/*      - Enh: Added call to IT972 for sort by whse/dept/item.       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Kohl Wholesale                          */
+/*                                                                   */
+/*    10/10/14  RTR  KHLa                                            */
+/*      - Enh: Force type to *EXCPTN for Kohl.                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Fischer Foods                           */
+/*                                                                   */
+/*    01/25/15  RTR  FFCa                                            */
+/*      - Enh: Added Fischer to 650c mod to override outq ADAML.     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Springfield Grocer                      */
+/*                                                                   */
+/*    12/04/16  RTR  SGCa                                            */
+/*      - Enh: Force type to *EXCPTN.                                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &CMD   -  *EXCPTN - Print only exceptions.             (530aA) */
+/*           -  *EXCPIFS- Print only exceptions. File located        */
+/*                        in IFS. Host not on 400.           (640 A) */
+/*           -  *EXCIFST- Print only exceptions. File located        */
+/*                        in IFS test environment.           (640aA) */
+/*    &MBR   -  Import data file member name                 (530aA) */
+/*    &WHS   -  Warehouse                                            */
+/*    &RUN   -  *INTER   Run interactively                           */
+/*              *JOBQ    Run on Jobq                                 */
+/*    &OUTQ  -  Printer output queue (Default is *JOB)               */
+/*    &FORM  -  Printer form (Default is *STD)                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  FTP command sequence                                             */
+/*                                                                   */
+/*    PUT localitemqty PIRFTPF/IMPFPQTY                              */
+/*    QUOTE RCMD PIRFTP/FTPLIBL *PROD                                */
+/*    QUOTE RCMD IT970CL (*INTER *JOB *STD)                          */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Member name notes                                                */
+/*                                                                   */
+/*   - Member name must be unique for each PUT operation.  If not,   */
+/*     PUT will delete any existing information and replace it       */
+/*     with the new information.                                     */
+/*                                                                   */
+/*   - The first character of the member name must be an alpha       */
+/*     character.                                                    */
+/*                                                                   */
+/*   - Do not use date and/or time to make the member name unique.   */
+/*     There is always a possibility that two terminals will         */
+/*     generate the same date/time.                                  */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*   FTP orders are sent into a special FTP import file.  Unlike     */
+/*   the normal import where everything goes into a single member,   */
+/*   the FTP import files contain multiple members.  The member      */
+/*   that is used for a particular session is sent in as a           */
+/*   parameter.                                                      */
+/*                                                                   */
+/*   This is designed to be called from the command line or as a     */
+/*   remote command using the FTP Quote command. When called from    */
+/*   the command line the user will be prompted for the necessary    */
+/*   parameters.  When called as a remote command, the necessary     */
+/*   parameters are passed in.                                       */
+/*                                                                   */
+/*   Normally this program is called as a remote FTP command after   */
+/*   the data has been sent.  The option to call this from the       */
+/*   command line is mainly for testing and the instances when       */
+/*   something goes wrong with the import process.                   */
+/*                                                                   */
+/*   When called as a remote FTP command the job 'Type' is '0'       */
+/*   which means it looks like a batch jobe.                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+/* IT970CL:    PGM        PARM(&WHS &RUN &OUTQ &FORM)                (530aD) */
+ IT970CL:    PGM        PARM(&CMD &MBR &WHS &RUN &OUTQ &FORM)     /* (530aM) */
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(IT970CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(IT970)
+
+  /* Report program and printer file names. */
+
+             DCL        VAR(&RPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(IT971)
+             DCL        VAR(&RPTPGM2) TYPE(*CHAR) LEN(8) +
+                          VALUE(IT972)                            /* (650aA) */
+             DCL        VAR(&RPTPGM3) TYPE(*CHAR) LEN(8) +
+                          VALUE(IT976)                            /* (720aM) */
+                     /*   VALUE(IT981)                            /* (710aA) */
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) +
+                          VALUE(IT971PR)
+             DCL        VAR(&PRTF2) TYPE(*CHAR) LEN(10) +
+                          VALUE(IT972PR)                          /* (650aA) */
+
+  /* Informational messages */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Item Quantity Compare Report')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Item Quantity Compare Report')
+
+  /* Message queues */
+
+             DCL        VAR(&FTPMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('IMPITEM')
+             DCL        VAR(&FTPERRMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('IMPITEMERR')
+
+  /* Import files */
+
+             DCL        VAR(&FILEH) TYPE(*CHAR) LEN(10) +
+                          VALUE('IMPFCQTY')                       /* (530aM) */
+
+  /* Client ID's.    */                                           /* (640cA) */
+
+             DCL        VAR(&GLAZIER) TYPE(*CHAR) LEN(10) +
+                          VALUE('GLAZIER  ')                      /* (650aA) */
+             DCL        VAR(&MENUMAKER) TYPE(*CHAR) LEN(10) +
+                          VALUE('MENUMAKER')                      /* (GMMaA) */
+             DCL        VAR(&HEARNKIRKW) TYPE(*CHAR) LEN(10) +
+                          VALUE('HEARNKIRKW')                     /* (HKWaA) */
+             DCL        VAR(&ICB) TYPE(*CHAR) LEN(10) +
+                          VALUE('ICB')                            /* (ICBaA) */
+             DCL        VAR(&KOHL) TYPE(*CHAR) LEN(10) +
+                          VALUE('KOHL')                           /* (KHLaA) */
+             DCL        VAR(&FISCHER) TYPE(*CHAR) LEN(10) +
+                          VALUE('FISCHER')                        /* (FFCaA) */
+             DCL        VAR(&SGC) TYPE(*CHAR) LEN(10) +
+                          VALUE('SGC')                            /* (SGCaA) */
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&client)     TYPE(*CHAR) LEN(10)      /* (GMMaA) */
+             DCL        VAR(&clientloc)  TYPE(*CHAR) LEN(10)      /* (GMMaA) */
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(8)       /* (530aA) */
+             DCL        VAR(&COUNT)      TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&ERRCNT)     TYPE(*DEC)  LEN(1 0)
+             DCL        VAR(&EXIST)      TYPE(*LGL)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&ORDTYPE)    TYPE(*CHAR) LEN(1)
+             DCL        VAR(&OTYPE)      TYPE(*CHAR) LEN(8)
+             DCL        VAR(&OUTQ)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&PATHPROD)   TYPE(*CHAR) LEN(40)      /* (GMMaA) */
+             DCL        VAR(&PATHTEST)   TYPE(*CHAR) LEN(40)      /* (GMMaA) */
+             DCL        VAR(&RUN)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTID)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID01)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID02)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID03)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID04)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID05)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID06)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID07)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID08)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID09)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTID10)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&SRCPFLIB)   TYPE(*CHAR) LEN(10)      /* (640bA) */
+             DCL        VAR(&TRUCK)      TYPE(*CHAR) LEN(10)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WHS)       TYPE(*CHAR) LEN(3)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(15 5)
+
+/* Get Client ID */                                               /* (GMMaA) */
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (GMMaA) */
+
+             CHGVAR     VAR(&ERRCNT) VALUE(0)
+             CHGVAR     VAR(&EXIST) VALUE('0')
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Get job information */
+
+             RTVJOBA    JOB(&JOB) USER(&USER) TYPE(&TYPE)
+             CHGJOB     LOGCLPGM(*YES)
+
+/* See if user wants to run from Jobq. */
+
+             IF (&RUN = '*JOBQ') THEN(DO)
+               CHGVAR VAR(&RETURN) VALUE('*JOBQ')
+               GOTO CMDLBL(SKIP1)
+             ENDDO
+
+/* Don't get options if being run from JOBQ. */
+
+             IF ((&TYPE = '0') *OR (&MBR *NE ' ')) THEN(GOTO REPORT)
+
+/*  Get report options. */
+
+             CALL       PGM(&OPTPGM) PARM(&WHS &RETURN &OUTQ +
+                          &FORM)
+
+/*  See if user wants to proceed. */
+
+             IF         COND((&RETURN *EQ '*CANCEL') *OR (&RETURN +
+                          *EQ '*EXIT')) THEN(DO)
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+
+ SKIP1:
+
+/*  See if user wants to put report on JOBQ. */
+
+             IF (&RETURN *EQ '*JOBQ') THEN(DO)
+/*             SBMJOB  CMD(CALL PGM(&SBMPGM) PARM(&WHS '*JOBQ2' +
+                          &OUTQ &FORM)) JOB(&SBMPGM)                 (750 D) */
+               SBMJOB  CMD(CALL PGM(&SBMPGM) PARM(&CMD &MBR &WHS '*JOBQ2' +
+                          &OUTQ &FORM)) JOB(&SBMPGM)              /* (750 M) */
+               RMVMSG     CLEAR(*ALL)
+               GOTO    CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+ REPORT:
+             SELECT
+
+              WHEN     COND(&CLIENT = &KOHL) THEN(DO)             /* (KHLaA) */
+               CHGVAR     VAR(&CMD) VALUE('*EXCPTN')              /* (KHLaA) */
+               ENDDO                                              /* (KHLaA) */
+
+              WHEN     COND(&CLIENT = &SGC) THEN(DO)              /* (SGCaA) */
+               CHGVAR  VAR(&CMD) VALUE('*EXCPTN')                 /* (SGCaA) */
+               ENDDO                                              /* (SGCaA) */
+             ENDSELECT
+
+/*                                                                   (640 A) */
+/*           Find library where field def file resides.              (640bA) */
+             IF         COND(&CMD = '*EXCPIFS' +
+                         *or &CMD = '*EXCIFST') THEN(DO)          /* (640bA) */
+               CHGVAR     VAR(&SRCPFLIB) VALUE('*LIBL')           /* (640bA) */
+               RTVMBRD    FILE(PIRCSTM720/QDDSFILES) MBR(IMPFCQTYFD) +
+                            RTNLIB(&SRCPFLIB)                     /* (720 M) */
+               MONMSG     MSGID(CPF3018 CPF3019 CPF9812 CPF9815 +
+                            CPF0001) EXEC(DO)                     /* (640bA) */
+                 RTVMBRD    FILE(PIRMODS720/QDDSFILES) MBR(IMPFCQTYFD) +
+                              RTNLIB(&SRCPFLIB)                   /* (720 M) */
+                 MONMSG     MSGID(CPF3018 CPF3019 CPF9812 CPF9815 +
+                              CPF0001) EXEC(DO)                   /* (640bA) */
+                   RTVMBRD    FILE(PIR710/QDDSFILES) MBR(IMPFCQTYFD) +
+                                RTNLIB(&SRCPFLIB)                 /* (720 M) */
+                   MONMSG     MSGID(CPF3018 CPF3019 CPF9812 CPF9815 +
+                                CPF0001) EXEC(DO)                 /* (640bA) */
+                     SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                                  MSGDTA('**Error** Source Field File mbr: +
+                                  IMPFCQTYFD missing. Contact BFC +
+                                  Associates for further assistance. +
+                                  Reference IT970CL') TOMSGQ(*SYSOPR) +
+                                  MSGTYPE(*INFO)                  /* (640bA) */
+                     GOTO       CMDLBL(GETOUT)                    /* (640bA) */
+                   ENDDO                                          /* (640bA) */
+                 ENDDO                                            /* (640bA) */
+               ENDDO                                              /* (640bA) */
+/*                                                                   (640cA) */
+/*             Verify import file mbr exists, if not found, add it.  (640cA) */
+               CHKOBJ     OBJ(IMPFCQTY) OBJTYPE(*FILE) MBR(&MBR)  /* (640cA) */
+               MONMSG     MSGID(CPF9815) EXEC(DO)                 /* (640cA) */
+                 ADDPFM     FILE(IMPFCQTY) MBR(&MBR)              /* (640cA) */
+               ENDDO                                              /* (640cA) */
+             ENDDO                                                /* (640bA) */
+
+/*          Set Default IFS file paths                               (GMMaA) */
+             CHGVAR     VAR(&PATHPROD) +
+                          VALUE('/BFCImport/impfcqty.txt')        /* (GMMaA) */
+             CHGVAR     VAR(&PATHTEST) +
+                          VALUE('/BFCImport_Test/impfcqty.txt')   /* (GMMaA) */
+
+/*          Change path for multi warehouse clients                  (GMMaA) */
+             SELECT                                               /* (GMMaA) */
+             WHEN       COND(&CLIENT = &MENUMAKER) THEN(DO)       /* (GMMaA) */
+             IF         COND(&WHS *NE '001') THEN(DO)
+             CHGVAR     VAR(&PATHPROD) VALUE('/BFCImport' *CAT &WHS +
+                          *CAT '/impfcqty.txt')                   /* (GMMaA) */
+             CHGVAR     VAR(&PATHTEST) VALUE('/BFCImport' *CAT &WHS +
+                          *CAT '_Test/impfcqty.txt')              /* (GMMaA) */
+             ENDDO                                                /* (GMMaA) */
+             ENDDO                                                /* (GMMaA) */
+             ENDSELECT                                            /* (GMMaA) */
+
+/*          Retrieve Host Onhand Qty Compare file from IFS.          (640 A) */
+             IF         COND(&CMD = '*EXCPIFS') THEN(DO)          /* (640 A) */
+/*          Retrieve file from IFS to convert neg. qty's correctly.  (640 A) */
+      /*       CPYFRMIMPF FROMSTMF('/BFCIMPORT/impfcqty.txt') +
+                            TOFILE(*LIBL/IMPFCQTY &MBR) +
+                            MBROPT(*REPLACE) STMFLEN(39) +
+                            RCDDLM(*CRLF) DTAFMT(*FIXED) +
+                            FLDDFNFILE(&SRCPFLIB/QDDSFILES IMPFCQTYFD) +
+                            ERRRCDOPT(*REPLACE) RPLNULLVAL(*FLDDFT) /*(GMMaD)*/
+               CPYFRMIMPF FROMSTMF(&PATHPROD) +
+                            TOFILE(*LIBL/IMPFCQTY &MBR) +
+                            MBROPT(*REPLACE) STMFLEN(39) +
+                            RCDDLM(*CRLF) DTAFMT(*FIXED) +
+                            FLDDFNFILE(&SRCPFLIB/QDDSFILES IMPFCQTYFD) +
+                            ERRRCDOPT(*REPLACE) RPLNULLVAL(*FLDDFT) /*(GMMaM)*/
+               MONMSG     MSGID(CPF2817)                          /* (650bA) */
+             ENDDO                                                /* (640 A( */
+
+/*                                                                   (640aA) */
+/*          Retrieve Host Onhand Qty Compare file from IFS Test env. (640aA) */
+             IF         COND(&CMD = '*EXCIFST') THEN(DO)          /* (640aA) */
+/*          Retrieve file from IFS to convert neg. qty's correctly.  (640aA) */
+        /*     CPYFRMIMPF FROMSTMF('/BFCIMPORT_Test/impfcqty.txt') +
+                            TOFILE(*LIBL/IMPFCQTY &MBR) +
+                            MBROPT(*REPLACE) STMFLEN(39) +
+                            RCDDLM(*CRLF) DTAFMT(*FIXED) +
+                            FLDDFNFILE(&SRCPFLIB/QDDSFILES IMPFCQTYFD) +
+                            ERRRCDOPT(*REPLACE) RPLNULLVAL(*FLDDFT) /*(GMMaD)*/
+               CPYFRMIMPF FROMSTMF(&PATHTEST) +
+                            TOFILE(*LIBL/IMPFCQTY &MBR) +
+                            MBROPT(*REPLACE) STMFLEN(39) +
+                            RCDDLM(*CRLF) DTAFMT(*FIXED) +
+                            FLDDFNFILE(&SRCPFLIB/QDDSFILES IMPFCQTYFD) +
+                            ERRRCDOPT(*REPLACE) RPLNULLVAL(*FLDDFT) /*(GMMaM)*/
+               MONMSG     MSGID(CPF2817)                          /* (650bA) */
+             ENDDO                                                /* (640aA( */
+
+/*  Make sure members exist                                          */
+
+             CHKOBJ     OBJ(&FILEH) OBJTYPE(*FILE) MBR(&MBR)      /* (530aA) */
+             CHGVAR     VAR(&EXIST) VALUE('1')                    /* (530aA) */
+
+/* Make sure &DEV and &FORM are not blank */
+
+               IF (&OUTQ = ' ') +
+                 THEN(CHGVAR VAR(&OUTQ) VALUE('*JOB'))
+               IF (&FORM = ' ') +
+                 THEN(CHGVAR VAR(&FORM) VALUE('*STD'))
+
+/* Clear any existing messages and display working message. */
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+/* Determine if customer needs outq override */
+
+             SELECT                                               /* (650cA) */
+             WHEN       COND(&CLIENT *EQ &FISCHER) THEN(CHGVAR +
+                          VAR(&OUTQ) VALUE('ADAML     '))         /* (FFCaA) */
+             ENDSELECT                                            /* (650cA) */
+
+/* Override printer file */
+
+             OVRPRTF    FILE(&PRTF) OUTQ(&OUTQ) FORMTYPE(&FORM)
+             OVRPRTF    FILE(&PRTF2) OUTQ(&OUTQ) FORMTYPE(&FORM)  /* (650aA) */
+
+/* Override import files to correct member                        /* (530aA) */
+
+             OVRDBF     FILE(&FILEH) TOFILE(*FILE) MBR(&MBR)      /* (530aA) */
+
+/* Recalc item quantity */
+
+             CALL       PGM(UT812) PARM(&WHSE '*ALL' '0' &SBMPGM ' ' +
+                          ' ')                                    /* (710aA) */
+/* Print report  */
+
+/*           CALL       PGM(&RPTPGM) PARM(&WHS)                      (530aD) */
+/*           CALL       PGM(&RPTPGM) PARM(&CMD &WHS)         (530aA) (650aD) */
+
+/*  If Glazier, call old version  */
+             IF         COND(&CLIENT *EQ &GLAZIER) THEN(CALL +
+                          PGM(&RPTPGM) PARM(&CMD &WHS))           /* (650aA) */
+
+/*  Otherwise, call new version sorted by whse/dept/item  */
+             ELSE       CMD(DO)
+          /*  CALL      PGM(&RPTPGM2) PARM(&CMD &WHS)             /* (720aD) */
+          /*  MONMSG    MSGID(CEE9901) EXEC(DO)                   /* (720aD) */
+          /*   DMPJOB                                             /* (720aD) */
+          /*   SNDMSG   MSG('Error running Comparison in IT970CL. +
+                        See dump listing.') TOUSR(QSYSOPR)        /* (720aD) */
+          /*  ENDDO                                               /* (720aD) */
+       /* Run GUI build also */
+              CALL      PGM(&RPTPGM3) PARM(&WHS)                  /* (710aA) */
+              MONMSG    MSGID(CEE9901)                            /* (710aA) */
+             ENDDO
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RMVM       FILE(&FILEH) MBR(&MBR)
+             MONMSG     MSGID(CPF7301 CPF320A CPF320B CPF3203 +
+                          CPF3220 CPF3273 CPF7301 CPF7310 CPF0001) +
+
+             RMVMSG     CLEAR(*ALL)
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+
+             CHGVAR     VAR(&ERRCNT) VALUE(&ERRCNT + 1)
+             IF COND(&ERRCNT = 3) THEN(GOTO CMDLBL(BOTTOM))
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+             IF COND(&TYPE = '1') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             ENDDO
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) TOMSGQ(&FTPMSGQ) MSGTYPE(*COMP)
+
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+ BOTTOM:
+
+               RCLRSC     LVL(*CALLER)
+
+             ENDPGM

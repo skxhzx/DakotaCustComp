@@ -1,0 +1,3308 @@
+417cA /copy *libl/qcopysrc,hspecs
+650bAH DFTACTGRP(*NO) ACTGRP(*CALLER)
+650aA*----------------------------------------------------------------
+650aA* COMPILE WITH FOLLOWING OPTIONS:
+650aA*
+650aA*  Commitment control (COMMIT)  . . . *NONE
+650aA*  Close SQL Cursor (CLOSQLCSR) . . . *ENDACTGRP
+650aA*  Delay PREPARE (DLYPRP) . . . . . . *YES
+650aA*
+650aA*  *ENDACTGRP must be used in this program because *ENDMOD
+650aa*  closes the cursors pointing to the returned result sets
+650aA*  causing an error in the calling Stored Procedure.
+650aA*
+650aA*----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     *   Copyright (C) 2011 BFC Software, Inc. - All Rights Reserved
+     *   BFC Software, Inc.
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     *
+     *  DKTEXPORT   Dakota import
+     *  21 January 2011
+     *  Dave Sommerville
+     *
+     *----------------------------------------------------------------
+     *  Revisions:
+     *
+640 A*    01/21/11  DAS  6.40
+     *      - Created.
+     *
+640aA*    01/21/11  DAS  6.40a
+     *      - Added PO Export
+     *
+640bA*    01/21/11  DAS  6.40b
+     *      - Added Item Qty export
+     *
+640cA*    02/20/11  DAS  6.40c
+     *      - Added parms pMaxBatches, pSets, pProgram.
+     *      - Added logic to pass back result sets when calling
+     *        program is PDKTEXPRS.
+     *
+640dA*    04/27/11  MLB  6.40d
+     *      - Enh: Added Item Whse Qty Ver 2 export - IT740S.
+     *
+640eA*    06/09/11  DAS  6.40e
+     *      - Enh: Added EXPSLICLOG/EXPSLLCOMB exports.
+     *
+640fA*    12/04/12  MLB  6.40f
+     *      - Enh: Added EXPSRTN export for customer returns.
+     *      - Call to OR736S.
+     *
+650aA*    05/29/13  DAS  6.50a
+     *      - Added compile comments at top of program.
+     *
+650bA*    06/07/13  DAS  6.50b
+     *      - Rewrote MarkSTGBATCH routine to use setll/reade/update
+     *        instead of SQL update.
+     *      - Renamed original to MarkSTGBATCHx. See that routine
+     *        for details.
+650cA*    12/16/13  MLB  6.50c
+     *      - Enh: Added export support for sending Putaways, Replenish-
+     *        ments, Transfers to Host. New export code, EXPTFR.
+650dA*    03/18/14  RTR  6.50d
+     *      - Enh: Added export support for pick labels. New export
+     *        code, EXPPCKLBL.
+     *
+650eA*    06/24/14  DAS  6.50e
+     *      - Enh: Added EXPCBIIADJ for Cheney Pick Slot Adjustments
+     *      - Call to ITMADJEXPS
+     *
+650fA*    07/10/14  DAS  6.50f
+     *      - Revised 650e change to call EXPSITMADJ.
+     *
+700a *    10/13/15  RTR  7.00a
+     *      - Revised for differing versions of EXPSTIHIGH. Try
+     *        new version first, old if sql error.
+700b *    10/22/15  RTR  7.00b
+     *      - Enh: Added EXPCBISQTY for Cheney Slot Item Export
+     *
+700c *    09/26/16  RTR  7.00c
+     *      - Enh: Added EXPCBIUCI for Cheney Order UCI Export
+     *
+710a *    10/13/15  RTR  7.00a
+     *      - Revised for differing versions of EXPSTIHIGH. Try
+     *        new version first, old if sql error.
+     *
+710a *    05/16/17  MR  7.10a
+     *      - Recompiled program for EXPSPLBL file change.
+     *
+720a *    02/22/18  RTR 7.20a
+     *      - Enh: Added export support for UPC Codes. New export
+     *        code EXPUPC.
+720b *    02/22/18  RTR  7.20b
+     *      - Enh: Added EXPITMQTYL for Item Qty License Export
+     *
+730a *    03/18/20  NLK  7.30a  2019109
+     *      - Enh: Order Number increased to 8 digits
+     *        Added new cmd EXPROUTEA
+     *      - CHG: changed to 11 digits for Anandan
+     *      - CHG: call RH155ASUCB instead of RH155SUCBI
+     *
+730b *    06/16/20  NLK  7.30b  2019109
+     *      - Added new cmd EXPSELTRNA (was EXPSELTRAN) 8 digit chgs
+     *      - Added new cmd EXPCLSRTEA (was EXPCLSRTE)  8 digit chgs
+     *
+760a *    04/29/22  DAS  7.60a
+     *      - Revised all SQL Declare's to accept sqlstt=''; It looks
+     *        like sqlstt isn't sent for a Declare.
+     *      - Revised SelectEXPSORDAT close cursor at beginning of
+     *        routine. Don't know why calling SQL Stored Procudure
+     *        program is not ending and closing the cursor.
+     *
+     *----------------------------------------------------------------
+CBIa *    **/**/2011     CBI.a  *******   (No Notes where CBIa exist)
+     *
+CBIb *    08/02/20  NLK  CBI.b  2019109
+     *        700c leave for other Clients then for Cheney...
+     *      - ADD: Order # increase; add one location at a time
+     *        Currently ALL of Cheney in 2022
+     *
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     *  Notes
+     *
+     *    When adding a new export type, scan for EXPADJUST and
+     *    EXPSADJ, and use that code as a guide.
+     *
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     *  Parameters
+     *
+     *    Input Parameters
+     *      pWhse       Warehouse
+     *      pType       Batch type
+     *      pRunType    I = Interactive, J = Jobq
+640cA*      pMax        Maximum batches returned
+640cA*      pSets       Only used with calling program is PDKTEXPRS.
+640cA*                  RTN - Returns only the return code, message
+640cA*                        and bach count status array.
+640cA*                  STG - Returns RTN and STGBATCH result set.
+640cA*                  ALL - Returns RTN, STG, and all result sets
+640cA*                        that correspond with the pType sent.
+640cA*                        If pType *ALL sent, then all possible
+640cA*                        result sets are returned.
+640cA*      pProgram    Calling program
+     *
+     *    Returned Parameters
+     *      pReturn     *OK
+     *      pMessage    Error message
+     *
+     *----------------------------------------------------------------
+
+650bA*----------------------------------------------------------------
+650bA*  Binding Directories
+650bA*----------------------------------------------------------------
+650bA
+650bAHbnddir('BFCBND')
+
+650bA*----------------------------------------------------------------
+650bA* File Specs
+650bA*----------------------------------------------------------------
+650bA
+650bAFstgbatch1 uf   e           k disk
+
+     D dktexport       pr                  extpgm('DKTEXPORT')
+      * Input
+     D   pWhse                        3p 0 const
+     D   pType                       10    const
+     D   pRunType                     1    const
+640cAD   pMaxBatches                  5p 0 const
+640cAD   pSets                        3    const
+640cAD   pProgram                    10    const
+      * Output
+     D   pReturn                     10
+     D   pMessage                   200
+
+     D dktexport       pi
+      * Input
+     D   pWhse                        3p 0 const
+     D   pType                       10    const
+     D   pRunType                     1    const
+640cAD   pMaxBatches                  5p 0 const
+640cAD   pSets                        3    const
+640cAD   pProgram                    10    const
+      * Output
+     D   pReturn                     10
+     D   pMessage                   200
+
+     *----------------------------------------------------------------
+     *  Client id's
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,id#cheney
+
+     *----------------------------------------------------------------
+     *  File data data structure
+     *----------------------------------------------------------------
+
+650bDD*sbrec         E ds                  extname(stgbatch) inz(*EXTDFT)
+
+     *----------------------------------------------------------------
+     *  Program info data structure
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,c#pgminfds
+
+     *----------------------------------------------------------------
+     *  Standard SQL variables and constants
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,c#stdsql
+
+     *----------------------------------------------------------------
+     *  Standard variables and constants
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,c#stdvar
+
+     *----------------------------------------------------------------
+     * Variables
+     *----------------------------------------------------------------
+
+     D allTypes        s               n
+     D alphaWhse       s              3
+     D client          s             10
+     D clientLoc       s             10
+     D cmd             s           3000    varying
+     D expRecIdA       s             11
+     D logMessage      s            200
+     D logReturn       s             10
+     D recid           s             11p 0
+     D temp3n          s              3p 0
+700aAD tihiver         s              1a
+     D uRunType        s              1
+640cAD uSets           s              3
+     D uType           s             10
+     D whse3s          s              3s 0
+     D wwMsgKey        s              4A
+
+640cA*----------------------------------------------------------------
+640cA*  Return parameter result set
+640cA*----------------------------------------------------------------
+640cA
+640cAD pgmStatus       ds                  occurs(1)
+640cAD  sReturn                      10
+640cAD  sMessage                    200
+640cAD  sBatches                      5s 0 inz(0)
+640cAD  sSetsReturned               300
+
+     *----------------------------------------------------------------
+     *  Translation strings
+     *----------------------------------------------------------------
+
+     D   xupper        C                   'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+     D   xlower        C                   'abcdefghijklmnopqrstuvwxyz'
+
+     *----------------------------------------------------------------
+     * Data structures for QMHRCVPM
+     *----------------------------------------------------------------
+
+     D dsM2            DS
+     D  dsM2_BytRtn                  10I 0 inz(%size(dsM2))
+     D  dsM2_BytAvl                  10I 0 inz(%size(dsM2))
+     D  dsM2_MsgSev                  10I 0
+     D  dsM2_MsgID                    7A
+     D  dsM2_MsgType                  2A
+     D  dsM2_MsgKey                   4A
+     D  dsM2_MsgFileN                10A
+     D  dsM2_MsgLibS                 10A
+     D  dsM2_MsgLibU                 10A
+     D  dsM2_SendJob                 10A
+     D  dsM2_SendUser                10A
+     D  dsM2_SendJobN                 6A
+     D  dsM2_SendPgm                 12A
+     D  dsM2_SendLine                 4A
+     D  dsM2_SendDate                 7A
+     D  dsM2_SendTime                 6A
+     D  dsM2_RecvPgm                 10A
+     D  dsM2_RecvLine                 4A
+     D  dsM2_SendType                 1A
+     D  dsM2_RecvType                 1A
+     D  dsM2_Reserved                 1A
+     D  dsM2_CCS_IndT                10I 0
+     D  dsM2_CCS_IndD                10I 0
+     D  dsM2_AlertOpt                 9A
+     D  dsM2_CCS_Msg                 10I 0
+     D  dsM2_CCS_Txt                 10I 0
+     D  dsM2_DtaLen                  10I 0
+     D  dsM2_DtaAvl                  10I 0
+     D  dsM2_MsgLen                  10I 0
+     D  dsM2_MsgAvl                  10I 0
+     D  dsM2_HlpLen                  10I 0
+     D  dsM2_HlpAvl                  10I 0
+     D  dsM2_Dta                   4000A
+
+     D dsEC            DS
+     D  dsECBytesP             1      4I 0 INZ(%size(dsEC))
+     D  dsECBytesA             5      8I 0 INZ(0)
+     D  dsECMsgID              9     15
+     D  dsECReserv            16     16
+     D  dsECMsgDta            17    256
+
+     *----------------------------------------------------------------
+650bA*  Time variables
+     *----------------------------------------------------------------
+
+     D CurrStamploc    s               z
+     D CurrStampsys    s               z
+     D CurrStampuc     s               z
+
+     D bfcoffset       s              3  0 inz(0)
+     D ucOffset        s              3  0
+
+     *----------------------------------------------------------------
+     *  Prototypes
+     *----------------------------------------------------------------
+
+      /copy qcopysrc,p.qcmdexc
+650bA /copy qcopysrc,p.bfcdteti
+
+     D QMHRCVPM        PR                  ExtPgm('QMHRCVPM')
+     D   MsgInfo                  32766A   options(*varsize)
+     D   MsgInfoLen                  10I 0 const
+     D   Format                       8A   const
+     D   StackEntry                  10A   const
+     D   StackCount                  10I 0 const
+     D   MsgType                     10A   const
+     D   MsgKey                       4A   const
+     D   WaitTime                    10I 0 const
+     D   MsgAction                   10A   const
+     D   ErrorCode                32766A   options(*varsize)
+
+     D SetJdLibl       pr                  extpgm('SETJDLIBL')
+     D  pjobd                        10    const
+     D  pReturn                      10
+     D  pMessage                     60
+
+     D GetClient       pr                  extpgm('GETCLIENT')
+     D  pClient                      10
+     D  pClientLoc                   10
+
+     D GetRecId        pr                  extpgm('GETRECID')
+     D  pWhse                         3s 0 const
+     D  pFile                        10    const
+     D  pRecId                       11p 0
+
+     D it726s          pr                  extpgm('IT726S')
+     D  pWhse                         3    const
+
+640bAD it736s          pr                  extpgm('IT736S')
+640bAD  pWhse                         3    const
+
+640dAD it740s          pr                  extpgm('IT740S')
+640dAD  pWhse                         3    const
+
+640eAD ll726s          pr                  extpgm('LL726S')
+640eAD  pWhse                         3    const
+
+640fAD or736s          pr                  extpgm('OR736S')
+640fAD  pWhse                         3    const
+
+640aAD po726s          pr                  extpgm('PO726S')
+640aAD  pWhse                         3    const
+
+650cAD pt751cl         pr                  extpgm('PT751CL')
+650cAD  pWhse                         3    const
+
+650eAD itmadjexps      pr                  extpgm('ITMADJEXPS')
+650eAD  pWhse                         3    const
+
+700bAD sl727s          pr                  extpgm('SL727S')
+700bAD  pWhse                         3    const
+
+700cAd rh155sucbi      pr                  extpgm('RH155SUCBI')
+700cAd  pWhse                         3    const
+
+730aAd rh155asucb      pr                  extpgm('RH155ASUCB')
+730aAd  pWhse                         3    const
+
+650fAD expsitmadj      pr                  extpgm('EXPSITMADJ')
+
+720aAd uc726s          pr                  extpgm('UC726S')
+720aAd  pWhse                         3    const
+
+720bAd it745s          pr                  extpgm('IT745S')
+720bAd  pWhse                         3    const
+
+      /free
+
+         *inlr = *on;
+
+         pReturn = '*OK';
+         pMessage = ' ';
+
+         // Translate input into upper case.
+
+         uType = %xlate(xlower: xupper: pType);
+         uRunType = %xlate(xlower: xupper: pRunType);
+640cA    uSets = %xlate(xlower: xupper: pSets);
+
+         // Convert warehouse
+
+         alphaWhse = %trim(%char(pWhse));
+         whse3s = pWhse;
+
+         // Verify pType parameter
+
+         allTypes = *off;
+
+         select;
+           when uType = '*ALL';
+             allTypes = *on;
+CBIaA      when uType = '*CBI';
+           when uType = 'EXPADJUST';
+           when uType = 'EXPCLSRTE';
+730bA      when uType = 'EXPCLSRTEA';
+           when uType = 'EXPITEMQTY';
+640dA      when uType = 'EXPITMQTY2';
+720bA      when uType = 'EXPITMQTYL';
+640eA      when uType = 'EXPLICLOG';
+640eA      when uType = 'EXPLLCOMBO';
+           when uType = 'EXPPO';
+640fA      when uType = 'EXPRETURN';
+           when uType = 'EXPROUTE';
+730aA      when uType = 'EXPROUTEA';
+           when uType = 'EXPSELTRAN';
+730bA      when uType = 'EXPSELTRNA';
+           when uType = 'EXPCBILOAD';
+           when uType = 'EXPCBISHRT';
+           when uType = 'EXPCBITIHI';
+           when uType = 'EXPCBICASE';
+650eA      when uType = 'EXPCBIIADJ';
+700bA      when uType = 'EXPCBISQTY';
+700cA      when uType = 'EXPCBIUCI ';
+650cA      when uType = 'EXPTRN';
+650dA      when uType = 'EXPPCKLBL';
+720aA      when uType = 'EXPUPC';
+640cA      other;
+640cA        pReturn  = '*INVLDTYPE';
+640cA        pMessage = 'Invalid type sent (' + uType + '). ';
+640cA        uSets = 'RTN';
+640cA        exsr SendSets;
+640cA        return;
+         endsl;
+
+         // Verify run type
+
+640cA    select;
+640cM      when uRunType = 'I';
+640cM      when uRunType = 'J';
+640cA      other;
+640cA        pReturn  = '*INVLDRTYP';
+640cA        pMessage = 'Invalid run type sent (' + uRunType + '). '
+640cA                 + 'Valid types are I=Interactive and J=Jobq. ';
+640cA        uSets = 'RTN';
+640cA        exsr SendSets;
+640cA        return;
+640cM    endsl;
+
+         // Verify pSets parameter if returning result sets
+640cA
+640cA    if pProgram = 'PDKTEXPRS';
+           select;
+             when uSets = 'ALL';
+             when uSets = 'RTN';
+             when uSets = 'STG';
+640cA        other;
+640cA          pReturn  = '*INVLDSET';
+640cA          pMessage = 'Invalid set type sent (' + uSets + '). '
+640cA                   + 'Valid types are ALL, RTN, STG. ';
+640cA          uSets = 'RTN';
+640cA          exsr SendSets;
+640cA          return;
+           endsl;
+640cA      if uRunType = 'J' and uSets <> 'RTN';
+640cA          pReturn  = '*INVLDRSC';
+640cA          pMessage = 'Invalid run type (' + uRunType + ') / '
+640cA                   + 'set type (' + uSets + ') combination. '
+640cA                   + 'Run type J can only be matched with '
+640cA                   + 'set type RTN.';
+640cA          uSets = 'RTN';
+640cA          exsr SendSets;
+640cA          return;
+640cA      endif;
+640cA    endif;
+
+         // Run programs to export data to staging files
+
+640cA    select;
+640cM      when uRunType = 'I';
+             exsr runInteractive;
+640cM      when uRunType = 'J';
+             exsr runJobq;
+640cM    endsl;
+
+640cA    // Get out if not return result sets.
+640cA
+640cA    if pProgram <> 'PDKTEXPRS';
+640cA      return;
+640cA    endif;
+
+640cA    // Otherwise, return result sets
+640cA
+640cA    exsr CreateSets;
+
+640cA    exsr SendSets;
+
+         return;
+      /end-free
+
+     *----------------------------------------------------------------
+     *  *PSSR  Unexpected error handler
+     *----------------------------------------------------------------
+
+      /free
+       begsr *pssr;
+
+         // Make sure we don't get caught in an infinite loop
+
+         if pssrflag;
+           *inlr = *on;
+           return;
+         endif;
+
+         pssrflag = *on;
+
+         //  Send message back to calling program
+
+         dump(a);
+         pReturn = 'U:' + #status;
+         pMessage = 'U:'
+                  + %trim(#pgm)
+                  + '('
+                  + %trim(%editc(#stmt:'Z'))
+                  + ')-'
+                  + #pgmmsg;
+         *inlr = *on;
+         return;
+
+       endsr;
+      /end-free
+
+     *----------------------------------------------------------------
+     *  *INZSR  Initialization subroutine
+     *----------------------------------------------------------------
+
+      /free
+       begsr *inzsr;
+
+         // Get client id
+
+         getclient(client: clientLoc);
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  CreateSets     Create result sets
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr CreateSets;
+
+         // Get batch id for this export.
+
+         monitor;
+           GetRecId(whse3s: 'DKTEXPORT': RecId);
+         on-error;
+           pReturn  = '*ERRGETID';
+           pMessage = 'Error calling GetRecId '
+                    + 'from DKTEXPORT ';
+           dump(a);
+           leavesr;
+         endmon;
+
+         expRecIdA = %trim(%char(recId));
+
+         // Mark batches to return.
+
+         exsr MarkSTGBATCH;
+         if sBatches = 0 or pReturn <> '*OK';
+           leavesr;
+         endif;
+
+         // Get out if only returning status array.
+
+         if uSets = 'RTN';
+           leavesr;
+         endif;
+
+         // Create STGBATCH result set.
+
+         exsr SelectSTGBATCH;
+         if pReturn <> '*OK';
+           leavesr;
+         endif;
+
+         // Get out if only returning batch records.
+
+         if uSets = 'STG';
+           leavesr;
+         endif;
+
+         // Create EXPSADJ result set.
+
+         if allTypes or uType = 'EXPADJUST';
+           exsr SelectEXPSADJ;
+         endif;
+
+640eA    // Create EXPSLICLOG result set.
+640eA
+640eA    if allTypes or uType = 'EXPLICLOG';
+640eA      exsr SelectEXPSLICLOG;
+640eA    endif;
+
+640eA    // Create EXPSLLCOMB result set.
+640eA
+640eA    if allTypes or uType = 'EXPLLCOMBO';
+640eA      exsr SelectEXPSLLCOMB;
+640eA    endif;
+
+         // Create EXPSORDH result set.
+
+         if allTypes
+          or uType = 'EXPROUTE'
+          or uType = 'EXPCLSRTE';
+            exsr SelectEXPSORDH;
+         endif;
+
+         // Create EXPSORDD result set.
+
+         if allTypes
+          or uType = 'EXPROUTE'
+          or uType = 'EXPCLSRTE';
+            exsr SelectEXPSORDD;
+         endif;
+
+         // Create EXPSORDL result set.
+
+         if allTypes
+          or uType = 'EXPROUTE'
+          or uType = 'EXPSELTRAN';
+            exsr SelectEXPSORDL;
+         endif;
+
+         // Create EXPSORDC result set.
+
+         if allTypes
+          or uType = 'EXPROUTE'
+          or uType = 'EXPSELTRAN';
+            exsr SelectEXPSORDC;
+         endif;
+
+         // Create EXPSORDP result set.
+
+         if allTypes
+          or uType = 'EXPROUTE'
+          or uType = 'EXPSELTRAN';
+            exsr SelectEXPSORDP;
+         endif;
+
+         // Create EXPSORDT result set.
+
+         if allTypes
+          or uType = 'EXPROUTE'
+          or uType = 'EXPSELTRAN';
+            exsr SelectEXPSORDT;
+         endif;
+
+         // Create EXPSORDE result set.
+
+         if allTypes
+          or uType = 'EXPROUTE'
+          or uType = 'EXPSELTRAN';
+              exsr SelectEXPSORDE;
+         endif;
+
+730aA    // BEGIN of new Expanded Order Number   730a
+
+         // Create EXPSORDAH result set.
+
+         if allTypes
+730a      or uType = 'EXPROUTEA'
+730b      or uType = 'EXPCLSRTEA';
+730a        exsr SelectEXPSORDAH;
+         endif;
+
+         // Create EXPSORDAD result set.
+
+         if allTypes
+730a      or uType = 'EXPROUTEA'
+730b      or uType = 'EXPCLSRTEA';
+730a        exsr SelectEXPSORDAD;
+         endif;
+
+         // Create EXPSORDAL result set.
+
+         if allTypes
+730a      or uType = 'EXPROUTEA'
+730b      or uType = 'EXPSELTRNA';
+730a        exsr SelectEXPSORDAL;
+         endif;
+
+         // Create EXPSORDAC result set.
+
+         if allTypes
+730a      or uType = 'EXPROUTEA'
+730b      or uType = 'EXPSELTRNA';
+730a        exsr SelectEXPSORDAC;
+         endif;
+
+         // Create EXPSORDAP result set.
+
+         if allTypes
+730a      or uType = 'EXPROUTEA'
+730bM     or uType = 'EXPSELTRNA';
+730a        exsr SelectEXPSORDAP;
+         endif;
+
+         // Create EXPSORDAT result set.
+
+         if allTypes
+730a      or uType = 'EXPROUTEA'
+730b      or uType = 'EXPSELTRNA';
+730a        exsr SelectEXPSORDAT;
+         endif;
+
+         // Create EXPSORDAE result set.
+
+         if allTypes
+730a      or uType = 'EXPROUTEA'
+730b      or uType = 'EXPSELTRNA';
+            if client <> cheney;
+730a          exsr SelectEXPSORDAE;
+            endif;
+         endif;
+
+730a     // END of new Expanded Order Number  730a
+
+         // Create EXPSPOH result set.
+
+         if uType = 'EXPPO'
+            or (allTypes and client <> cheney);
+              exsr SelectEXPSPOH;
+         endif;
+
+         // Create EXPSPOD result set.
+
+         if uType = 'EXPPO'
+            or (allTypes and client <> cheney);
+              exsr SelectEXPSPOD;
+         endif;
+
+         // Create EXPSPOE result set.
+
+         if uType = 'EXPPO'
+            or (allTypes and client <> cheney);
+              exsr SelectEXPSPOE;
+         endif;
+
+640fA    // Create EXPSRTN result set.
+
+640fA    if uType = 'EXPRETURN'
+640fA       or (allTypes and client <> cheney);
+640fA         exsr SelectEXPSRTN;
+640fA    endif;
+
+         // Create EXPSQTY result set.
+         // Note, we do not include this with *ALL types.
+
+         if uType = 'EXPITEMQTY';
+           exsr SelectEXPSQTY;
+         endif;
+
+720bA    // Create EXPSQTYL result set.
+720bA    // Note, we do not include this with *ALL types.
+720bA
+720bA    if uType = 'EXPITMQTYL'
+720bA       or (allTypes and client <> cheney);
+720bA         exsr SelectEXPSQTYL;
+720bA    endif;
+
+650cA
+650cA    // Create EXPSTRN result set.
+650cA
+650cA    if uType = 'EXPTRN'
+650cA       or (allTypes and client <> cheney);
+650cA         exsr SelectEXPSTRN;
+650cA    endif;
+
+650dA
+650dA    // Create EXPPCKLBL result set.
+650dA
+650dA    if uType = 'EXPPCKLBL'
+650dA       or (allTypes and client <> cheney);
+650dA         exsr SelectEXPPCKLBL;
+650dA    endif;
+
+720aA    // Create EXPSUPC result set.
+720aA
+720aA    if allTypes or uType = 'EXPUPC';
+720aA      exsr SelectEXPSUPC;
+720aA    endif;
+
+CBIaA    // Create Cheney EXPSLDRFIL result set.
+CBIaA
+CBIaA    if allTypes
+CBIaA       or uType = '*CBI'
+CBIaA       or uType = 'EXPCBILOAD';
+CBIaA         exsr SelectEXPSLDRFIL;
+CBIaA    endif;
+
+CBIaA    // Create Cheney EXPSHRMISP result set.
+CBIaA
+CBIaA    if allTypes
+CBIaA       or uType = '*CBI'
+CBIaA       or uType = 'EXPCBISHRT';
+CBIaA         exsr SelectEXPSHRMISP;
+CBIaA    endif;
+
+CBIaA    // Create Chene EXPSTIHIGH result set.
+CBIaA
+CBIaA    if allTypes
+CBIaA       or uType = '*CBI'
+CBIaA       or uType = 'EXPCBITIHI';
+CBIaA         exsr SelectEXPSTIHIGH;
+CBIaA    endif;
+
+CBIaA    // Create Chene EXPSCASEHR result set.
+CBIaA
+CBIaA    if allTypes
+CBIaA       or uType = '*CBI'
+CBIaA       or uType = 'EXPCBICASE';
+CBIaA         exsr SelectEXPSCASEHR;
+CBIaA    endif;
+
+650eA    // Create Cheney EXPCBIIADJ result set.
+650eA
+650eA    if allTypes
+650eA       or uType = '*CBI'
+650eA       or uType = 'EXPCBIIADJ';
+650eA         exsr SelectEXPSITMADJ;
+650eA    endif;
+
+700bA    // Create Cheney EXPCBISQTY result set.
+700bA
+700bA    if allTypes
+700bA       or uType = '*CBI'
+700bA       or uType = 'EXPCBISQTY';
+700bA         exsr SelectEXPSSQTY;
+700bA    endif;
+
+700cA    // Create Cheney EXPCBIUCI result set.
+700cA    // Note, we do not include this with *ALL types.
+700cA
+700cA    if uType = 'EXPCBIUCI ';
+700cA       if client = cheney;
+700cA         exsr SelectEXPSORDAU;
+700cA       else;
+700cA         exsr SelectEXPSORDU;
+700cA       endif;
+700cA    endif;
+
+       endsr;
+      /end-free
+
+650bA*----------------------------------------------------------------
+650bA*  MarkSTGBATCH   Mark STGBATCH records to return
+650bA*----------------------------------------------------------------
+650bA
+650bA /free
+650bA  begsr MarkSTGBATCH;
+
+         sBatches = 0;
+
+         // Look for Export records with status 'R'
+
+         setll (pWhse: 'R') stgbatch1;
+
+         dow forever = forever;
+
+           reade (pWhse: 'R') stgbatch1;
+
+           if %eof(stgbatch1);
+             leave;
+           endif;
+
+           if allTypes;
+             if %subst(sbtype: 1: 3) <> 'EXP%';
+               iter;
+             endif;
+           else;
+             if sbtype <> uType;
+               iter;
+             endif;
+           endif;
+
+           getmicrotime(currstampuc:currstampsys);
+           ucOffset = %diff(currstampuc: currstampsys: *HOURS);
+           currstamploc = currstampsys + %hours(bfcoffset);
+
+           sbstatus = 'P';
+           sbststs = currstampsys;
+           sbstsuc = currstampuc;
+           sbexpid = expRecIdA;
+
+           update sbrec;
+
+           // See if we should look for more or get out.
+           // If maximum not sent in, then limit to 100.
+
+           sBatches += 1;
+           if (pMaxBatches > 0 and sBatches = pMaxBatches)
+              or (pMaxBatches <= 0 and sBatches = 100);
+             leave;
+           endif;
+
+         enddo;
+
+       endsr;
+      /end-free
+
+650bD*----------------------------------------------------------------
+650bD*  MarkSTGBATCHx  Mark STGBATCH records to return
+650bD*
+650bD*  *** NO LONGER USED ****
+650bD*
+650bD*  This routine would not work correctly when the library list
+650bD*  was changed in the calling PDKTEXPRS program. The first time
+650bD*  through it would work correctly. But if the library list was
+650bD*  changed on the second call, the update would fail. Through
+650bD*  testing it was determined that the Fetch was working with
+650bD*  the correct library. However, the update would error out
+650bD*  saying that the cursor was still looking at the previous
+650bD*  library. The end of the routine closes the cursor, so don't
+650bD*  know why the cursor was still looking at previous library.
+650bD*  It may have something to do with the program needing to be
+650bD*  compiled with CLOSQLCSR(*ENDACTGRP). In the end, finally gave
+650bD*  up and rewrote the routine using setll/reade/update.
+650bD*
+650bD*----------------------------------------------------------------
+650bD
+650bD /free
+650bD  begsr MarkSTGBATCHx;
+
+         sBatches = 0;
+
+         SqlStmt = 'select * '
+                 + 'from stgbatch '
+                 + 'where sbwhse = ' + %char(pWhse) + ' '
+                 +   'and sbstatus = ' + sq + 'R' + sq;
+
+         select;
+           when allTypes;
+             sqlStmt = %trimr(sqlStmt) + ' '
+                     + 'and sbtype like(' + sq + 'EXP%' + sq + ') ';
+           other;
+             sqlStmt = %trimr(sqlStmt) + ' '
+                     + 'and sbtype = ' + sq + %trimr(uType) + sq;
+         endsl;
+
+         sqlStmt = %trimr(sqlStmt) + ' '
+                 + 'order by sbwhse, sbaddts '
+                 + 'for update of sbstatus, sbststs, sbstsuc, sbexpid';
+
+         exec sql prepare sbUpdSel from :sqlStmt;
+         if sqlstt <> sqlSuccess;
+           pReturn = '*SBPREPERR';
+           pMessage = 'SQL Prepare error occured in '
+                    + 'DKTEXPORT/MarkSTGBATCH - '
+                    + 'SQLSTT: ' + sqlstt + ', '
+                    + 'SQLSTMT:' + %trimr(sqlStmt);
+           dump(a);
+           leavesr;
+         endif;
+
+         exec sql declare sbUpdCsr dynamic scroll cursor for sbUpdSel;
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           pReturn = '*SBDCLERR1';
+           pMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/MarkSTGBATCH - '
+                    + 'SQLSTT: ' + sqlstt + ', '
+                    + 'SQLSTMT:' + %trimr(sqlStmt);
+           dump(a);
+           leavesr;
+         endif;
+
+         exec sql open sbUpdCsr;
+         if sqlstt <> sqlSuccess;
+           pReturn = '*SBOPENER1';
+           pMessage = 'SQL Open error occured in '
+                    + 'DKTEXPORT/MarkSTGBATCH - '
+                    + 'SQLSTT: ' + sqlstt + ', '
+                    + 'SQLSTMT:' + %trimr(sqlStmt);
+           dump(a);
+           leavesr;
+         endif;
+
+         dow forever = forever;
+
+650bD   // Needed to comment these lines out so pgm would compile.
+650bD   // exec sql fetch next from sbUpdCsr
+650bD   //          into :sbrec;
+
+           if sqlstt <> sqlSuccess;
+             leave;
+           endif;
+
+           exec sql update stgbatch set
+                      sbstatus = 'P',
+                      sbststs = current_timestamp,
+                      sbstsuc = current_timestamp - current_timezone,
+                      sbexpid = :expRecIdA
+                    where current of sbUpdCsr;
+
+           // See if we should look for more or get out.
+           // If maximum not sent in, then limit to 100.
+
+           sBatches += 1;
+           if (pMaxBatches > 0 and sBatches = pMaxBatches)
+              or (pMaxBatches <= 0 and sBatches = 100);
+             leave;
+           endif;
+
+         enddo;
+
+         exec sql close sbUpdCsr;
+
+       endsr;
+      /end-free
+
+     *----------------------------------------------------------------
+     *  runInteractive  Run program interactively
+     *----------------------------------------------------------------
+
+      /free
+       begsr runInteractive;
+
+         // Adjustments
+
+640cM    if allTypes or uType = 'EXPADJUST';
+           monitor;
+             it726s(alphaWhse);
+           on-error;
+             pReturn  = '*ERRIT726S';
+             pMessage = 'Error calling IT726S';
+             leavesr;
+           endmon;
+640cA    endif;
+
+         // Purchase orders
+
+640cM    if uType = 'EXPPO'
+640cM       or (allTypes and client <> cheney);
+640aA         monitor;
+640aA           po726s(alphaWhse);
+640aA         on-error;
+640aA           pReturn  = '*ERRPO726S';
+640aA           pMessage = 'Error calling PO726S';
+640aA           leavesr;
+640aA         endmon;
+640cA    endif;
+
+         // Customer routes
+
+640cM    // if allTypes or uType = 'EXPROUTE';
+730aM    if allTypes or uType = 'EXPROUTE' or uType = 'EXPROUTEA';
+640cA    endif;
+
+         // Closed customer routes
+         // This is used when selection transactions are processed
+         // separately. (This is done at Cheney with SAP interface).
+
+640cM    if allTypes or uType = 'EXPCLSRTE';
+640cA    endif;
+
+         // Item quantity. Not include in *ALL types.
+
+640cM    if uType = 'EXPITEMQTY';
+640bA      monitor;
+640bA        it736s(alphaWhse);
+640bA      on-error;
+640bA        pReturn  = '*ERRIT736S';
+640bA        pMessage = 'Error calling IT736S';
+640bA        leavesr;
+640bA      endmon;
+640cA    endif;
+
+         // Item whse quantity Ver 2. Not include in *ALL types.
+
+640dA    if uType = 'EXPITMQTY2';
+640dA      monitor;
+640dA        it740s(alphaWhse);
+640dA      on-error;
+640dA        pReturn  = '*ERRIT740S';
+640dA        pMessage = 'Error calling IT740S';
+640dA        leavesr;
+640dA      endmon;
+640dA    endif;
+
+720bA    // Item whse license quantity. Not included in *ALL types.
+720bA
+720bA    if uType = 'EXPITMQTYL';
+720bA      monitor;
+720bA        it745s(alphaWhse);
+720bA      on-error;
+720bA        pReturn  = '*ERRIT745S';
+720bA        pMessage = 'Error calling IT745S';
+720bA        leavesr;
+720bA      endmon;
+720bA    endif;
+
+640eA    // License activity
+640eA
+640eA    if uType = 'EXPLICLOG'
+640eA       or uType = 'EXPLLCOMBO'
+640eA       or (allTypes and client <> cheney);
+640eA         monitor;
+640eA           ll726s(alphaWhse);
+640eA         on-error;
+640eA           pReturn  = '*ERRLL726S';
+640eA           pMessage = 'Error calling LL726S';
+640eA           leavesr;
+640eA         endmon;
+640eA    endif;
+
+640fA    // Export Customer Returns
+640fA
+640fA    if uType = 'EXPRETURN'
+640fA       or (allTypes and client <> cheney);
+640fA         monitor;
+640fA           or736s(alphaWhse);
+640fA         on-error;
+640fA           pReturn  = '*ERROR736S';
+640fA           pMessage = 'Error calling OR736S';
+640fA           leavesr;
+640fA         endmon;
+640fA    endif;
+
+650eA    // Export Cheney Pick Slot Adjustments
+650eA
+650eA    if uType = 'EXPCBIIADJ'
+650eA       or uType = '*CBI'
+650eA       or allTypes;
+650eA         monitor;
+650fD           //itmadjexps(alphaWhse);
+650fM           expsitmadj();
+650eA         on-error;
+650eA           pReturn  = '*ERRORIADJ';
+650fD           //pMessage = 'Error calling ITMADJEXPS';
+650fM           pMessage = 'Error calling EXPSITMADJ';
+650eA           leavesr;
+650eA         endmon;
+650eA    endif;
+
+700bA    // Export Cheney Slot Item Qtys
+700bA
+700bA    if uType = 'EXPCBISQTY'
+700bA       or uType = '*CBI'
+700bA       or allTypes;
+700bA         monitor;
+700bA           sl727s(alphaWhse);
+700bA         on-error;
+700bA           pReturn  = '*ERRORSQTY';
+700bA           pMessage = 'Error calling SL727S';
+700bA           leavesr;
+700bA         endmon;
+700bA    endif;
+650cA
+700cA    // Export Cheney Order UCIs
+700cA
+700cA    if uType = 'EXPCBIUCI '
+CBIbA       and (client <> cheney);
+700cA         monitor;
+700cA           rh155sucbi(alphaWhse);
+700cA         on-error;
+700cA           pReturn  = '*ERROROUCI';
+700cA           pMessage = 'Error calling RH155SUCBI';
+700cA           leavesr;
+700cA         endmon;
+700cA    endif;
+
+730aA    if uType = 'EXPCBIUCI '
+CBIbA       and (client = cheney);
+730aA         monitor;
+730aA           rh155asucb(alphaWhse);
+730aA         on-error;
+730aA           pReturn  = '*ERROROUCI';
+730aA           pMessage = 'Error calling RH155ASUCB';
+730aA           leavesr;
+730aA         endmon;
+730aA    endif;
+
+650cA    // Transaction exports (Putaways, Replens, Transfers)
+650cA
+650cA    if uType = 'EXPTRN'
+650cA       or (allTypes and client <> cheney);
+650cA         monitor;
+650cA           pt751cl(alphaWhse);
+650cA         on-error;
+650cA           pReturn  = '*ERRPT751S';
+650cA           pMessage = 'Error calling PT751S';
+650cA           leavesr;
+650cA         endmon;
+650cA    endif;
+
+720aA    // UPC exports
+720aA
+720aA    if uType = 'EXPUPC'
+720aA       or (allTypes and client <> cheney);
+720aA         monitor;
+720aA           uc726s(alphaWhse);
+720aA         on-error;
+720aA           pReturn  = '*ERRUC726S';
+720aA           pMessage = 'Error calling UC726S';
+720aA           leavesr;
+720aA         endmon;
+720aA    endif;
+
+       endsr;
+      /end-free
+
+     *----------------------------------------------------------------
+     *  runJobq  Submit program to jobq
+     *----------------------------------------------------------------
+
+      /free
+       begsr runJobq;
+
+         // Create command to submit
+
+         // Adjustments
+
+640cM    if allTypes or uType = 'EXPADJUST';
+           cmd = 'call it726s ('
+               +   sq + alphaWhse + sq + ' '
+               + ')';
+640cA      exsr  runJobqSubmit;
+640cA      if pReturn = '*JOBQERR';
+640cA        leavesr;
+640cA      endif;
+640cA    endif;
+
+         // Purchase orders
+
+640cM    if uType = 'EXPPO'
+640cM       or (allTypes and client <> cheney);
+640aA         cmd = 'call po726s ('
+640aA             +   sq + alphaWhse + sq + ' '
+640aA             + ')';
+640cA         exsr  runJobqSubmit;
+640cA         if pReturn = '*JOBQERR';
+640cA           leavesr;
+640cA         endif;
+640cA    endif;
+
+         // Customer routes
+
+640cM    // if allTypes or uType = 'EXPROUTE';
+730aM    if allTypes or uType = 'EXPROUTE' or uType = 'EXPROUTEA';
+640cA    endif;
+
+         // Closed customer routes
+         // This is used when selection transactions are processed
+         // separately. (This is done at Cheney with SAP interface).
+
+640cM    if allTypes or uType = 'EXPCLSRTE';
+640cA    endif;
+
+         // Item quantity. Not include in *ALL types.
+
+640cM    if uType = 'EXPITEMQTY';
+640bA      cmd = 'call it736s ('
+640bA          +   sq + alphaWhse + sq + ' '
+640bA          + ')';
+640cA      exsr  runJobqSubmit;
+640cA      if pReturn = '*JOBQERR';
+640cA        leavesr;
+640cA      endif;
+640cA    endif;
+
+640dA    // Item whse quantity Ver 2. Not include in *ALL types.
+
+640dA    if uType = 'EXPITMQTY2';
+640dA      cmd = 'call it740s ('
+640dA          +   sq + alphaWhse + sq + ' '
+640dA          + ')';
+640dA      exsr  runJobqSubmit;
+640dA      if pReturn = '*JOBQERR';
+640dA        leavesr;
+640dA      endif;
+640dA    endif;
+
+640eA    // License activity
+640eA
+640eA    if uType = 'EXPLICLOG'
+640eA       or uType = 'EXPLLCOMBO'
+640eA       or (allTypes and client <> cheney);
+640eA         cmd = 'call ll726s ('
+640eA             +   sq + alphaWhse + sq + ' '
+640eA             + ')';
+640eA         exsr  runJobqSubmit;
+640eA         if pReturn = '*JOBQERR';
+640eA           leavesr;
+640eA         endif;
+640eA    endif;
+
+640fA    // Export Customer Returns
+640fA
+640fA    if uType = 'EXPRETURN'
+640fA       or (allTypes and client <> cheney);
+640fA         cmd = 'call or736s ('
+640fA             +   sq + alphaWhse + sq + ' '
+640fA             + ')';
+640fA         exsr  runJobqSubmit;
+640fA         if pReturn = '*JOBQERR';
+640fA           leavesr;
+640fA         endif;
+640fA    endif;
+
+650eA    // Export Cheney Pick Slot Adjustments
+650eA
+650eA    if uType = 'EXPCBIIADJ'
+650eA       or uType = '*CBI'
+650eA       or allTypes;
+650eD         //cmd = 'call itmadjexps ('
+650eD         //    +   sq + alphaWhse + sq + ' '
+650eD         //    + ')';
+650fM         cmd = 'call expsitmadj';
+650eA         exsr  runJobqSubmit;
+650eA         if pReturn = '*JOBQERR';
+650eA           leavesr;
+650eA         endif;
+650eA    endif;
+
+700bA    // Export Cheney Slot Item Quantities
+700bA
+700bA    if uType = 'EXPCBISQTY'
+700bA       or uType = '*CBI'
+700bA       or allTypes;
+700bA         cmd = 'call sl727s ('
+700bA             +   sq + alphaWhse + sq + ' '
+700bA             + ')';
+700bA         exsr  runJobqSubmit;
+700bA         if pReturn = '*JOBQERR';
+700bA           leavesr;
+700bA         endif;
+700bA    endif;
+
+700cA    // Export Cheney Order UCI Records
+700cA
+700cA    if uType = 'EXPCBIUCI '
+CBIbA       and (client <> cheney);
+700cA         cmd = 'call rh155sucbi ('
+700cA             +   sq + alphaWhse + sq + ' '
+700cA             + ')';
+700cA         exsr  runJobqSubmit;
+700cA         if pReturn = '*JOBQERR';
+700cA           leavesr;
+700cA         endif;
+700cA    endif;
+700cA
+730aA    if uType = 'EXPCBIUCI '
+CBIbA       and (client = cheney);
+730aA         cmd = 'call rh155asucb ('
+730aA             +   sq + alphaWhse + sq + ' '
+730aA             + ')';
+730aA         exsr  runJobqSubmit;
+730aA         if pReturn = '*JOBQERR';
+730aA           leavesr;
+730aA         endif;
+730aA    endif;
+650cA
+650cA    // Export Transactions (Putaways, Replens, Transfers)
+650cA
+650cA    if uType = 'EXPTRN'
+650cA       or (allTypes and client <> cheney);
+650cA         cmd = 'call pt751cl ('
+650cA             +   sq + alphaWhse + sq + ' '
+650cA             + ')';
+650cA         exsr  runJobqSubmit;
+650cA         if pReturn = '*JOBQERR';
+650cA           leavesr;
+650cA         endif;
+650cA    endif;
+
+720aA    // Export UPC Codes
+720aA
+720aA    if uType = 'EXPUPC'
+720aA       or (allTypes and client <> cheney);
+720aA         cmd = 'call uc726s ('
+720aA             +   sq + alphaWhse + sq + ' '
+720aA             + ')';
+720aA         exsr  runJobqSubmit;
+720aA         if pReturn = '*JOBQERR';
+720aA           leavesr;
+720aA         endif;
+720aA    endif;
+
+       endsr;
+      /end-free
+
+640Ac*----------------------------------------------------------------
+640Ac*  runJobqSubmit  Submit program to jobq
+640Ac*----------------------------------------------------------------
+640Ac
+640Ac /free
+640Ac  begsr runJobqSubmit;
+
+         cmd = 'sbmjob cmd(' + %trimr(cmd) + ') '
+             + 'jobq(QSYSNOMAX) '
+             + 'job(' + %trimr(uType) + ')';
+
+         // Submit command
+
+         monitor;
+           qcmdexc(%trim(cmd): %len(%trim(cmd)));
+         on-error;
+           pReturn  = '*JOBQERR';
+           dump(a);
+         endmon;
+
+         // Extract message
+
+         wwMsgKey = *ALLx'00';
+         QMHRCVPM(dsM2:
+                  %size(dsM2):
+                  'RCVM0200':
+                  '*':
+                  0:
+                  '*NEXT':
+                  wwMsgKey:
+                  0:
+                  '*OLD':
+                  dsEC);
+         wwMsgKey = dsM2_MsgKey;
+         monitor;
+           pMessage = %trim(%subst(dsm2_dta: dsm2_dtalen+1: dsm2_msglen));
+         on-error *all;
+           pMessage = ' ';
+         endmon;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectSTGBATCH   Select STGBATCH records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectSTGBATCH;
+
+         exec sql
+           declare cursorSTGBATCH cursor for
+             select * from stgbatch
+             where sbwhse = :pWhse
+               and sbexpid = :expRecIdA;
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*SBDECLAR2';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectSTGBATCH - '
+                      + 'SQLSTT: ' + sqlstt + ', '
+                      + 'SQLSTMT:' + %trimr(sqlStmt);
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorSTGBATCH;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*SBOPEN2';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectSTGBATCH - '
+                      + 'SQLSTT: ' + sqlstt + ', '
+                      + 'SQLSTMT:' + %trimr(sqlStmt);
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSADJ  Select EXPSADJ records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSADJ;
+
+         exec sql
+           declare cursorEXPSADJ cursor for
+             select * from expsadj
+             where iewhse = :pwhse
+               and iestatus = 'R'
+               and iebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                      and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*IEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                      + 'DKTEXPORT/SelectEXPSADJ - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSADJ;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*IEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSADJ - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640eA*----------------------------------------------------------------
+640eA*  SelectEXPSLICLOG  Select EXPSLICLOG records to return
+640eA*----------------------------------------------------------------
+640eA
+640eA /free
+640eA  begsr SelectEXPSLICLOG;
+
+         exec sql
+           declare cursorEXPSLICLOG cursor for
+             select * from expsliclog
+             where lewhse = :pwhse
+               and lestatus = 'R'
+               and lebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                      and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*LEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                      + 'DKTEXPORT/SelectEXPSLICLOG - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSLICLOG;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*LEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSLICLOG - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640eA*----------------------------------------------------------------
+640eA*  SelectEXPSLLCOMB  Select EXPSLLCOMB records to return
+640eA*----------------------------------------------------------------
+640eA
+640eA /free
+640eA  begsr SelectEXPSLLCOMB;
+
+         exec sql
+           declare cursorEXPSLLCOMB cursor for
+             select * from expsllcomb
+             where lewhse = :pwhse
+               and lestatus = 'R'
+               and lebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                      and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*LEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                      + 'DKTEXPORT/SelectEXPSLLCOMB - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSLLCOMB;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*LEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSLLCOMB - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSHRMISP   Select Cheney EXPSHRMISP records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSHRMISP;
+
+         exec sql
+           declare cursorEXPSHRMISP cursor for
+             select * from expshrmisp
+             where sewhse = :pWhse
+               and sestatus = 'R'
+               and sebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*SEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSHRMISP - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSHRMISP;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*SEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSHRMISP - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSLDRFIL   Select Cheney EXPSLDRFIL records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSLDRFIL;
+
+         exec sql
+           declare cursorEXPSLDRFIL cursor for
+             select * from expsldrfil
+             where lefwhs = :pWhse
+               and lestatus = 'R'
+               and lebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*LEFDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSLDRFIL - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSLDRFIL;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*LEFOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSLDRFIL - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSORDC  Select EXPSORDC records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSORDC;
+
+         exec sql
+           declare cursorEXPSORDC cursor for
+             select * from expsordc
+             where oecwhs = :pWhse
+               and oecstatus = 'R'
+               and oecbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OECDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDC - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDC;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OECOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDC - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSORDD  Select EXPSORDD records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSORDD;
+
+         exec sql
+           declare cursorEXPSORDD cursor for
+             select * from expsordd
+             where oedwhs = :pWhse
+               and oedstatus = 'R'
+               and oedbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEDDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDD - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDD;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEDOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDD - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSORDE  Select EXPSORDE records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSORDE;
+
+         exec sql
+           declare cursorEXPSORDE cursor for
+             select * from expsorde
+             where oeewhs = :pWhse
+               and oeestatus = 'R'
+               and oeebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEEDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDE - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDE;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDE - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSORDH  Select EXPSORDH records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSORDH;
+
+         exec sql
+           declare cursorEXPSORDH cursor for
+             select * from expsordh
+             where oehwhs = :pWhse
+               and oehstatus = 'R'
+               and oehbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEHDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDH - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDH;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEHOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDH - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSORDL  Select EXPSORDL records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSORDL;
+
+         exec sql
+           declare cursorEXPSORDL cursor for
+             select * from expsordl
+             where oelwhs = :pWhse
+               and oelstatus = 'R'
+               and oelbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OELDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDL - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDL;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OELOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDL - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSORDP  Select EXPSORDP records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSORDP;
+
+         exec sql
+           declare cursorEXPSORDP cursor for
+             select * from expsordp
+             where oepwhs = :pWhse
+               and oepstatus = 'R'
+               and oepbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEPDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDP - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDP;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEPOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDP - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSORDT  Select EXPSORDT records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSORDT;
+
+         exec sql
+           declare cursorEXPSORDT cursor for
+             select * from expsordt
+             where oetwhs = :pWhse
+               and oetstatus = 'R'
+               and oetbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OETDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDT - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDT;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OETOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDT - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+           // BEGIN 730a of New Expand Order Number
+
+730aA*----------------------------------------------------------------
+730aA*  SelectEXPSORDAC  Select EXPSORDAC records to return
+730aA*----------------------------------------------------------------
+730aA
+730aA /free
+730aA  begsr SelectEXPSORDAC;
+
+         exec sql
+           declare cursorEXPSORDAC cursor for
+             select * from expsordac
+             where oecwhs = :pWhse
+               and oecstatus = 'R'
+               and oecbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OECDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAC - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAC;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OECOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAC - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+730aA*----------------------------------------------------------------
+730aA*  SelectEXPSORDAD  Select EXPSORDAD records to return
+730aA*----------------------------------------------------------------
+730aA
+730aA /free
+730aA  begsr SelectEXPSORDAD;
+
+         exec sql
+           declare cursorEXPSORDAD cursor for
+             select * from expsordad
+             where oedwhs = :pWhse
+               and oedstatus = 'R'
+               and oedbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEDDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAD - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAD;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEDOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAD - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+730aA*----------------------------------------------------------------
+730aA*  SelectEXPSORDAE  Select EXPSORDAE records to return
+730aA*----------------------------------------------------------------
+730aA
+730aA /free
+730aA  begsr SelectEXPSORDAE;
+
+         exec sql
+           declare cursorEXPSORDAE cursor for
+             select * from expsordae
+             where oeewhs = :pWhse
+               and oeestatus = 'R'
+               and oeebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEEDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAE - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAE;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAE - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+730aA*----------------------------------------------------------------
+730aA*  SelectEXPSORDAH  Select EXPSORDAH records to return
+730aA*----------------------------------------------------------------
+730aA
+730aA /free
+730aA  begsr SelectEXPSORDAH;
+
+         exec sql
+           declare cursorEXPSORDAH cursor for
+             select * from expsordah
+             where oehwhs = :pWhse
+               and oehstatus = 'R'
+               and oehbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEHDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAH - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAH;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEHOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAH - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+730aA*----------------------------------------------------------------
+730aA*  SelectEXPSORDAL  Select EXPSORDAL records to return
+730aA*----------------------------------------------------------------
+730aA
+730aA /free
+730aA  begsr SelectEXPSORDAL;
+
+         exec sql
+           declare cursorEXPSORDAL cursor for
+             select * from expsordal
+             where oelwhs = :pWhse
+               and oelstatus = 'R'
+               and oelbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OELDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAL - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAL;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OELOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAL - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+730aA*----------------------------------------------------------------
+730aA*  SelectEXPSORDAP  Select EXPSORDAP records to return
+730aA*----------------------------------------------------------------
+730aA
+730aA /free
+730aA  begsr SelectEXPSORDAP;
+
+         exec sql
+           declare cursorEXPSORDAP cursor for
+             select * from expsordap
+             where oepwhs = :pWhse
+               and oepstatus = 'R'
+               and oepbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OEPDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAP - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAP;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OEPOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAP - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+730aA*----------------------------------------------------------------
+730aA*  SelectEXPSORDAT  Select EXPSORDAT records to return
+730aA*----------------------------------------------------------------
+730aA
+730aA /free
+730aA  begsr SelectEXPSORDAT;
+
+760aA    exec sql close cursorEXPSORDAT;
+760aA    sqlstt = '';
+
+         exec sql
+           declare cursorEXPSORDAT cursor for
+             select * from expsordat
+             where oetwhs = :pWhse
+               and oetstatus = 'R'
+               and oetbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*OETDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAT - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAT;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*OETOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAT - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+           // END 730a of New Expand Order Number
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSPOD  Select EXPSPOD records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSPOD;
+
+         exec sql
+           declare cursorEXPSPOD cursor for
+             select * from expspod
+             where pedwhs = :pWhse
+               and pedstatus = 'R'
+               and pedbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*PEDDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSPOD - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSPOD;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*PEDOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSPOD - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSPOE  Select EXPSPOE records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSPOE;
+
+         exec sql
+           declare cursorEXPSPOE cursor for
+             select * from expspoe
+             where poewhs = :pWhse
+               and poestatus = 'R'
+               and poebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*POEDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSPOE - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSPOE;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*POEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSPOE - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSPOH  Select EXPSPOH records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSPOH;
+
+         exec sql
+           declare cursorEXPSPOH cursor for
+             select * from expspoh
+             where pehwhs = :pWhse
+               and pehstatus = 'R'
+               and pehbatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*PEHDECLAR';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSPOH - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSPOH;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*PEHOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSPOH - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640fA*----------------------------------------------------------------
+640fA*  SelectEXPSRTN   Select EXPSRTN records to return
+640fA*----------------------------------------------------------------
+640fA
+640fA /free
+640fA  begsr SelectEXPSRTN;
+
+         exec sql
+           declare cursorEXPSRTN cursor for
+             select * from expsrtn
+             where oewhse = :pWhse
+               and oestatus = 'R'
+               and oebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*QEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSRTN - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSRTN;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*QEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSRTN - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSQTY   Select EXPSQTY records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSQTY;
+
+         exec sql
+           declare cursorEXPSQTY cursor for
+             select * from expsqty
+             where qewhse = :pWhse
+               and qestatus = 'R'
+               and qebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*QEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSQTY - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSQTY;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*QEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSQTY - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSTIHIGH  Select Cheney EXPSTIHIGH records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSTIHIGH;
+
+700aA    eval tihiver = '1';
+         exec sql
+           declare cursorEXPSTIHIGH cursor for
+700aD     // select * from expstihigh
+700aM        select TEWHSE, TEBATID, TEITEM, TESTATUS,
+700aM               TESTSTS, TESTSUC, TETEXT, TEDISP,
+700aM               TETIE, TEHIGH, TESLOTYP, TEADDTS,
+700aM               TEADDUC from expstihigh
+             where tewhse = :pWhse
+               and testatus = 'R'
+               and tebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+700aA    if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+700aA     eval tihiver = '2';
+700aA     exec sql
+700aA      declare cursorEXPSTIHIGH2 cursor for
+700aA        select TEWHSE, TEBATID, TEITEM, TESTATUS,
+700aA               TESTSTS, TESTSUC, TETEXT, TEDISP,
+700aA               TETIE, TEHIGH, TEADDTS,
+700aA               TEADDUC from expstihigh
+700aA        where tewhse = :pWhse
+700aA          and testatus = 'R'
+700aA          and tebatid in
+700aA              (select sbbatid from stgbatch
+700aA               where sbwhse = :pWhse
+700aA               and sbexpid = :expRecIdA);
+700aA    endif;
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*TEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSTIHIGH - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+700aA    select;
+700aA     when tihiver = '1';
+           exec sql open cursorEXPSTIHIGH;
+            if sqlstt <> sqlSuccess;
+             logReturn = '*TEOPEN';
+             logMessage = 'SQL Open error occured in '
+                        + 'DKTEXPORT/SelectEXPSTIHIGH - '
+                        + 'SQLSTT: ' + sqlstt;
+             dump(a);
+             //leavesr;
+            endif;
+700aA     other;
+700aA      exec sql open cursorEXPSTIHIGH2;
+700aA       if sqlstt <> sqlSuccess;
+700aA        logReturn = '*TEOPEN';
+700aA        logMessage = 'SQL Open error occured in '
+700aA                   + 'DKTEXPORT/SelectEXPSTIHIGH - '
+700aA                   + 'SQLSTT: ' + sqlstt;
+700aA        dump(a);
+700aA        //leavesr;
+700aA       endif;
+700aA     endsl;
+
+       endsr;
+      /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SelectEXPSCASEHR  Select Cheney EXPSCASEHR records to return
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SelectEXPSCASEHR;
+
+         exec sql
+           declare cursorEXPSCASEHR cursor for
+             select * from expscasehr
+             where cewhse = :pWhse
+               and cestatus = 'R'
+               and cebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*CEDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSCASEHR - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSCASEHR;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*CEOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSCASEHR - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+650eA*----------------------------------------------------------------
+650eA*  SelectEXPSITMADJ  Select Cheney EXPSITMADJ records to return
+650eA*----------------------------------------------------------------
+650eA
+650eA /free
+650eA  begsr SelectEXPSITMADJ;
+
+         exec sql
+           declare cursorEXPSITMADJ cursor for
+             select * from expsitmadj
+             where itawhse = :pWhse
+               and itastatus = 'R'
+               and itabatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*ITADECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSITMADJ - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSITMADJ;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*ITAOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSITMADJ - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+700bA*----------------------------------------------------------------
+700bA*  SelectEXPSSQTY    Select Cheney Slot Item Qty records to return
+700bA*----------------------------------------------------------------
+700bA
+700bA /free
+700bA  begsr SelectEXPSSQTY;
+
+         exec sql
+           declare cursorEXPSSQTY cursor for
+             select * from expssqty
+             where sqewhse = :pWhse
+               and sqestatus = 'R'
+               and sqebatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*SIQDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSSQTY - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSSQTY;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*SIQOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSSQTY - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+700cA*----------------------------------------------------------------
+700cA*  SelectEXPSORDU    Select Cheney Order UCI records to return
+700cA*----------------------------------------------------------------
+700cA
+700cA /free
+700cA  begsr SelectEXPSORDU;
+
+         exec sql
+           declare cursorEXPSORDU cursor for
+             select * from expsordu
+             where oeuwhs = :pWhse
+               and oeustatus = 'R'
+               and oeubatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*SIQDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDU - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDU;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*SIQOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDU - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+700cA*----------------------------------------------------------------
+700cA*  SelectEXPSORDAU   Select Cheney Order UCI records to return
+700cA*                    Using Extended Order number
+700cA*----------------------------------------------------------------
+700cA
+700cA /free
+700cA  begsr SelectEXPSORDAU;
+
+         exec sql
+           declare cursorEXPSORDAU cursor for
+             select * from expsordau
+             where oeuwhs = :pWhse
+               and oeustatus = 'R'
+               and oeubatid in
+                   (select sbbatid from stgbatch
+                    where sbwhse = :pWhse
+                    and sbexpid = :expRecIdA);
+
+         if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+           logReturn = '*SIQDECLARE';
+           logMessage = 'SQL Declare error occured in '
+                    + 'DKTEXPORT/SelectEXPSORDAU - '
+                    + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+         exec sql open cursorEXPSORDAU;
+         if sqlstt <> sqlSuccess;
+           logReturn = '*SIQOPEN';
+           logMessage = 'SQL Open error occured in '
+                      + 'DKTEXPORT/SelectEXPSORDAU - '
+                      + 'SQLSTT: ' + sqlstt;
+           dump(a);
+           //leavesr;
+         endif;
+
+       endsr;
+      /end-free
+
+650cA*----------------------------------------------------------------
+650cA*  SelectEXPSTRN  Select EXPSTRN records to return
+650cA*----------------------------------------------------------------
+650cA
+650cA /free
+650cA  begsr SelectEXPSTRN;
+650cA
+650cA    exec sql
+650cA      declare cursorEXPSTRN cursor for
+650cA        select * from expstrn
+650cA        where pewhse = :pWhse
+650cA          and pestatus = 'R'
+650cA          and pebatid in
+650cA              (select sbbatid from stgbatch
+650cA               where sbwhse = :pWhse
+650cA               and sbexpid = :expRecIdA);
+650cA
+650cA    if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+650cA      logReturn = '*PEDECLAR';
+650cA      logMessage = 'SQL Declare error occured in '
+650cA               + 'DKTEXPORT/SelectEXPSTRN - '
+650cA               + 'SQLSTT: ' + sqlstt;
+650cA      dump(a);
+650cA      //leavesr;
+650cA    endif;
+650cA
+650cA    exec sql open cursorEXPSTRN;
+650cA    if sqlstt <> sqlSuccess;
+650cA      logReturn = '*PEOPEN';
+650cA      logMessage = 'SQL Open error occured in '
+650cA                 + 'DKTEXPORT/SelectEXPSTRN - '
+650cA                 + 'SQLSTT: ' + sqlstt;
+650cA      dump(a);
+650cA      //leavesr;
+650cA    endif;
+650cA
+650cA  endsr;
+650cA /end-free
+
+650dA*----------------------------------------------------------------
+650dA*  SelectEXPPCKLBL Select EXPPCKLBL records to return
+650dA*----------------------------------------------------------------
+650dA
+650dA /free
+650dA  begsr SelectEXPPCKLBL;
+650dA
+650dA    exec sql
+650dA      declare cursorEXPPCKLBL cursor for
+650dA        select * from expsplbl
+650dA        where lbewhs = :pWhse
+650dA          and lbestatus = 'R'
+650dA          and lbebatid in
+650dA              (select sbbatid from stgbatch
+650dA               where sbwhse = :pWhse
+650dA               and sbexpid = :expRecIdA);
+650dA
+650dA    if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+650dA      logReturn = '*LBDECLAR';
+650dA      logMessage = 'SQL Declare error occured in '
+650dA               + 'DKTEXPORT/SelectEXPPCKLBL - '
+650dA               + 'SQLSTT: ' + sqlstt;
+650dA      dump(a);
+650dA      //leavesr;
+650dA    endif;
+650dA
+650dA    exec sql open cursorEXPPCKLBL;
+650dA    if sqlstt <> sqlSuccess;
+650dA      logReturn = '*LBOPEN';
+650dA      logMessage = 'SQL Open error occured in '
+650dA                 + 'DKTEXPORT/SelectEXPPCKLBL - '
+650dA                 + 'SQLSTT: ' + sqlstt;
+650dA      dump(a);
+650dA      //leavesr;
+650dA    endif;
+650dA
+650dA  endsr;
+650dA /end-free
+
+720aA*----------------------------------------------------------------
+720aA*  SelectEXPSUPC  Select EXPSUPC records to return
+720aA*----------------------------------------------------------------
+720aA
+720aA /free
+720aA  begsr SelectEXPSUPC;
+720aA
+720aA    exec sql
+720aA      declare cursorEXPSUPC cursor for
+720aA        select * from expsupc
+720aA        where ucwhse = :pWhse
+720aA          and ucstatus = 'R'
+720aA          and ucbatid in
+720aA              (select sbbatid from stgbatch
+720aA               where sbwhse = :pWhse
+720aA               and sbexpid = :expRecIdA);
+720aA
+720aA    if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+720aA      logReturn = '*UCDECLAR';
+720aA      logMessage = 'SQL Declare error occured in '
+720aA               + 'DKTEXPORT/SelectEXPSUPC - '
+720aA               + 'SQLSTT: ' + sqlstt;
+720aA      dump(a);
+720aA      //leavesr;
+720aA    endif;
+720aA
+720aA    exec sql open cursorEXPSUPC;
+720aA    if sqlstt <> sqlSuccess;
+720aA      logReturn = '*UCOPEN';
+720aA      logMessage = 'SQL Open error occured in '
+720aA                 + 'DKTEXPORT/SelectEXPSUPC - '
+720aA                 + 'SQLSTT: ' + sqlstt;
+720aA      dump(a);
+720aA      //leavesr;
+720aA    endif;
+720aA
+720aA  endsr;
+720aA /end-free
+
+720bA*----------------------------------------------------------------
+720bA*  SelectEXPSQTYL Select EXPSQTYL records to return
+720bA*----------------------------------------------------------------
+720bA
+720bA /free
+720bA  begsr SelectEXPSQTYL;
+720bA
+720bA    exec sql
+720bA      declare cursorEXPSQTYL cursor for
+720bA        select * from expsqtyl
+720bA        where qewhse = :pWhse
+720bA          and qestatus = 'R'
+720bA          and qebatid in
+720bA              (select sbbatid from stgbatch
+720bA               where sbwhse = :pWhse
+720bA               and sbexpid = :expRecIdA);
+720bA
+720bA    if sqlstt <> sqlSuccess
+760aA       and sqlstt <> '';
+720bA      logReturn = '*LBDECLAR';
+720bA      logMessage = 'SQL Declare error occured in '
+720bA               + 'DKTEXPORT/SelectEXPSQTYL - '
+720bA               + 'SQLSTT: ' + sqlstt;
+720bA      dump(a);
+720bA      //leavesr;
+720bA    endif;
+720bA
+720bA    exec sql open cursorEXPSQTYL;
+720bA    if sqlstt <> sqlSuccess;
+720bA      logReturn = '*LBOPEN';
+720bA      logMessage = 'SQL Open error occured in '
+720bA                 + 'DKTEXPORT/SelectEXPSQTYL - '
+720bA                 + 'SQLSTT: ' + sqlstt;
+720bA      dump(a);
+720bA      //leavesr;
+720bA    endif;
+720bA
+720bA  endsr;
+720bA /end-free
+
+640cA*----------------------------------------------------------------
+640cA*  SendSets   Send back result sets
+640cA*----------------------------------------------------------------
+640cA
+640cA /free
+640cA  begsr SendSets;
+
+640cA    if pProgram <> 'PDKTEXPRS';
+640cA      leavesr;
+640cA    endif;
+
+         sReturn = pReturn;
+         sMessage = pMessage;
+         sSetsReturned = ' ';
+
+650bA    sMessage = %trim(pMessage) + ' '
+650bA             + 'Exp Id: ' + expRecIdA;
+
+         select;
+
+           when uSets = 'RTN' or sBatches = 0 or pReturn <> '*OK';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows;
+
+           when uSets = 'STG';
+             sSetsReturned = 'STGBATCH';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH;
+
+           when uType = 'EXPADJUST';
+             sSetsReturned = 'STGBATCH,EXPSADJ';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSADJ;
+
+           when uType = 'EXPCLSRTE';
+             sSetsReturned = 'STGBATCH,EXPSORDH,EXPSORDD';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSORDH,
+640aA              cursor cursorEXPSORDD;
+
+730b       when uType = 'EXPCLSRTEA';
+730b         sSetsReturned = 'STGBATCH,EXPSORDAH,EXPSORDAD';
+730b         exec sql
+730b           set result sets with return to client
+730b               array :pgmStatus for 1 rows,
+730b               cursor cursorSTGBATCH,
+730b               cursor cursorEXPSORDAH,
+730b               cursor cursorEXPSORDAD;
+
+           when uType = 'EXPSELTRAN' and client = cheney;
+             sSetsReturned = 'STGBATCH,EXPSORDL,EXPSORDC,'
+                           + 'EXPSORDP';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSORDL,
+                   cursor cursorEXPSORDC,
+                   cursor cursorEXPSORDP;
+
+730b       when uType = 'EXPSELTRNA' and client = cheney;
+730b         sSetsReturned = 'STGBATCH,EXPSORDAL,EXPSORDAC,'
+730b                       + 'EXPSORDAP';
+730b         exec sql
+730b           set result sets with return to client
+730b               array :pgmStatus for 1 rows,
+730b               cursor cursorSTGBATCH,
+730b               cursor cursorEXPSORDAL,
+730b               cursor cursorEXPSORDAC,
+730b               cursor cursorEXPSORDAP;
+
+           when uType = 'EXPSELTRAN';
+             sSetsReturned = 'STGBATCH,EXPSORDL,EXPSORDC,'
+                           + 'EXPSORDP,EXPSORDE,EXPSORDT';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSORDL,
+                   cursor cursorEXPSORDC,
+                   cursor cursorEXPSORDP,
+                   cursor cursorEXPSORDE,
+                   cursor cursorEXPSORDT;
+
+730b       when uType = 'EXPSELTRNA';
+730b         sSetsReturned = 'STGBATCH,EXPSORDAL,EXPSORDAC,'
+730b                       + 'EXPSORDAP,EXPSORDAE,EXPSORDAT';
+730b         exec sql
+730b           set result sets with return to client
+730b               array :pgmStatus for 1 rows,
+730b               cursor cursorSTGBATCH,
+730b               cursor cursorEXPSORDAL,
+730b               cursor cursorEXPSORDAC,
+730b               cursor cursorEXPSORDAP,
+730b               cursor cursorEXPSORDAE,
+730b               cursor cursorEXPSORDAT;
+
+           when uType = 'EXPROUTE' and client = cheney;
+             sSetsReturned = 'STGBATCH,EXPSORDH,EXPSORDD,'
+                           + 'EXPSORDL,EXPSORDC,'
+                           + 'EXPSORDP';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSORDH,
+640aA              cursor cursorEXPSORDD,
+                   cursor cursorEXPSORDL,
+                   cursor cursorEXPSORDC,
+                   cursor cursorEXPSORDP;
+
+730aA      when uType = 'EXPROUTEA' and client = cheney;
+730a         sSetsReturned = 'STGBATCH,EXPSORDAH,EXPSORDAD,'
+730a                       + 'EXPSORDAL,EXPSORDAC,'
+730a                       + 'EXPSORDAP';
+730a         exec sql
+730a           set result sets with return to client
+730a               array :pgmStatus for 1 rows,
+730a               cursor cursorSTGBATCH,
+730a               cursor cursorEXPSORDAH,
+730a               cursor cursorEXPSORDAD,
+730a               cursor cursorEXPSORDAL,
+730a               cursor cursorEXPSORDAC,
+730aA              cursor cursorEXPSORDAP;
+
+           when uType = 'EXPROUTE';
+             sSetsReturned = 'STGBATCH,EXPSORDH,EXPSORDD,'
+                           + 'EXPSORDL,EXPSORDC,'
+                           + 'EXPSORDP,EXPSORDE,EXPSORDT';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSORDH,
+640aA              cursor cursorEXPSORDD,
+                   cursor cursorEXPSORDL,
+                   cursor cursorEXPSORDC,
+                   cursor cursorEXPSORDP,
+                   cursor cursorEXPSORDE,
+                   cursor cursorEXPSORDT;
+
+730b       when uType = 'EXPROUTEA';
+730b         sSetsReturned = 'STGBATCH,EXPSORDAH,EXPSORDAD,'
+730b                       + 'EXPSORDAL,EXPSORDAC,'
+730b                       + 'EXPSORDAP,EXPSORDAE,EXPSORDAT';
+730b         exec sql
+730b           set result sets with return to client
+730b               array :pgmStatus for 1 rows,
+730b               cursor cursorSTGBATCH,
+730b               cursor cursorEXPSORDAH,
+730b               cursor cursorEXPSORDAD,
+730b               cursor cursorEXPSORDAL,
+730b               cursor cursorEXPSORDAC,
+730b               cursor cursorEXPSORDAP,
+730b               cursor cursorEXPSORDAE,
+730b               cursor cursorEXPSORDAT;
+
+           when uType = 'EXPPO';
+             sSetsReturned = 'STGBATCH,'
+                           + 'EXPSPOH,EXPSPOD,EXPSPOE';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSPOH,
+                   cursor cursorEXPSPOD,
+                   cursor cursorEXPSPOE;
+
+           when uType = 'EXPITEMQTY';
+             sSetsReturned = 'STGBATCH,EXPSQTY';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSQTY;
+
+640eA      when uType = 'EXPLICLOG';
+640eA        sSetsReturned = 'STGBATCH,EXPSLICLOG';
+640eA        exec sql
+640eA          set result sets with return to client
+640eA              array :pgmStatus for 1 rows,
+640eA              cursor cursorSTGBATCH,
+640eA              cursor cursorEXPSLICLOG;
+
+640eA      when uType = 'EXPLLCOMBO';
+640eA        sSetsReturned = 'STGBATCH,EXPSLLCOMB';
+640eA        exec sql
+640eA          set result sets with return to client
+640eA              array :pgmStatus for 1 rows,
+640eA              cursor cursorSTGBATCH,
+640eA              cursor cursorEXPSLLCOMB;
+
+640fA      when uType = 'EXPRETURN';
+640fA        sSetsReturned = 'STGBATCH,EXPSRTN';
+640fA        exec sql
+640fA          set result sets with return to client
+640fA              array :pgmStatus for 1 rows,
+640fA              cursor cursorSTGBATCH,
+640fA              cursor cursorEXPSRTN;
+650cA
+650cA      when uType = 'EXPTRN';
+650cA        sSetsReturned = 'STGBATCH,'
+650cA                      + 'EXPSTRN';
+650cA        exec sql
+650cA          set result sets with return to client
+650cA              array :pgmStatus for 1 rows,
+650cA              cursor cursorSTGBATCH,
+650cA              cursor cursorEXPSTRN;
+
+720aA      when uType = 'EXPUPC';
+720aA        sSetsReturned = 'STGBATCH,'
+720aA                      + 'EXPSUPC';
+720aA        exec sql
+720aA          set result sets with return to client
+720aA              array :pgmStatus for 1 rows,
+720aA              cursor cursorSTGBATCH,
+720aA              cursor cursorEXPSUPC;
+
+650dA
+650dA      when uType = 'EXPPCKLBL';
+650dA        sSetsReturned = 'STGBATCH,'
+650dA                      + 'EXPPCKLBL';
+650dA        exec sql
+650dA          set result sets with return to client
+650dA              array :pgmStatus for 1 rows,
+650dA              cursor cursorSTGBATCH,
+650dA              cursor cursorEXPPCKLBL;
+
+720bA      when uType = 'EXPITMQTYL';
+720bA        sSetsReturned = 'STGBATCH,'
+720bA                      + 'EXPSQTYL';
+720bA        exec sql
+720bA          set result sets with return to client
+720bA              array :pgmStatus for 1 rows,
+720bA              cursor cursorSTGBATCH,
+720bA              cursor cursorEXPSQTYL;
+
+CBIaA      when uType = 'EXPCBILOAD';
+CBIaA        sSetsReturned = 'STGBATCH,EXPSLDRFIL';
+CBIaA        exec sql
+CBIaA          set result sets with return to client
+CBIaA              array :pgmStatus for 1 rows,
+CBIaA              cursor cursorSTGBATCH,
+CBIaA              cursor cursorEXPSLDRFIL;
+
+CBIaA      when uType = 'EXPCBISHRT';
+CBIaA        sSetsReturned = 'STGBATCH,EXPSHRMISP';
+CBIaA        exec sql
+CBIaA          set result sets with return to client
+CBIaA              array :pgmStatus for 1 rows,
+CBIaA              cursor cursorSTGBATCH,
+CBIaA              cursor cursorEXPSHRMISP;
+
+CBIaA      when uType = 'EXPCBITIHI';
+CBIaA        sSetsReturned = 'STGBATCH,EXPSTIHIGH';
+700aA        if tihiver = '1';
+CBIaA        exec sql
+CBIaA          set result sets with return to client
+CBIaA              array :pgmStatus for 1 rows,
+CBIaA              cursor cursorSTGBATCH,
+CBIaA              cursor cursorEXPSTIHIGH;
+700aA        else;
+700aA        exec sql
+700aA          set result sets with return to client
+700aA              array :pgmStatus for 1 rows,
+700aA              cursor cursorSTGBATCH,
+700aA              cursor cursorEXPSTIHIGH2;
+700aA        endif;
+
+CBIaA      when uType = 'EXPCBICASE';
+CBIaA        sSetsReturned = 'STGBATCH,EXPSCASEHR';
+CBIaA        exec sql
+CBIaA          set result sets with return to client
+CBIaA              array :pgmStatus for 1 rows,
+CBIaA              cursor cursorSTGBATCH,
+CBIaA              cursor cursorEXPSCASEHR;
+
+650eA      when uType = 'EXPCBIIADJ';
+650eA        sSetsReturned = 'STGBATCH,EXPSITMADJ';
+650eA        exec sql
+650eA          set result sets with return to client
+650eA              array :pgmStatus for 1 rows,
+650eA              cursor cursorSTGBATCH,
+650eA              cursor cursorEXPSITMADJ;
+
+700bA      when uType = 'EXPCBISQTY';
+700bA        sSetsReturned = 'STGBATCH,EXPSSQTY';
+700bA        exec sql
+700bA          set result sets with return to client
+700bA              array :pgmStatus for 1 rows,
+700bA              cursor cursorSTGBATCH,
+700bA              cursor cursorEXPSSQTY;
+
+700cA      when uType = 'EXPCBIUCI'
+700cA        and client <> cheney;
+700cA        sSetsReturned = 'STGBATCH,EXPSORDU';
+700cA        exec sql
+700cA          set result sets with return to client
+700cA              array :pgmStatus for 1 rows,
+700cA              cursor cursorSTGBATCH,
+700cA              cursor cursorEXPSORDU;
+
+700cA      when uType = 'EXPCBIUCI'
+700cA        and client = cheney;
+700cA        sSetsReturned = 'STGBATCH,EXPSORDAU';
+700cA        exec sql
+700cA          set result sets with return to client
+700cA              array :pgmStatus for 1 rows,
+700cA              cursor cursorSTGBATCH,
+700cA              cursor cursorEXPSORDAU;
+
+CBIaA      when uType = '*ALL' and client = cheney;
+CBIaA        sSetsReturned = 'STGBATCH,EXPSORDAH,EXPSORDAD,'
+CBIaA                      + 'EXPSORDAL,EXPSORDAC,'
+CBIaA                      + 'EXPSORDAP,'
+CBIaA                      + 'EXPSADJ,'
+CBIaA                      + 'EXPSLDRFIL,EXPSHRMISP,EXPSTIHIGH,'
+650eM                      + 'EXPSCASEHR,'
+650eA                      + 'EXPSITMADJ,EXPSSQTY';
+700aA       if tihiver = '1';
+CBIaA        exec sql
+CBIaA          set result sets with return to client
+CBIaA              array :pgmStatus for 1 rows,
+CBIaA              cursor cursorSTGBATCH,
+CBIaA              cursor cursorEXPSORDAH,
+CBIaA              cursor cursorEXPSORDAD,
+CBIaA              cursor cursorEXPSORDAL,
+CBIaA              cursor cursorEXPSORDAC,
+CBIaA              cursor cursorEXPSORDAP,
+CBIaA              cursor cursorEXPSADJ,
+CBIaA              cursor cursorEXPSLDRFIL,
+CBIaA              cursor cursorEXPSHRMISP,
+CBIaA              cursor cursorEXPSTIHIGH,
+650eM              cursor cursorEXPSCASEHR,
+650eA              cursor cursorEXPSITMADJ,
+700bA              cursor cursorEXPSSQTY;
+700aA       else;
+700aA        exec sql
+700aA          set result sets with return to client
+700aA              array :pgmStatus for 1 rows,
+700aA              cursor cursorSTGBATCH,
+700aA              cursor cursorEXPSORDAH,
+700aA              cursor cursorEXPSORDAD,
+700aA              cursor cursorEXPSORDAL,
+700aA              cursor cursorEXPSORDAC,
+700aA              cursor cursorEXPSORDAP,
+700aA              cursor cursorEXPSADJ,
+700aA              cursor cursorEXPSLDRFIL,
+700aA              cursor cursorEXPSHRMISP,
+700aA              cursor cursorEXPSTIHIGH2,
+700aA              cursor cursorEXPSCASEHR,
+700aA              cursor cursorEXPSITMADJ,
+700bA              cursor cursorEXPSSQTY;
+700aA       endif;
+
+           when uType = '*ALL';
+             sSetsReturned = 'STGBATCH,EXPSORDH,EXPSORDD,'
+                           + 'EXPSORDL,EXPSORDC,'
+                           + 'EXPSORDP,EXPSORDE,EXPSORDT,'
+                           + 'EXPSPOH,EXPSPOD,EXPSPOE,'
+                           + 'EXPSADJ';
+             exec sql
+               set result sets with return to client
+                   array :pgmStatus for 1 rows,
+                   cursor cursorSTGBATCH,
+                   cursor cursorEXPSORDH,
+640aA              cursor cursorEXPSORDD,
+                   cursor cursorEXPSORDL,
+                   cursor cursorEXPSORDC,
+                   cursor cursorEXPSORDP,
+                   cursor cursorEXPSORDE,
+                   cursor cursorEXPSORDT,
+                   cursor cursorEXPSPOH,
+                   cursor cursorEXPSPOD,
+                   cursor cursorEXPSPOE,
+                   cursor cursorEXPSADJ;
+
+CBIaA      when uType = '*CBI';
+CBIaA        sSetsReturned = 'STGBATCH,'
+CBIaA                      + 'EXPSLDRFIL,EXPSHRMISP,EXPSTIHIGH,'
+650eM                      + 'EXPSCASEHR,EXPSITMADJ,EXPSSQTY';
+700aA       if tihiver = '1';
+CBIaA        exec sql
+CBIaA          set result sets with return to client
+CBIaA              array :pgmStatus for 1 rows,
+CBIaA              cursor cursorSTGBATCH,
+CBIaA              cursor cursorEXPSLDRFIL,
+CBIaA              cursor cursorEXPSHRMISP,
+CBIaA              cursor cursorEXPSTIHIGH,
+650eM              cursor cursorEXPSCASEHR,
+650eA              cursor cursorEXPSITMADJ,
+700bA              cursor cursorEXPSSQTY;
+700aA       else;
+700aA        exec sql
+700aA          set result sets with return to client
+700aA              array :pgmStatus for 1 rows,
+700aA              cursor cursorSTGBATCH,
+700aA              cursor cursorEXPSLDRFIL,
+700aA              cursor cursorEXPSHRMISP,
+700aA              cursor cursorEXPSTIHIGH2,
+700aA              cursor cursorEXPSCASEHR,
+700aA              cursor cursorEXPSITMADJ,
+700bA              cursor cursorEXPSSQTY;
+700aA       endif;
+
+         endsl;
+
+       endsr;
+      /end-free

@@ -1,0 +1,751 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR533     Pick orders - Replenishment.
+     F*  15 May, 1996
+     F*  Hemant Kapadia
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    07/03/96  HNK  2.14
+     F*    Quantity available in label file (LBQAVL) changed to contain
+     F*    AVAIL1 quantity in all cases.
+     F*    Quantity remaining in label file (LBQRMN) used to contain
+     F*    quantity for the broken case item.
+     F*
+     F*    07/08/96  HNK  2.14
+     F*    Warehouse quantities adjusted for broken case item
+     F*    replenishment.
+     F*
+216 AF*    08/07/96  HNK  2.16
+     F*      - Changed to allow selection of a replenishment slot
+     F*        that does not have a defined tie/high.
+     F*
+218 AF*    01/24/97 HNK
+     F*      - Added parameter @PCMD with '*CREATE' to call ADDSTDTRN
+     F*        program.
+     F*
+HNK AF*    08/11/97 HNK
+     F*      - LABEL PRINTING PROG CHANGED FROM OPLPGM TO 'PLBL02'
+     F*        program.
+     F*
+406 AF*    09/19/97  HNK  4.06
+     F*      - Revised to replenish to a multiple position slot.
+     F*
+407 AF*    11/19/97  DAS  4.07/4.08
+408 AF*      - Revised to update pick slot entered and expiration dates
+     F*        with dates from 'From' slot.
+     F*
+409 AF*    03/19/98  DAS  4.09
+     F*      - Revised to call Truck Builder pick label program.
+     F*        A special truck and zone will need to be created -
+     F*        REPLENISH/REPL.  No truck or zone detail is needed.
+411 AF*    06/21/99  RH
+     F*      - Recompiled - ITEMLNK file changed.
+     F*
+413aAF*    01/10/00  MLB 4.13a
+     F*      - 4.06 modification was found that allows more qty to
+     F*        be letdown than the pick slot will hold.  Commented
+     F*        out code at stmts 18600 to 19300 re-activated.
+     F*
+415 AF*    04/12/00  HNK 4.15
+     F*      - Modified to work with new PFMT label printing program.
+     F*
+     F*
+     F*
+     F*----------------------------------------------------------------
+415 AF*  Notes
+     F*   - A special label printing program has been created to work
+     F*     with Zebra type printers.  The name of the new program is
+     F*     "PFMT".  To use this program the user would enter the
+     F*     following for the label program within zone maintenance.
+     F*
+     F*                      PFMTxxxxxx
+     F*
+     F*     where 'xxxxxx' is the name of the label format to be used.
+     F*     Menu PIRLF contains the options to work with and define
+     F*     the label formats.
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRPLFILEAUP  E           K        DISK
+     FITEMDEF2IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+409 DF*PTIONS IF  E           K        DISK
+409 AFOPTIONZ IF  E           K        DISK
+     FSLOT2   UF  E           K        DISK
+     FITEMLNK IF  E           K        DISK
+     FLABEL   O   E           K        DISK                      A
+     FBATCTL  O   E           K        DISK
+     I*----------------------------------------------------------------
+     I*
+     I* Data structure
+     I*
+409 DI*PDATA      DS
+409 MIOPZDTA      DS
+     I I            0                         1   30OPCLVL
+     I                                        4   4 OPCWRA
+     I                                        5   5 OPCWRB
+     I                                        6   6 OPUWRA
+     I                                        7   7 OPUWRB
+     I                                        8  50 OPTEXT
+     I I            0                        51  520OPERR
+     I I            0                        53  540OPCWGT
+     I                                       55  64 OPLPGM
+409 AI                                       65  74 OPPDEV
+409 AI                                       75  84 OPPFRM
+     I                                      117 117 OPTEND
+     I            DS                                                      GFG
+     I                                        1   3 ALLRPL                GFG
+     I I            0                         4   60NRPL                  GFG
+     I I            0                         7  110NRRPL                 GFG
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'ADDSTDTRN'           C         @ADDTR
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Error message parameter
+     I*
+214 AI$AERM       DS
+214 AI                                        1  60 XAERM
+214 AI                                        1   4 $AMSG
+     I$CERM       DS
+     I                                        1  60 XCERM
+     I                                        1   4 $CMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse number.
+     C*      $PNRPL  Number of replenishments
+     C*
+     C*    Returned Parameters
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWH15 155
+     C                     PARM           $PNRPL  4
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*  For breakdown item:
+     C*  If the replenishment item does not have the breakdown qty 1
+     C*  defined, then skip this record.
+     C*
+     C           RLTYPE    IFEQ 'B'
+     C           ITKEY     CHAINITEMLNK              79
+     C           *IN79     CABEQ*ON       OUT
+     C           ILKEY     CHAINPIRITEM              79
+     C           *IN79     IFEQ *OFF
+     C           ITUMQ2    ANDLE0
+     C                     GOTO OUT
+     C                     ELSE
+     C                     Z-ADDITUMQ2    RPLQTY
+     C                     ENDIF
+     C                     ELSE
+     C                     Z-ADD0         RPLQTY
+     C                     ENDIF
+     C*
+     C*  Get item.
+     C*
+     C           ITKEY     CHAINPIRITEM              79
+     C           *IN79     CABEQ*ON       OUT
+     C*
+     C*  Get picking slot for item.(TO Slot)
+     C*
+     C           SLTKEY    CHAINSLOT2               N79
+     C           *IN79     CABEQ*ON       OUT
+     C                     Z-ADDSLLOC     TOLOC
+     C                     Z-ADDSLRLVL    TORLVL
+     C                     MOVE SLHAND    TOHAND
+     C                     MOVE SLSTYP    TOSTYP
+     C*
+     C*  Non-broken case items.
+     C*
+     C           RLTYPE    IFNE 'B'
+     C*
+     C*  Ignore slot if no matching tie/high definition. (To slot)
+     C*
+     C           KEYID2    CHAINITEMDEF2             79
+     C           *IN79     CABEQ*ON       OUT
+     C                     Z-ADDIDTIE     SAVTIE
+     C                     Z-ADDIDHIGH    SAVHGH
+     C*
+     C*  Calculate total quantity that can fit in slot.
+     C*
+     C                     SELEC
+     C           IDTIE     WHEQ 0
+     C                     Z-ADDIDHIGH    DSPQTY  50
+     C           IDHIGH    WHEQ 0
+     C                     Z-ADDIDTIE     DSPQTY
+     C                     OTHER
+     C           IDTIE     MULT IDHIGH    DSPQTY
+     C                     ENDSL
+     C*
+     C           DSPQTY    MULT SDPOS     DSTQTY  70
+406 AC                     Z-ADDDSTQTY    EMPTYQ  70
+     C*
+     C*  Get stock quantity in pick slot.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           SLSTK1
+     C                     PARM           SLSTK2
+     C                     PARM           SLSTK3
+     C*
+     C                     PARM           SLALC1
+     C                     PARM           SLALC2
+     C                     PARM           SLALC3
+     C*
+     C                     PARM           SLTFR1
+     C                     PARM           SLTFR2
+     C                     PARM           SLTFR3
+     C*
+     C                     PARM           SLPCK1
+     C                     PARM           SLPCK2
+     C                     PARM           SLPCK3
+     C*
+     C                     PARM           SLRCV1
+     C                     PARM           SLRCV2
+     C                     PARM           SLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+413aMC*
+413aMC*  Calculate empty quantity in pick slot.
+413aMC*
+413aMC           AVAIL1    IFGE 0
+413aMC           DSTQTY    SUB  AVAIL1    EMPTYQ  70
+413aMC                     ELSE
+413aMC                     Z-ADDDSTQTY    EMPTYQ
+413aMC                     ENDIF
+     C*
+     C*  Get out if there is no empty space in the pick slot.
+     C*
+     C           EMPTYQ    CABLE0         OUT
+     C                     ENDIF
+     C*
+     C*  FROM Slot.
+     C*
+     C           SLFKEY    CHAINSLOT2                79
+     C           *IN79     CABEQ*ON       OUT
+     C                     Z-ADDSLLOC     FMLOC
+     C                     Z-ADDSLRLVL    FMRLVL
+     C                     MOVE SLHAND    FMHAND
+     C                     Z-ADDSLPSEQ    FMPSEQ
+     C*
+     C*     Ignore slot if no normal stock or past expiration date.
+     C*
+     C           SLSTK1    IFLE 0
+     C           SLEXPD    ORNE 0
+     C           SLEXPD    ANDLTTODAY
+     C                     GOTO OUT
+     C                     ENDIF
+     C*
+     C*     If nothing available then go to next slot.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           SLSTK1
+     C                     PARM           SLSTK2
+     C                     PARM           SLSTK3
+     C*
+     C                     PARM           SLALC1
+     C                     PARM           SLALC2
+     C                     PARM           SLALC3
+     C*
+     C                     PARM           SLTFR1
+     C                     PARM           SLTFR2
+     C                     PARM           SLTFR3
+     C*
+     C                     PARM           SLPCK1
+     C                     PARM           SLPCK2
+     C                     PARM           SLPCK3
+     C*
+     C                     PARM           SLRCV1
+     C                     PARM           SLRCV2
+     C                     PARM           SLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C           AVAIL1    CABLE0         OUT
+     C*
+     C*  For broken case item, qty picked is always 1.
+     C*
+     C           RLTYPE    IFEQ 'B'
+     C                     Z-ADD1         TOPICK
+     C                     ELSE
+216 AC*
+216 AC*  Get tie/high for FROM slot.
+216 AC*
+216 AC           KEYID2    CHAINITEMDEF2             79
+216 AC           *IN79     IFEQ *ON
+216 AC                     Z-ADD0         IDTIE
+216 AC                     Z-ADD0         IDHIGH
+216 AC                     ENDIF
+     C*
+     C*     Grab one pallet or less.
+     C*
+     C                     SELEC
+     C           IDTIE     WHEQ 0
+     C                     Z-ADDIDHIGH    PALLET  50
+     C           IDHIGH    WHEQ 0
+     C                     Z-ADDIDTIE     PALLET
+     C                     OTHER
+     C           IDTIE     MULT IDHIGH    PALLET
+     C                     ENDSL
+     C           PALLET    IFLE AVAIL1
+     C           PALLET    ANDGT0
+     C                     Z-ADDPALLET    TOPICK  50
+     C                     ELSE
+     C                     Z-ADDAVAIL1    TOPICK
+     C                     ENDIF
+     C*
+     C*  Make sure quantity will fit in slot.
+     C*
+     C           TOPICK    IFGT EMPTYQ
+     C                     Z-ADDEMPTYQ    TOPICK
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C*  Check to see if replenishment will free up a slot?
+     C*
+     C           TOPICK    IFNE AVAIL1
+     C           RLFREE    ANDEQ'Y'
+     C                     GOTO OUT
+     C                     ENDIF
+     C*
+     C*  Create transaction record.
+     C*
+     C                     CALL 'PIRTRN#'
+     C                     PARM           PTTRN#  70
+     C*
+     C           RLTYPE    IFEQ 'B'
+     C                     MOVE 'REPLBK'  @PTASK
+     C                     ELSE
+     C                     MOVE 'REPL  '  @PTASK
+     C                     ENDIF
+     C*
+     C           ITCUBE    MULT TOPICK    @PCUBE
+     C           ITSWGT    MULT TOPICK    @PSWGT
+     C                     CALL @ADDTR
+218 AC                     PARM '*CREATE '@PCMD   8
+     C                     PARM           #JOB
+     C                     PARM PTTRN#    @PTRN#  70
+     C                     PARM           @PTASK  6
+     C                     PARM $PWHSE    @PWHSE  30
+     C                     PARM RLWHDP    @PWHDP  5
+     C                     PARM SLSTYP    @PSTYP  1
+     C                     PARM           @PCUBE  93
+     C                     PARM           @PSWGT  92
+     C                     PARM TOPICK    @PPCS   50
+     C                     PARM 1         @PAISL  50
+     C                     PARM 0         @PQTY1  50
+     C                     PARM 0         @PQTY2  50
+     C                     PARM 0         @PQTY3  50
+     C                     PARM *BLANKS   @PRTE   5
+     C                     PARM ' '       @PPO    9
+     C                     PARM 'L'       @PGRP1  1
+     C                     PARM ' '       @PGRP2  1
+     C                     PARM ' '       @PRTN   8
+     C                     PARM ' '       @PMSG   4
+     C*
+     C*  Create label record.
+     C*
+     C                     CLEARLBREC
+     C*  FROM Slot.
+     C                     Z-ADD$PWHSE    LBWHSE
+     C                     MOVE RLWHDP    LBWHDP
+     C                     MOVE RLFAIL    LBAISL
+     C                     Z-ADDFMLOC     LBLOC
+     C                     Z-ADDFMRLVL    LBRLVL
+     C                     MOVE FMHAND    LBHAND
+     C                     Z-ADDFMPSEQ    LBPSEQ
+     C                     MOVE RLFDIS    LBDISP
+214 DC*          RLTYPE    IFEQ 'B'
+214 DC*                    Z-ADD1         LBQAVL
+214 DC*                    ELSE
+214 MC                     Z-ADDAVAIL1    LBQAVL
+214 DC*                    ENDIF
+     C* TO Slot.
+     C                     Z-ADD$PWHSE    LBWHS2
+     C                     MOVE RLWHDP    LBWHD2
+     C                     MOVE TOSTYP    LBSTYP
+     C           LBSTYP    IFEQ 'P'
+     C                     Z-ADD1         LBQRYF
+     C                     ELSE
+     C                     Z-ADD0         LBQRYF
+     C                     ENDIF
+     C                     MOVE RLTAIL    LBASL2
+     C                     Z-ADDTOLOC     LBLOC2
+     C                     Z-ADDTORLVL    LBLVL2
+     C                     MOVE TOHAND    LBHND2
+     C                     MOVE RLTDIS    LBDSP2
+     C                     MOVE *BLANKS   LBRTE
+     C*                                                                   GFG
+     C                     MOVE RLITEM    LBITEM
+     C                     Z-ADDBATCH#    LBPBAT
+     C                     MOVE 'N'       LBUTYP
+     C                     Z-ADDITCUBE    LBUCUB
+     C                     Z-ADDITSWGT    LBUWGT
+     C                     Z-ADDTOPICK    LBQALC
+214 AC*
+214 AC*  Quantity remaining field is used to contain break down
+214 AC*  quantity for broken case item.
+214 AC*
+214 AC           RLTYPE    IFEQ 'B'
+214 AC                     Z-ADDRPLQTY    LBQRMN
+214 AC                     ELSE
+214 AC                     Z-ADD0         LBQRMN
+214 AC                     ENDIF
+     C                     Z-ADDTOPICK    LBQPCK
+     C           LBUCUB    MULT TOPICK    LBCUBE
+     C           LBUWGT    MULT TOPICK    LBSWGT
+     C                     MOVE ITUM1     LBUCOD
+     C                     Z-ADDSAVTIE    LBTIE
+     C                     Z-ADDSAVHGH    LBHIGH
+     C                     Z-ADDPTTRN#    LBTRN#
+     C                     Z-ADD0         LBCTR#
+     C                     CALL 'PIRLBL#'
+     C                     PARM           LBLBL#
+     C                     MOVE 'L'       LBGRP1
+     C                     MOVE ' '       LBGRP2
+     C                     MOVE 'R'       LBTYPE
+     C                     MOVE 'P'       LBSTAT
+     C                     Z-ADDTODAY     LBSDTE
+     C                     TIME           LBSTIM
+     C                     Z-ADDTODAY     LBRDTE
+     C                     WRITELBREC
+     C*
+     C*     Update slot.(FROM Slot)
+     C*
+407 AC                     Z-ADDSLENTD    FMENTD  80
+407 AC                     Z-ADDSLEXPD    FMEXPD  80
+     C                     ADD  TOPICK    SLTFR1
+     C                     UPDATSLREC
+     C*
+     C*     Update slot.(TO Slot)
+     C*
+     C           SLTKEY    CHAINSLOT2                79
+     C           *IN79     IFEQ *OFF
+     C           RLTYPE    IFEQ 'B'
+     C                     ADD  RPLQTY    SLRCV1
+     C                     ELSE
+     C                     ADD  TOPICK    SLRCV1
+     C                     ENDIF
+407 AC                     Z-ADDFMENTD    SLENTD
+407 AC                     Z-ADDFMEXPD    SLEXPD
+     C                     UPDATSLREC
+     C                     ENDIF
+214 AC*
+214 AC*  Adjust warehouse quantity for broken case item.
+214 AC*
+214 AC           RLTYPE    IFEQ 'B'
+214 AC*
+214 AC*  Allocate stock.(Full case item) Qty will be reduced in
+214 AC*  close program.
+214 AC*
+214 AC                     MOVE '*ALLOC  '$ACMD
+214 AC                     MOVE #PROG     $APRG
+214 AC                     MOVE '*BATCH  '$ATYPE
+214 AC                     Z-ADD$PWHSE    $AWHSE
+214 AC                     MOVE ILITM2    $AITEM
+214 AC                     Z-ADD1         $AQTY1
+214 AC                     Z-ADD0         $AQTY2
+214 AC                     Z-ADD0         $AQTY3
+214 AC                     CALL 'ADJQTY'
+214 AC                     PARM           $ACMD   8
+214 AC                     PARM           $APRG  10
+214 AC                     PARM           $ATYPE  8
+214 AC                     PARM           $AWHSE  30
+214 AC                     PARM           $AITEM 15
+214 AC                     PARM           $AQTY1  70
+214 AC                     PARM           $AQTY2  70
+214 AC                     PARM           $AQTY3  70
+214 AC                     PARM           $ARTQ1  70
+214 AC                     PARM           $ARTQ2  70
+214 AC                     PARM           $ARTQ3  70
+214 AC                     PARM           $ARTN   8
+214 AC                     PARM           $AERM
+214 AC*
+214 AC*  Add stock.(Broken case item)
+214 AC*
+214 AC                     MOVE '*STOCK  '$ACMD
+214 AC                     MOVE #PROG     $APRG
+214 AC                     MOVE '*BATCH  '$ATYPE
+214 AC                     Z-ADD$PWHSE    $AWHSE
+214 AC                     MOVE RLITEM    $AITEM
+214 AC                     Z-ADDRPLQTY    $AQTY1
+214 AC                     Z-ADD0         $AQTY2
+214 AC                     Z-ADD0         $AQTY3
+214 AC                     CALL 'ADJQTY'
+214 AC                     PARM           $ACMD   8
+214 AC                     PARM           $APRG  10
+214 AC                     PARM           $ATYPE  8
+214 AC                     PARM           $AWHSE  30
+214 AC                     PARM           $AITEM 15
+214 AC                     PARM           $AQTY1  70
+214 AC                     PARM           $AQTY2  70
+214 AC                     PARM           $AQTY3  70
+214 AC                     PARM           $ARTQ1  70
+214 AC                     PARM           $ARTQ2  70
+214 AC                     PARM           $ARTQ3  70
+214 AC                     PARM           $ARTN   8
+214 AC                     PARM           $AERM
+214 AC                     ENDIF
+     C*
+     C*     Count number of replenishment.
+     C*
+     C                     ADD  1         N
+     C           $PNRPL    IFNE '*ALL'
+     C           N         ANDEQ$NRPL
+     C                     MOVE *ON       *INLR
+     C                     ENDIF
+     C*
+     C*  Done with this replenishment (Delete this work record).
+     C*
+     C                     DELETRLREC
+     C*
+     C           OUT       TAG
+     C*
+     C*  Get replenishment label print program name.
+     C*
+409 DC*                    MOVE '*PICKLBL'OPCODE
+409 MCLR                   MOVE '*PICKLBL'KYCODE
+409 ACLR                   MOVEL'REPLEN'  KYTRUK
+409 ACLR                   MOVE 'ISH '    KYTRUK
+409 ACLR                   MOVEL'REPL  '  KYZONE
+409 DC*R         KEYOP     CHAINOPTIONS              79
+409 MCLR         KEYOPZ    CHAINOPTIONZ              79
+     C*
+     CLR         *IN79     IFEQ *OFF
+     CLR         OPLPGM    ANDNE*BLANKS
+415 ACLR                   MOVELOPLPGM    @PGM    4
+415 ACLR                   MOVE OPLPGM    @SET    6
+409 DC*R                   CALL OPLPGM
+409 DC*R                   CALL 'PLBL02'
+409 DC*R                   PARM '*REPLEN '$PCMD   8
+409 DC*R                   PARM           BATCH#
+409 DC*R                   PARM           $PWHSE
+409 DC*R                   PARM *BLANKS   $PRTE   5
+409 DC*R                   PARM *BLANKS   $PSTYP  1
+409 DC*R                   PARM           RLWHDP
+409 DC*R                   PARM *ZEROS    $PTRN#  70
+     C*
+415 ACLR                   SELEC
+415 ACLR         @PGM      WHEQ 'PFMT'
+415 ACLR                   CALL 'PFMT'
+415 ACLR                   PARM '*REPLEN '$PCMD
+415 ACLR                   PARM           @SET
+415 ACLR                   PARM           @FMT    8
+415 ACLR                   PARM           $PWHSE
+415 ACLR                   PARM 'REPL '   $PRTID
+415 ACLR                   PARM *BLANKS   $PCOMP
+415 ACLR                   PARM KYZONE    $PTZON
+415 ACLR                   PARM 0         $PGEN
+415 ACLR                   PARM KYZONE    $PSZON
+415 ACLR                   PARM KYTRUK    $PTRUK
+415 ACLR                   PARM 'REPL '   $PRTE
+415 ACLR                   PARM           OPZDTA
+415 ACLR                   PARM           BATCH#
+     C*
+     C*  Use original line printer label program
+     C*
+415 ACLR                   OTHER
+     C*
+409 ACLR                   CALL OPLPGM
+409 ACLR                   PARM '*REPLEN '$PCMD   8
+409 ACLR                   PARM           $PWHSE
+409 ACLR                   PARM 'REPL '   $PRTID  5
+409 ACLR                   PARM *BLANKS   $PCOMP  1
+409 ACLR                   PARM KYZONE    $PTZON  6
+409 ACLR                   PARM 0         $PGEN   10
+409 ACLR                   PARM KYZONE    $PSZON  6
+409 ACLR                   PARM KYTRUK    $PTRUK 10
+409 ACLR                   PARM 'REPL '   $PRTE   5
+409 ACLR                   PARM           OPZDTA
+409 ACLR                   PARM           BATCH#
+415 ACLR                   ENDSL
+     CLR                   ENDIF
+     CLR                   RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   Z-ADD$PWH15    $PWHSE  30
+     CSR                   Z-ADD0         N       50
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+     C*  Define key for PIRITEM file. (For item to be replenished)
+     C*
+     CSR         ITKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           RLITEM
+     C*
+     C*  Define key for PIRITEM file. (For link item)
+     C*
+     CSR         ILKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           ILITM2
+409 DC*
+409 DC*  Define key for OPTIONS file.
+409 DC*
+409 DC*R         KEYOP     KLIST
+409 DC*R                   KFLD           $PWHSE
+409 DC*R                   KFLD           OPCODE
+409 AC*
+409 AC*  Define partial key for options file.
+409 AC*
+409 ACSR         *LIKE     DEFN OPZCOD    KYCODE
+409 ACSR         *LIKE     DEFN OPZTRK    KYTRUK
+409 ACSR         *LIKE     DEFN OPZZON    KYZONE
+409 ACSR         KEYOPZ    KLIST
+409 ACSR                   KFLD           KYCODE
+409 ACSR                   KFLD           $PWHSE
+409 ACSR                   KFLD           KYTRUK
+409 ACSR                   KFLD           KYZONE
+     C*
+     C*  Define key for SLOT2 file. (From slot)
+     C*
+     CSR         SLFKEY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           RLWHDP
+     CSR                   KFLD           RLFDIS
+     C*
+     C*  Define key for SLOT2 file. (To slot)
+     C*
+     CSR         SLTKEY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           RLWHDP
+     CSR                   KFLD           RLTDIS
+     C*
+     C*  Define key for ITEMDEF2 file.
+     C*
+     CSR         KEYID2    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           RLITEM
+     CSR                   KFLD           SLSDEF
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*     - Get new batch number.
+     C*
+     CSR                   CALL 'PIRBAT#'
+     CSR                   PARM           BATCH#  70
+     C*
+     C*     - Create batch control record.
+     C*
+     CSR                   Z-ADDBATCH#    BTBAT#
+     CSR                   Z-ADD$PWHSE    BTWHSE
+     CSR                   MOVE '*REPLEN 'BTTYPE
+     CSR                   MOVE *BLANKS   BTSTAT
+     CSR                   MOVE *BLANKS   BTRTE
+     CSR                   Z-ADDTODAY     BTSTRD
+     CSR                   TIME           BTSTRT
+     CSR                   MOVE #USER     BTSTRB
+     CSR                   WRITEBTREC
+     C*
+     CSR         $PNRPL    IFNE '*ALL'
+     C*                                                                   GFG
+     C*  Convert string to number of replenishments.                      GFG
+     C*                                                                   GFG
+     CSR                   MOVE '*STR2QTY'$CCMD                           GFG
+     CSR                   MOVE #PROG     $CPRG                           GFG
+     C*                                                                   GFG
+     CSR                   MOVEL$PNRPL    $CQSTR                          GFG
+     CSR                   CALL 'CVTQTY'                                  GFG
+     CSR                   PARM           $CCMD   8                       GFG
+     CSR                   PARM           $CPRG  10                       GFG
+     CSR                   PARM           $CQTY1  70                      GFG
+     CSR                   PARM           $CQTY2  70                      GFG
+     CSR                   PARM           $CQTY3  70                      GFG
+     CSR                   PARM           $CUM1   2                       GFG
+     CSR                   PARM           $CUM2   2                       GFG
+     CSR                   PARM           $CUM3   2                       GFG
+     CSR                   PARM           $CQSTR 10                       GFG
+     CSR                   PARM           $CUSTR 17                       GFG
+     CSR                   PARM           $CRTN   8                       GFG
+     CSR                   PARM           $CERM                           GFG
+     CSR         $CRTN     IFEQ '*PGMQ   '                                GFG
+     CSR                   MOVE *ON       ERROR                           GFG
+     CSR                   ENDIF                                          GFG
+     C*                                                                   GFG
+     CSR         ERROR     IFEQ *OFF                                      GFG
+     CSR                   MOVE $CQTY1    $NRPL   50                      GFG
+     CSR                   ELSE
+     CSR                   Z-ADD0         $NRPL
+     CSR                   ENDIF                                          GFG
+     C*                                                                   GFG
+     CSR                   ELSE
+     CSR                   Z-ADD0         $NRPL
+     CSR                   ENDIF                                          GFG
+     C*
+     CSR         *LIKE     DEFN IDTIE     SAVTIE
+     CSR         *LIKE     DEFN IDHIGH    SAVHGH
+     CSR         *LIKE     DEFN SLLOC     TOLOC
+     CSR         *LIKE     DEFN SLRLVL    TORLVL
+     CSR         *LIKE     DEFN SLHAND    TOHAND
+     CSR         *LIKE     DEFN SLLOC     FMLOC
+     CSR         *LIKE     DEFN SLRLVL    FMRLVL
+     CSR         *LIKE     DEFN SLHAND    FMHAND
+     CSR         *LIKE     DEFN SLPSEQ    FMPSEQ
+     CSR         *LIKE     DEFN SLSTYP    TOSTYP
+     CSR         *LIKE     DEFN ITUMQ2    RPLQTY
+     C*
+     CSR                   ENDSR

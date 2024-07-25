@@ -1,0 +1,449 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  SL900     Slot lookup/verify
+     F*  19 September, 1994
+     F*  Dave Sommerville
+     F*  Hemant Kapadia
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+416 AF*    12/04/02  MLB  4.16
+     F*      - Enh: Revised program to pass back slot status during
+     F*        *VERIFY processing.
+     F*
+417 AF*    08/13/03  MLB  4.17
+     F*      - Enh: Revised program to create new command, *VFYDEF.
+     F*        *VFYDEF will perform same processing as *VERIFY but will
+     F*        retrieve slot definition and return slot positions
+     F*        to calling program.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions:
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*  99        Universal record indicator (Very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT2   IF  E           K        DISK
+     F            SLREC                             KRENAMERECORD
+     FPIRITEM IF  E           K        DISK
+417 AFSLOTDEF IF  E           K        DISK                           UC
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A2          2  1
+     E                    A10        10  1
+     E                    A75        75  1
+     E                    FKEY       10 50
+     E                    UKEY       10 50
+     E                    $MD       128  1
+     E                    $PODSC      3 63
+     E                    DESC    1   1 20
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  26 $LWHDP
+     I                                       27  41 $LITEM
+     I                                       42  53 $LDISP
+     I                                       54  58 $LDESG
+     I                                       59  60 $LSTAT
+     I                                       61  62 $LSDEF
+     I                                       63  64 $LACTV
+417 AI                                       65  670$LSPOS
+     I*
+     I$UPARM      DS
+     I                                        1   8 $UCMD
+     I                                        9  18 $UPRG
+     I                                       19  68 $UUKY
+     I                                       69  76 $URTN
+     I                                       77 136 $UERM
+     I                                       77  80 $UMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$UWHSE
+     I                                       22  26 $UWHDP
+     I                                       27  41 $UITEM
+     I                                       42  53 $UDISP
+     I*
+     I$VPARM      DS
+     I                                        1   8 $VCMD
+     I                                        9  18 $VPRG
+     I                                       19  68 $VUKY
+     I                                       69  76 $VRTN
+     I                                       77 136 $VERM
+     I                                       77  80 $VMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$VWHSE
+     I                                       22  26 $VWHDP
+     I                                       27  31 $VDESG
+     I                                       32  33 $VSTAT
+     I                                       34  35 $VSDEF
+     I                                       36  37 $VACTV
+     I                                       38  49 $VDISP
+     I*
+     I$GPARM      DS
+     I                                        1   8 $GCMD
+     I                                        9  18 $GPRG
+     I                                       19  68 $GUKY
+     I                                       69  76 $GRTN
+     I                                       77 136 $GERM
+     I                                       77  80 $GMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$GWHSE
+     I                                       22  26 $GWHDP
+     I                                       27  38 $GDISP
+     I*
+     I*----------------------------------------------------------------
+     I*  Data structure for PgUp/Dn routines
+     I*
+     I$POSTN      DS
+     I                                        1   8 $POCMD
+     I                                        9  18 $POPRG
+     I                                       19  68 $POFKY
+     I                                       69 118 $POUKY
+     I                                      119 307 $PODSC
+     I                                      308 322 $POPT1
+     I                                      323 335 $POPT2
+     I                                      336 343 $PORTN
+     I                                      344 403 $POERM
+     I                                      336 339 $POMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERRCL1
+     I                                       11  16 ERRCL2
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $LCMD   *GENERAL - Lookup slots for a specific warehouse/
+     C*                         department.
+     C*              *USED    - Lookup slots used by a specific item.
+     C*              *VRFYZRO - Lookup verified zero slots for a
+     C*                         specific warehouse/department/desig-
+     C*                         -nation area.
+     C*              *BOTH    - Lookup used and empty slots.
+     C*              *VERIFY  - Verify key.
+417 AC*              *VFYDEF  - Verify key and retrieve slot definition.
+     C*      $LPRG   Program to send messages back to.
+     C*      $LUKY   Contains key to be verified.
+     C*
+     C*    Returned Parameters
+     C*      $LUKY   Contains first key selected.
+416 AC*      $LSTAT  Slot status when $LCMD is *VERIFY.
+417 AC*      $LSPOS  Slot positions when $LCMD is *VFYDEF.
+     C*      $LRTN   blank    - No problem encountered.
+     C*              *OK      - Unique key exists for *VERIFY
+     C*              *CANCEL  - CMD12 was entered
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*              -or- Description of verified code.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $LPARM
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *BLANKS   $LRTN
+     C                     MOVE *BLANKS   $LERM
+     C                     EXSR ZZINIT
+     C           $LCMD     CASEQ'*VERIFY 'VERIFY
+417 AC           $LCMD     CASEQ'*VFYDEF 'VERIFY
+     C           $LCMD     CASEQ'*GENERAL'LOOKUP
+     C           $LCMD     CASEQ'*USED   'LOOKUP
+     C           $LCMD     CASEQ'*BOTH   'LOOKUP
+     C           $LCMD     CASEQ'*VRFYZRO'LOOKUP
+     C                     ENDCS
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*   Define key for SLOT2
+     C*
+     CSR         FILEKY    KLIST
+     CSR                   KFLD           $LWHSE
+     CSR                   KFLD           $LWHDP
+     CSR                   KFLD           $LDISP
+     C*
+     C*   Define key for PIRITEM
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           $LWHSE
+     CSR                   KFLD           $LITEM
+417 AC*
+417 AC*   Define key for SLOTDEF
+417 AC*
+417 ACSR         SDKEY     KLIST
+417 ACSR                   KFLD           $LWHSE
+417 ACSR                   KFLD           SLSDEF
+417 AC*
+417 ACSR                   MOVE *OFF      SDOPEN  1
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  LOOKUP  Lookup PIR or Fixed slots
+     C*
+     C*    Lookup commands:
+     C*
+     C*       *USED    - Lookup used slots (SL910).
+     C*          This lookup will display only the slots that are
+     C*          currently being used (occupied) by an item. The
+     C*          "Reduce Quantity Received" program uses this type
+     C*          of lookup.
+     C*
+     C*       *VRFYZRO - Lookup verified empty slots. (SL930).
+     C*          This lookup will display a restricted list of
+     C*          verified empty (zero) slots. Only slots for a certain
+     C*          department and designation are displayed. The
+     C*          "Merchandise Receiving" program uses this type of
+     C*          lookup.
+     C*
+     C*       *BOTH - Lookup used and empty slots.
+     C*          When an item type is "Fixed" a *USED is done
+     C*          first and then the user can press a command key
+     C*          to do a *VRFYZRO.
+     C*          When an item type is "PIR" a *VRFYZRO is done first
+     C*          and then the user can press a command key to do
+     C*          a *USED.
+     C*
+     C*       *GENERAL - Lookup slots for a specific warehouse/dept.
+     C*****************************************************************
+     CSR         LOOKUP    BEGSR
+     C*
+     C*   Get item info.
+     C*
+     CSR         KEYIT     CHAINPIRITEM              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE 'F'       ITSTYP
+     CSR                   ENDIF
+     C*
+     C*   Determine first lookup program to call.
+     C*
+     CSR                   MOVE $LCMD     LOKCMD  8
+     CSR         LOKCMD    IFEQ '*BOTH   '
+     CSR         ITSTYP    IFEQ 'P'
+     CSR                   MOVE '*VRFYZRO'LOKCMD
+     CSR                   ELSE
+     CSR                   MOVE '*USED   'LOKCMD
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Set up loop so user can move between lookup programs.
+     C*
+     CSR                   MOVE *OFF      STOP    1
+     CSR         STOP      DOUEQ*ON
+     C*
+     C*   Determine which lookup program to call.
+     C*
+     CSR                   SELEC
+     C*
+     CSR         LOKCMD    WHEQ '*USED   '
+     CSR                   Z-ADD$LWHSE    $UWHSE
+     CSR                   MOVE $LWHDP    $UWHDP
+     CSR                   MOVE $LITEM    $UITEM
+     CSR                   MOVE $LDISP    $UDISP
+     CSR                   CALL 'SL910 '
+     CSR                   PARM           $UPARM
+     CSR                   MOVE $URTN     $LRTN
+     CSR                   MOVE $UDISP    $LDISP
+     C*
+     CSR         LOKCMD    WHEQ '*GENERAL'
+     CSR                   Z-ADD$LWHSE    $GWHSE
+     CSR                   MOVE $LWHDP    $GWHDP
+     CSR                   MOVE $LDISP    $GDISP
+     CSR                   CALL 'SL920 '
+     CSR                   PARM           $GPARM
+     CSR                   MOVE $GRTN     $LRTN
+     CSR                   MOVE $GDISP    $LDISP
+     C*
+     CSR         LOKCMD    WHEQ '*VRFYZRO'
+     CSR                   Z-ADD$LWHSE    $VWHSE
+     CSR                   MOVE $LWHDP    $VWHDP
+     CSR                   MOVE $LDESG    $VDESG
+     CSR                   MOVE $LSTAT    $VSTAT
+     CSR                   MOVE $LSDEF    $VSDEF
+     CSR                   MOVE $LACTV    $VACTV
+     CSR                   MOVE $LDISP    $VDISP
+     CSR                   CALL 'SL930 '
+     CSR                   PARM           $VPARM
+     CSR                   MOVE $VRTN     $LRTN
+     CSR                   MOVE $VDISP    $LDISP
+     C*
+     CSR                   ENDSL
+     C*
+     C*   Upon return see if we go back home or display
+     C*   a different lookup.
+     C*
+     CSR         $LRTN     IFEQ '*SWITCH '
+     CSR         LOKCMD    IFEQ '*USED   '
+     CSR                   MOVE '*VRFYZRO'LOKCMD
+     CSR                   ELSE
+     CSR                   MOVE '*USED   'LOKCMD
+     CSR                   ENDIF
+     CSR                   ELSE
+     CSR                   MOVE *ON       STOP
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $LPRG     #PGMQ  10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR1001  Invalid code.
+     C*
+     CSR         ZM1001    BEGSR
+     CSR                   MOVE 'PIR1001' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEADESC      ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $LMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  VERIFY   Verify unique key.
+     C*
+     CSR         VERIFY    BEGSR
+     CSR         FILEKY    CHAINRECORD               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE '*OK     '$LRTN
+416 ACSR                   MOVE SLSTAT    $LSTAT
+     CSR                   ELSE
+     CSR                   MOVE '*PGMQ   '$LRTN
+     CSR                   EXSR ZM1001
+416 ACSR                   MOVE *BLANKS   $LSTAT
+417 ACSR                   MOVE *BLANKS   SLSDEF
+     CSR                   ENDIF
+417 AC*
+417 AC*    Retrieve slot definition record.
+417 AC*
+417 ACSR         $LCMD     IFEQ '*VFYDEF '
+417 ACSR         SDOPEN    IFEQ *OFF
+417 ACSR                   OPEN SLOTDEF
+417 ACSR                   MOVE *ON       SDOPEN
+417 ACSR                   ENDIF
+417 AC*
+417 ACSR         SDKEY     CHAINSLOTDEF              79
+417 ACSR         *IN79     IFEQ *OFF
+417 ACSR                   Z-ADDSDPOS     $LSPOS
+417 ACSR                   ELSE
+417 ACSR                   MOVE *ZEROS    $LSPOS
+417 ACSR                   ENDIF
+417 AC*
+417 ACSR                   ENDIF
+417 AC*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINIT   Initialize fields.
+     C*
+     CSR         ZZINIT    BEGSR
+     C*
+     CSR                   MOVE $LCMD     $UCMD
+     CSR                   MOVE $LPRG     $UPRG
+     CSR                   MOVE $LRTN     $URTN
+     CSR                   MOVE $LERM     $UERM
+     CSR                   MOVE $LMSG     $UMSG
+     C*
+     CSR                   MOVE $LCMD     $VCMD
+     CSR                   MOVE $LPRG     $VPRG
+     CSR                   MOVE $LRTN     $VRTN
+     CSR                   MOVE $LERM     $VERM
+     CSR                   MOVE $LMSG     $VMSG
+     C*
+     CSR                   MOVE $LCMD     $GCMD
+     CSR                   MOVE $LPRG     $GPRG
+     CSR                   MOVE $LRTN     $GRTN
+     CSR                   MOVE $LERM     $GERM
+     CSR                   MOVE $LMSG     $GMSG
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**
+Slot

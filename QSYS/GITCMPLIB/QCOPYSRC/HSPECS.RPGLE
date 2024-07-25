@@ -1,0 +1,5 @@
+     Hcopyright('(c) Copyright BFC Software, Inc - 2021')
+     Hoptimize(*NONE)
+     Hdecedit(*JOBRUN)
+     H**truncnbr(*NO)
+     Hoption(*srcstmt : *nodebugio)

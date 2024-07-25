@@ -1,0 +1,421 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2004 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  IT735     Export item quantities - Post
+     F*  05 July 1999
+     F*  Dave Sommerville
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+416 AF*   12/26/01  DAS  4.16
+     F*     - Added fields to export file.
+     F*
+417 AF*   02/13/04  MLB  4.17
+     F*     - Enh: Removed check for expired slots. All pick slots
+     F*       will be exported even if slot is expired.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        CHAIN INDICATOR
+     F*  90        OVERFLOW INDICATOR FOR EXCEPTION REPORT
+     F*  91        OVERFLOW INDICATOR FOR CATCH WEIGHT REPORT
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPIRITEM IF  E           K        DISK
+     FPIRITEM1IF  E           K        DISK
+     F            ITREC                             KRENAMEITREC1
+     FITEMQTY IF  E           K        DISK
+     FITEMLNK IF  E           K        DISK
+     FSLOT3   IF  E           K        DISK
+416 AFITEMDEF IF  E           K        DISK
+416 AFSLOTDEF IF  E           K        DISK
+     FEXPQTY  O   E           K        DISK                      A
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $WHSE   Warehouse
+     C*      $WHDP   Warehouse department or *ALL
+     C*      $SECTN  Section type (F,P,B)
+     C*      $PINCL  Include Contract items (Y,N)
+     C*      $PRFLG  Reduce Base item qty by corresponding Contract
+     C*              item qtys (Y,N)
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS   3
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PSTYP  1
+     C                     PARM           $PINCL  1
+     C                     PARM           $PRFLG  1
+     C                     MOVE $PWHS     $PWHSE  30
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*  Set beginning limits on appropriate file.
+     C*
+     C           $PWHDP    IFEQ '*ALL'
+     C           KEYITW    SETLLPIRITEM
+     C                     ELSE
+     C           KEYITD    SETLLPIRITEM1
+     C                     ENDIF
+     C*
+     C*  Loop through item records.
+     C*
+     C           FOREVR    DOUNEFOREVR
+     C           $PWHDP    IFEQ '*ALL'
+     C           KEYITW    READEPIRITEM                  77
+     C                     ELSE
+     C           KEYITD    READEPIRITEM1                 77
+     C                     ENDIF
+     C*
+     C*    Get out if EOF or Department doesn't match.
+     C*
+     C           *IN77     IFEQ *ON
+     C           $PWHDP    ORNE '*ALL'
+     C           ITWHDP    ANDNE$PWHDP
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*    Accept or Reject based on section type.
+     C*
+     C           $PSTYP    IFEQ 'F'
+     C           ITSTYP    ANDNE'F'
+     C           $PSTYP    OREQ 'P'
+     C           ITSTYP    ANDNE'P'
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*    Accept or Reject based on item type.
+     C*
+     C           ITTYPE    IFEQ 'A'
+     C           ITTYPE    OREQ 'C'
+     C           $PINCL    ANDNE'Y'
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*    Record accepted for Export.
+     C*
+     C                     CLEARQEREC
+     C                     Z-ADDITWHSE    QEWHSE
+     C                     MOVE ITITEM    QEITEM
+     C                     MOVE ITTYPE    QETYPE
+416 AC                     Z-ADDITCUBE    QECUBE
+     C*
+     C*    Get corresponding base item.
+     C*
+     C                     CLEARILITM2
+     C                     CLEARILITM3
+     C           ITTYPE    IFNE ' '
+     C           KEYIL     CHAINITEMLNK              78
+     C           *IN78     IFEQ *ON
+     C                     CLEARILITM2
+     C                     CLEARILITM3
+     C                     ENDIF
+     C                     ENDIF
+     C                     MOVE ILITM2    QEBITM
+     C                     MOVE ILITM3    QECITM
+     C*
+     C*  Get item stock quantity.
+     C*
+     C                     EXSR GETQTY
+     C*
+     C*  Get pick slots for item (max of 3)
+     C*
+     C                     EXSR GETPCK
+     C*
+     C*  Add export record
+     C*
+     C                     Z-ADDTODAY     QEDATE
+     C                     TIME           QETIME
+     C                     WRITEQEREC                  79
+     C*
+     C                     ENDDO
+     C*
+     C                     MOVE *ON       *INLR
+     C                     RETRN
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define key for PIRITEM file.
+     C*
+     CSR         KEYITW    KLIST
+     CSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for PIRITEM1 file.
+     C*
+     CSR         KEYITD    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     C*
+     C*  Define key for ITEMQTY file.
+     C*
+     CSR         KEYIQ     KLIST
+     CSR                   KFLD           ITWHSE
+     CSR                   KFLD           KYITEM
+     C*
+     C*  Define key for ITEMLNK file.
+     C*
+     CSR         KEYIL     KLIST
+     CSR                   KFLD           ITWHSE
+     CSR                   KFLD           ITITEM
+     C*
+     C*  Define partial key for SLOT3 file.
+     C*
+     CSR         *LIKE     DEFN SLITEM    KYITEM
+     CSR         *LIKE     DEFN SLSTAT    KYSTAT
+     CSR         *LIKE     DEFN SLPICK    KYPICK
+     CSR         KEYSL3    KLIST
+     CSR                   KFLD           ITWHSE
+     CSR                   KFLD           KYITEM
+     CSR                   KFLD           KYSTAT
+     CSR                   KFLD           KYPICK
+416 AC*
+416 AC*  Define key for SLOTDEF file.
+416 AC*
+416 ACSR         KEYSD     KLIST
+416 ACSR                   KFLD           SLWHSE
+416 ACSR                   KFLD           SLSDEF
+416 AC*
+416 AC*  Define key for ITEMDEF file.
+416 AC*
+416 ACSR         KEYID     KLIST
+416 ACSR                   KFLD           SLWHSE
+416 ACSR                   KFLD           SLITEM
+416 ACSR                   KFLD           SLSDEF
+     C*
+     C*  Variables and constants.
+     C*
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETPCK  Get pick slots for item (max of 3)
+     C*
+     CSR         GETPCK    BEGSR
+     CSR                   Z-ADD0         SCOUNT  10
+     C*
+     C*  If Contract or SSB item
+     C*   Then use Base item to look for slots
+     C*   Otherwise use record item
+     C*
+     C           ITTYPE    IFEQ 'C'
+     C           ITTYPE    OREQ 'S'
+     C                     MOVE ILITM2    KYITEM
+     C                     ELSE
+     C                     MOVE ITITEM    KYITEM
+     C                     ENDIF
+     C*
+     C*   Loop through picking slots for base item.
+     C*
+     CSR                   MOVE 'A '      KYSTAT
+     CSR                   MOVE 'Y'       KYPICK
+     CSR         KEYSL3    SETLLSLOT3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYSL3    READESLOT3                    77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Ignore slot if past expiration date.
+     C*
+     CSR         SLEXPD    IFNE 0
+     CSR         SLEXPD    ANDLTTODAY
+417 DC*R                   ITER
+     CSR                   ENDIF
+416 AC*
+416 AC*     Get slot definition information.
+416 AC*
+416 AC           KEYSD     CHAINSLOTDEF              77
+416 AC           *IN77     IFEQ *ON
+416 AC                     CLEARSDPAL
+416 AC                     CLEARSDPOS
+416 AC                     ENDIF
+416 AC*
+416 AC*     Get item tie/high information.
+416 AC*
+416 AC           KEYID     CHAINITEMDEF              77
+416 AC           *IN77     IFEQ *ON
+416 AC                     CLEARIDTIE
+416 AC                     CLEARIDHIGH
+416 AC                     ENDIF
+     C*
+     C*     Add to item's slots
+     C*
+     CSR                   ADD  1         SCOUNT
+     CSR                   SELEC
+     CSR         SCOUNT    WHEQ 1
+     CSR                   MOVE SLDISP    QEDSP1
+416 ACSR                   MOVE SLSDEF    QESDF1
+416 ACSR                   Z-ADDIDTIE     QETI1
+416 ACSR                   Z-ADDIDHIGH    QEHI1
+416 ACSR                   Z-ADDSDPOS     QEPOS1
+416 ACSR                   MOVE SDPAL     QEPAL1
+     CSR         SCOUNT    WHEQ 2
+     CSR                   MOVE SLDISP    QEDSP2
+416 ACSR                   MOVE SLSDEF    QESDF2
+416 ACSR                   Z-ADDIDTIE     QETI2
+416 ACSR                   Z-ADDIDHIGH    QEHI2
+416 ACSR                   Z-ADDSDPOS     QEPOS2
+416 ACSR                   MOVE SDPAL     QEPAL2
+     CSR         SCOUNT    WHEQ 3
+     CSR                   MOVE SLDISP    QEDSP3
+416 ACSR                   MOVE SLSDEF    QESDF3
+416 ACSR                   Z-ADDIDTIE     QETI3
+416 ACSR                   Z-ADDIDHIGH    QEHI3
+416 ACSR                   Z-ADDSDPOS     QEPOS3
+416 ACSR                   MOVE SDPAL     QEPAL3
+     CSR                   LEAVE
+     CSR                   ENDSL
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETQTY  Get quantity for item
+     C*
+     CSR         GETQTY    BEGSR
+     C*
+     C*  If SSB item
+     C*   Then get qty for Base item
+     C*   Otherwise use record item and check for existance of SSB item.
+     C*
+     CSR         ITTYPE    IFEQ 'S'
+     CSR                   MOVE ILITM2    KYITEM
+     CSR                   ELSE
+     CSR                   MOVE ITITEM    KYITEM
+     CSR                   CALL 'CHKSSB'
+     CSR                   PARM ITWHSE    $GWHSE  30
+     CSR                   PARM ITITEM    $GITEM 15
+     CSR                   PARM           $GEXST  1
+     CSR                   ENDIF
+     C*
+     C*  Get stock quantity for item.
+     C*
+     CSR         KEYIQ     CHAINITEMQTY              79
+     CSR         *IN79     CABEQ*ON       ENDQTY
+     C*
+     CSR                   SELEC
+     C*
+     C*      Same Slot Breakdown item uses the bkdn 1 & 2
+     C*      of the Base item's quantities.
+     C*
+     CSR         ITTYPE    WHEQ 'S'
+     CSR                   Z-ADDIQSTK2    QESTK1
+     CSR                   Z-ADDIQSTK3    QESTK2
+     C*
+     C*      If an item has a Same Slot Breakdown item
+     C*       then use only the Normal quantity.
+     C*
+     CSR         $GEXST    WHEQ 'Y'
+     CSR                   Z-ADDIQSTK1    QESTK1
+     C*
+     C*      Otherwise take quantities as they are.
+     C*
+     CSR                   OTHER
+     CSR                   Z-ADDIQSTK1    QESTK1
+     CSR                   Z-ADDIQSTK2    QESTK2
+     CSR                   Z-ADDIQSTK3    QESTK3
+     C*
+     CSR                   ENDSL
+     C*
+     C*  Reduce qty by corresponding Contract qty's if that
+     C*    is what the user wants.
+     C*
+     CSR         $PINCL    IFEQ 'Y'
+     CSR         $PRFLG    ANDEQ'Y'
+     C*
+     CSR                   CALL 'GETCON'
+     CSR                   PARM ITWHSE    $GWHSE  30
+     CSR                   PARM ITITEM    $GITEM 15
+     CSR                   PARM           $GCNT   30
+     CSR                   PARM           $GQTY1  50
+     CSR                   PARM           $GQTY2  50
+     CSR                   PARM           $GQTY3  50
+     C*
+     CSR         $GCNT     IFGT 0
+     CSR                   MOVE 'Y'       QERFLG
+     C*
+     CSR         QESTK1    IFGT $GQTY1
+     CSR                   SUB  $GQTY1    QESTK1
+     CSR                   ELSE
+     CSR                   Z-ADD0         QESTK1
+     CSR                   ENDIF
+     C*
+     CSR         QESTK2    IFGT $GQTY2
+     CSR                   SUB  $GQTY2    QESTK2
+     CSR                   ELSE
+     CSR                   Z-ADD0         QESTK2
+     CSR                   ENDIF
+     C*
+     CSR         QESTK3    IFGT $GQTY3
+     CSR                   SUB  $GQTY3    QESTK3
+     CSR                   ELSE
+     CSR                   Z-ADD0         QESTK3
+     CSR                   ENDIF
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDIF
+     C*
+     CSR         ENDQTY    ENDSR

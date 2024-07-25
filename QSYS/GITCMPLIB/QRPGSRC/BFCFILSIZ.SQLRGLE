@@ -1,0 +1,492 @@
+      /copy qcopysrc,hspecs
+     H DFTACTGRP(*NO) ACTGRP('ILE')
+     *----------------------------------------------------------------
+     *
+     *  BFCFILSIZ   Populate file BFCFILSIZ
+     *  03 June 2014
+     *  Dave Sommerville
+     *
+     *  Revisions
+     *
+650  *    06/03/14  DAS  6.50
+     *      - Created.
+     *
+650a *    06/04/14  RTR  6.50a
+     *      - Added feature code and changed date/time to timestamp.
+     *      - Skip file if period in filename.
+     *      - Delete records older than 2 years.
+     *
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     * File Specs
+     *----------------------------------------------------------------
+
+     Fbfcfilsiz uf a e           k disk
+
+     *----------------------------------------------------------------
+     *  Prototype
+     *----------------------------------------------------------------
+
+     D  CrtUsrSpc      PR              *
+     D   CrtSpcName                  20    const
+
+     *----------------------------------------------------------------
+     *  Variables
+     *----------------------------------------------------------------
+
+     d B4acps          s             15  0
+     d B4size          s             15  0
+     d deldate         s               z
+     d FileLib         s             20
+     d fileOverhead    s              5  0
+     D FormatName      S              8
+     D InLib           S             10
+     D LastPF          S             10
+     D ListFormat      S              8
+     D MemberName      S             10
+     D ObjNamLIb       S             20    inz('*ALL      *LIBL    ')
+     D ObjType         S             10
+     d OvrPrc          s              1
+     d pfNameLen       s              3  0
+     d pfRecs          s                   like(bfsrecs)
+     d pfRecsDlt       s                   like(bfsrecsdlt)
+     d pfDtaSize       s                   like(bfsdtasize)
+     d pfObjSize       s                   like(bfsobjsize)
+     d RcvLen          S             10i 0
+     D SpacePtr        S               *
+     d totalDtaSize    s                   like(bfsdtasize)
+     d totalObjSize    s                   like(bfsobjsize)
+     D UserSpace       S             20    inz('BFCFILSIZ QTEMP')
+
+     *----------------------------------------------------------------
+     *  Data Structures
+     *----------------------------------------------------------------
+
+      * General Header Data structure as copied from QUSGEN in
+      * source file QRPGLESRC in library QSYSINC
+
+     DQUSH0300         DS                  Based(GenDsPoint)
+     D*                                             Qus Generic Header 0300
+     D QUSUA00                 1     64
+     D*                                             User Area
+     D QUSSGH00               65     68B 0
+     D*                                             Size Generic Header
+     D QUSSRL00               69     72
+     D*                                             Structure Release Level
+     D QUSFN00                73     80
+     D*                                             Format Name
+     D QUSAU00                81     90
+     D*                                             Api Used
+     D QUSDTC00               91    103
+     D*                                             Date Time Created
+     D QUSIS00               104    104
+     D*                                             Information Status
+     D QUSSUS00              105    108B 0
+     D*                                             Size User Space
+     D QUSOIP00              109    112B 0
+     D*                                             Offset Input Parameter
+     D QUSSIP00              113    116B 0
+     D*                                             Size Input Parameter
+     D QUSOHS00              117    120B 0
+     D*                                             Offset Header Section
+     D QUSSHS00              121    124B 0
+     D*                                             Size Header Section
+     D QUSOLD00              125    128B 0
+     D*                                             Offset List Data
+     D QUSSLD00              129    132B 0
+     D*                                             Size List Data
+     D QUSNBRLE00            133    136B 0
+     D*                                             Number List Entries
+     D QUSSEE00              137    140B 0
+     D*                                             Size Each Entry
+     D QUSSIDLE00            141    144B 0
+     D*                                             CCSID List Ent
+     D QUSCID00              145    146
+     D*                                             Country ID
+     D QUSLID00              147    149
+     D*                                             Language ID
+     D QUSSLI00              150    150
+     D*                                             Subset List Indicator
+     D QUSRSV1               151    192
+     D*                                             Reserved 1
+     D QUSEPN                193    448
+     D*                                             Entry Point Name
+     D QUSRSV2               449    576
+     D*                                             Reserved 2
+
+      * Format OUSL020002 List Objects. Copied from
+      * member QUSLOBJ, source file QRPGLESRC, in library QSYSINC
+
+     DQUSL020002       DS                  Based(ListPoint)
+     D*                                             Qus OBJL0200
+     D QUSOBJNU00              1     10
+     D*                                             Object Name Used
+     D QUSOLNU00              11     20
+     D*                                             Object Lib Name Used
+     D QUSOBJTU00             21     30
+     D*                                             Object Type Used
+     D QUSIS01                31     31
+     D*                                             Information Status
+     D QUSEOA                 32     41
+     D*                                             Extended Obj Attr
+     D QUSTD06                42     91
+     D*                                             Text Description
+     D QUSUDA                 92    101
+     D*                                             User Defined Attr
+     D QUSERVED22            102    108
+     D*                                             Reserved
+
+      * Format OBJL0200 for the Retrieve Member Description API. Copied from
+      * member QUSRMBRD, source file QRPGLESRC, in library QSYSINC
+
+     DQUSM0200         DS                  based(ReceivePtr)
+     D*                                             Qdb Mbrd0200
+     D QUSBRTN03               1      4B 0
+     D*                                             Bytes Returned
+     D QUSBAVL04               5      8B 0
+     D*                                             Bytes Available
+     D QUSDFILN00              9     18
+     D*                                             Db File Name
+     D QUSDFILL00             19     28
+     D*                                             Db File Lib
+     D QUSMN03                29     38
+     D*                                             Member Name
+     D QUSFILA01              39     48
+     D*                                             File Attr
+     D QUSST01                49     58
+     D*                                             Src Type
+     D QUSCD03                59     71
+     D*                                             Crt Date
+     D QUSSCD                 72     84
+     D*                                             Src Change Date
+     D QUSTD04                85    134
+     D*                                             Text Desc
+     D QUSSFIL01             135    135
+     D*                                             Src File
+     D QUSEFIL               136    136
+     D*                                             Ext File
+     D QUSLFIL               137    137
+     D*                                             Log File
+     D QUSOS                 138    138
+     D*                                             Odp Share
+     D QUSERVED12            139    140
+     D*                                             Reserved
+     D QUSNBRCR              141    144B 0
+     D*                                             Num Cur Rec
+     D QUSNBRDR              145    148B 0
+     D*                                             Num Dlt Rec
+     D QUSDSS                149    152B 0
+     D*                                             Dat Spc Size
+     D QUSAPS                153    156B 0
+     D*                                             Acc Pth Size
+     D QUSNBRDM              157    160B 0
+     D*                                             Num Dat Mbr
+     D QUSCD04               161    173
+     D*                                             Change Date
+     D QUSSD                 174    186
+     D*                                             Save Date
+     D QUSRD                 187    199
+     D*                                             Rest Date
+     D QUSED                 200    212
+     D*                                             Exp Date
+     D QUSNDU                213    216B 0
+     D*                                             Nbr Days Used
+     D QUSDLU                217    223
+     D*                                             Date Lst Used
+     D QUSURD                224    230
+     D*                                             Use Reset Date
+     D QUSRSV101             231    232
+     D*                                             Reserved1
+     D QUSDSSM               233    236B 0
+     D*                                             Data Spc Sz Mlt
+     D QUSAPSM               237    240B 0
+     D*                                             Acc Pth Sz Mlt
+     D QUSMTC                241    244B 0
+     D*                                             Member Text Ccsid
+     D QUSOAI                245    248B 0
+     D*                                                        @A1A
+     D QUSLAI                249    252B 0
+     D*                                                        @A1A
+     D QUSRSV203             253    266
+     D*                                                        @A1C
+
+      * Standard Error Code data structure
+     DQUSEC            DS           116
+     D QUSBPRV                 1      4B 0          inz(116)
+     D QUSBAVL                 5      8B 0
+
+     D******************************************************************
+      * Receiver structure to determine correct size for variable
+     D******************************************************************
+     D Receiver1       DS
+     D  BytesRtn1                    10i 0
+     D  BytesAvl1                    10i 0
+
+     *----------------------------------------------------------------
+     *  Parameters
+     *
+     *    Input Parameters
+     *      pLib    Library
+     *
+     *----------------------------------------------------------------
+
+     c     *entry        Plist
+     c                   Parm                    InLib
+
+     *----------------------------------------------------------------
+     * Main line
+     *----------------------------------------------------------------
+
+650aA *  Delete records older than 2 years
+650aA /free
+650aA    deldate = %timestamp() - %years(2);
+650aA    exec sql delete from BFCFILSIZ
+650aA              where BFSADDED < :deldate;
+650aA /end-free
+
+     c                   move      InLIb         ObjNamLib
+
+      *  Create user space for file list information
+
+     C                   Eval      SpacePtr = CrtUsrSpc(UserSpace)
+
+      *  List files to user space
+
+     C                   Call      'QUSLOBJ'
+     C                   Parm                    UserSpace
+     C                   Parm      'OBJL0200'    ListFormat
+     C                   Parm                    ObjNamLib
+     C                   Parm      '*FILE'       ObjType
+     C                   Parm                    QusEc
+
+      *  Load the general data structure
+
+     c                   Eval      GenDsPoint = SpacePtr
+
+      *  If the list API was complete or partially complete
+
+     c                   if        QuSIS00 = 'C' OR
+     c                             QuSIS00 = 'P'
+
+      *  Set some file fields
+
+500lAc                   call      'GETCLIENT'
+500lAc                   parm                    bfsclient
+500lAc                   parm                    bfsclient2
+
+650aAc                   call      'GETOPTIONS'
+650aAc                   parm      '001'         optwhse           3
+650aAc                   parm      '*FEATURE'    optcode           8
+650aAc                   parm      '001'         optPos            3
+650aAc                   parm      '004'         optLen            3
+650aAc                   parm                    optValue        117
+
+650aAc                   eval      bfsfeature = optValue
+650aDc*                  eval      bfsdate = %dec(%date():*ymd)
+650aDc*                  eval      bfstime = %dec(%time():*hms)
+650aAc                   eval      bfsadded = %timestamp()
+     c                   eval      bfslib = InLib
+
+      *  Define file overhead according to
+      *  publib.boulder.ibm.com/infocenter/iseries/v5r3/index.jsp?topic=%2Fdbp%2Frbafoappmax.htm
+      *  Note, this does not take into account multiple members
+
+     c                   eval      fileOverhead = 12288 + 4096
+
+      *  Load the list data structure
+
+     c                   Eval      ListPoint = GenDsPoint + QusOLD00
+
+      *  Loop through list
+
+     C                   Do        QusNbrLE00
+
+      *    Only want to process physical/logical files
+
+     c                   if        QusEOA = 'PF' OR
+     c                             QusEOA = 'LF'
+
+650aA *    Skip if period in filename
+650aA
+650aAc                   if        %scan('.':QusObjNu00) <= 0
+
+      *    If the list entry has no problems, otherwise ignore it
+
+     c                   if        QuSIS01 = ' '
+
+     c                   movel     QusObjNu00    FileLib
+     c                   move      QusOLNu00     FileLib
+
+      *   Get number current records, deleted records and size information
+      *   Note, we are only working with the first member
+
+     c                   exsr      Rtvmbr
+
+      *   If no errors retrieving file information
+
+     c                   if        QusBAvl = 0
+
+     c     QusDss        Mult      QusDSSM       B4Size
+     c     QusAPS        Mult      QusAPSM       B4Acps
+
+     c                   eval      bfsfile = QusObjNu00
+
+      *     See if we should write out total record
+
+     c                   if        lastPF <> ' '
+     c                   if        QusEOA = 'PF'
+     c                             or %subst(bfsfile: 1: pfNameLen) <> lastPF
+     c                   eval      bfsfile = lastPF
+     c                   eval      bfstype = 'T'
+     c                   eval      bfsdtasize = pfDtaSize
+     c                   eval      bfsobjsize = pfObjSize
+     c                   eval      bfsrecs = pfRecs
+     c                   eval      bfsrecsdlt = pfRecsDlt
+     c                   eval      bfsparent = lastPF
+     c                   write     bfsrec
+     c                   eval      lastPF = ''
+     c                   endif
+     c                   endif
+
+     c                   eval      bfsfile = QusObjNu00
+     c                   eval      bfsdtasize = B4Size + B4Acps
+     c                   eval      bfsobjsize = B4Size + B4Acps + fileOverhead
+     c                   eval      bfsrecs = QusNbrCR
+     c                   eval      bfsrecsdlt = QusNbrDR
+
+     c                   select
+
+     c                   when      QusEOA = 'PF'
+     c                   eval      bfstype = 'P'
+     c                   eval      bfsparent = bfsfile
+     c                   eval      lastPF = bfsfile
+     c                   eval      pfNameLen = %len(%trimr(bfsfile))
+     c                   eval      pfRecs = bfsrecs
+     c                   eval      pfRecsDlt = bfsrecsdlt
+     c                   eval      pfObjSize = bfsobjsize
+     c                   eval      pfDtaSize = bfsdtasize
+
+     c                   when      QusEOA = 'LF'
+     c                   eval      bfstype = 'L'
+     c                   eval      bfsparent =''
+     c                   if        lastPF <> ' '
+     c                             and %subst(bfsfile: 1: pfNameLen) = lastPF
+     c                   eval      bfsparent = lastPF
+     c                   eval      pfObjSize += bfsobjsize
+     c                   eval      pfDtaSize += bfsdtasize
+     c                   endif
+
+     c                   endsl
+
+     c                   write     bfsrec
+
+     c                   eval      totalObjSize += bfsobjsize
+     c                   eval      totalDtaSize += bfsdtasize
+
+     c                   endif
+
+     c                   endif
+
+650aAc                   endif
+     c                   endif
+
+     c                   Eval      ListPoint = ListPoint + QusSEE00
+
+     c                   EndDo
+
+     c                   eval      bfstype = 'T'
+     c                   eval      bfsfile = '*TOTAL'
+     c                   eval      bfsparent =''
+     c                   eval      bfsobjsize = totalObjSize
+     c                   eval      bfsdtasize = totalDtaSize
+     c                   eval      bfsrecs = 0
+     c                   eval      bfsrecsdlt = 0
+
+     c                   write     bfsrec
+
+     c                   Endif
+
+     c                   eval      *inlr = *on
+
+     *----------------------------------------------------------------
+     * Rtvmbr  -  Retreive member description
+     *----------------------------------------------------------------
+
+     c     Rtvmbr        begsr
+     c                   call      'QUSRMBRD'
+     c                   parm                    Receiver1
+     c                   parm      8             Rcvlen
+     c                   parm      'MBRD0200'    FormatName
+     c                   parm                    FileLib
+     c                   parm      '*FIRST'      MemberName
+     c                   parm      '0'           Ovrprc
+     c                   parm                    QusEc
+
+      * If no errors retrieveing file information
+     c                   if        QusBAvl = 0
+      * Allocate enough storage for receiver
+     c                   Alloc     BytesAvl1     ReceivePtr
+
+      * Call the api to get the information you want
+     c                   call      'QUSRMBRD'
+     c                   parm                    QusM0200
+     c                   parm      BytesAvl1     Rcvlen
+     c                   parm      'MBRD0200'    FormatName
+     c                   parm                    FileLib
+     c                   parm      '*FIRST'      MemberName
+     c                   parm      '0'           Ovrprc
+     c                   parm                    QusEc
+     c                   endif
+     c                   endsr
+
+     *----------------------------------------------------------------
+     * CrtUsrSpc  -- Create User Space
+     *----------------------------------------------------------------
+
+      *  Procedure to create extendable user space, return pointer to it.
+
+     P  CrtUsrSpc      B                   export
+     d  CrtUsrSpc      PI              *
+     d   CrtSpcName                  20    const
+
+      * Local Variables
+     D PasSpcName      DS            20
+     D  SLib                  11     20
+     D ChgAttrDs       DS            13
+     D  NumberAttr                    9B 0 inz(1)
+     D  KeyAttr                       9B 0 inz(3)
+     D  DataSize                      9B 0 inz(1)
+     D  AttrData                      1    inz('1')
+     D ListPtr         S               *
+     D SpaceAttr       S             10    inz
+     D SpaceAuth       S             10    INZ('*CHANGE')
+     D SpaceLen        S              9B 0 INZ(2048)
+     D SpaceReplc      S             10    INZ('*YES')
+     D SpaceText       S             50
+     D SpaceValue      S              1
+
+      * Create the user space
+     c                   move      CrtSpcName    PasSpcName
+     C                   CALL      'QUSCRTUS'
+     C                   PARM                    PasSpcName
+     C                   PARM                    SpaceAttr
+     C                   PARM                    SpaceLen
+     C                   PARM                    SpaceValue
+     C                   PARM                    SpaceAuth
+     C                   PARM                    SpaceText
+     C                   PARM      '*NO'         SpaceReplc
+     C                   PARM                    QusEc
+      * Get pointer to user space
+     C                   CALL      'QUSPTRUS'
+     C                   PARM                    PasSpcName
+     C                   PARM                    ListPtr
+      * Change user space to be extendable
+     C                   CALL      'QUSCUSAT'
+     C                   PARM                    Slib
+     C                   PARM                    PasSpcName
+     C                   PARM                    ChgAttrDs
+     C                   PARM                    QusEc
+
+     c                   return    ListPtr
+     P  CrtUsrSpc      E

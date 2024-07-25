@@ -1,0 +1,216 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1999 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  UT813     Recalculate item quantity from slots - Total Con Items
+     F*  10 June 1999
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+650aAF*    08/15/13  DAS  6.50
+     F*      - Added check for item being *CLOSE, which will turn on
+     F*        LR and leave.
+     F*
+411 AF*----------------------------------------------------------------
+     F*  Quantity Types Notes
+     F*
+     F*   Standard
+     F*     - The total available quantity of any corresponding
+     F*       Contract item must be allocated from the Standard item.
+     F*
+     F*   Breakdown
+     F*     - The total available quantity of any corresponding
+     F*       Contract item must be allocated from the Breakdown item.
+     F*
+     F*   Contract
+     F*     - No slots contain a Contract item number.
+     F*     - The existing quantity for a Contract item number should
+     F*       not be initialized.  It is assumed to be correct.
+     F*     - The total available quantity of a Contract item must be
+     F*       allocated from its corresponding Base item.
+     F*
+     F*   Same Slot Breakdown (SSB)
+     F*     - An SSB item does not keep track of its own quantities.
+     F*
+     F*   Alias
+     F*     - An Alias item does not keep track of its own quantities.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  21 - 30   Field input error (reverse display)
+     F*  90        View mode (protect all fields)
+     F*  91        Change mode (protect key fields)
+     F*  97        Alawys on (used for SFLEND keyword)
+     F*  98        Error on screen (sound alarm)
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPIRITEM IF  E           K        DISK
+     FITEMQTY IF  E           K        DISK
+     FITEMLNK1IF  E           K        DISK
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHS   Warehouse
+     C*      $PITEM  Item number
+     C*
+     C*    Returned Parameters
+     C*      $PSTK1  Stock qty 1
+     C*      $PSTK2  Stock qty 2
+     C*      $PSTK3  Stock qty 3
+     C*      $PALC1  Allocated qty 1
+     C*      $PALC2  Allocated qty 2
+     C*      $PALC3  Allocated qty 3
+     C*      $PHLD1  Allocated qty 1
+     C*      $PHLD2  Allocated qty 2
+     C*      $PHLD3  Allocated qty 3
+     C*      $PTRI1  Transfer In qty 1
+     C*      $PTRI2  Transfer In qty 2
+     C*      $PTRI3  Transfer In qty 3
+     C*      $PTRO1  Transfer Out qty 1
+     C*      $PTRO2  Transfer Out qty 2
+     C*      $PTRO3  Transfer Out qty 3
+     C*      $PORD1  On Order qty
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PITEM 15
+     C                     PARM           $PSTK1  70
+     C                     PARM           $PSTK2  50
+     C                     PARM           $PSTK3  50
+     C                     PARM           $PALC1  70
+     C                     PARM           $PALC2  50
+     C                     PARM           $PALC3  50
+     C                     PARM           $PHLD1  70
+     C                     PARM           $PHLD2  50
+     C                     PARM           $PHLD3  50
+     C                     PARM           $PTRI1  70
+     C                     PARM           $PTRI2  50
+     C                     PARM           $PTRI3  50
+     C                     PARM           $PTRO1  70
+     C                     PARM           $PTRO2  50
+     C                     PARM           $PTRO3  50
+     C                     PARM           $PORD1  70
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *OFF      ERROR
+     C                     MOVE *BLANKS   $PRTN
+650aAC*
+650aAC* Shut down on *CLOSE
+650aAC*
+650aAC           $PITEM    IFEQ '*CLOSE'
+650aAC                     MOVE *ON       *INLR
+650aAC                     RETRN
+650aAC                     ENDIF
+     C*
+     C* Intialize return quantities.
+     C*
+     C                     Z-ADD0         $PSTK1
+     C                     Z-ADD0         $PSTK2
+     C                     Z-ADD0         $PSTK3
+     C                     Z-ADD0         $PALC1
+     C                     Z-ADD0         $PALC2
+     C                     Z-ADD0         $PALC3
+     C                     Z-ADD0         $PHLD1
+     C                     Z-ADD0         $PHLD2
+     C                     Z-ADD0         $PHLD3
+     C                     Z-ADD0         $PTRI1
+     C                     Z-ADD0         $PTRI2
+     C                     Z-ADD0         $PTRI3
+     C                     Z-ADD0         $PTRO1
+     C                     Z-ADD0         $PTRO2
+     C                     Z-ADD0         $PTRO3
+     C                     Z-ADD0         $PORD1
+     C*
+     C* Calculate totals for all corresponding Contract items.
+     C*
+     C           KEYIL1    SETLLITEMLNK1
+     C           FOREVR    DOUNEFOREVR
+     C           KEYIL1    READEITEMLNK1                 79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C           KEYIT     CHAINPIRITEM              78
+     C           *IN78     IFEQ *ON
+     C           ITTYPE    ORNE 'C'
+     C                     ITER
+     C                     ENDIF
+     C*
+     C           KEYIT     CHAINITEMQTY              78
+     C           *IN78     IFEQ *ON
+     C                     ITER
+     C                     ENDIF
+     C*
+     C                     ADD  IQSTK1    $PSTK1
+     C                     ADD  IQSTK2    $PSTK2
+     C                     ADD  IQSTK3    $PSTK3
+     C                     ADD  IQALC1    $PALC1
+     C                     ADD  IQALC2    $PALC2
+     C                     ADD  IQALC3    $PALC3
+     C                     ADD  IQHLD1    $PHLD1
+     C                     ADD  IQHLD2    $PHLD2
+     C                     ADD  IQHLD3    $PHLD3
+     C                     ADD  IQTRI1    $PTRI1
+     C                     ADD  IQTRI2    $PTRI2
+     C                     ADD  IQTRI3    $PTRI3
+     C                     ADD  IQTRO1    $PTRO1
+     C                     ADD  IQTRO2    $PTRO2
+     C                     ADD  IQTRO3    $PTRO3
+     C                     ADD  IQORD1    $PORD1
+     C*
+     C                     ENDDO
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize variables
+     C*
+     CSR                   MOVE *ON       FOREVR  1
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+     C*   Define keys
+     C*
+     CSR         KEYIL1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           ILWHSE
+     CSR                   KFLD           ILITEM
+     C*
+     CSR                   ENDSR

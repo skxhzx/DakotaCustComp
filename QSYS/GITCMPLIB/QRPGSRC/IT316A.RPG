@@ -1,0 +1,329 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT316A    Inventory adjustment report
+     F*  Hemant Kapadia
+     F*  09 November, 1994
+     F*
+     F*  Revisions
+     F*
+213 AF*    05/20/96  DAS  2.13
+     F*      - Change to process in Item, Date & Slot order.
+214 AF*    07/10/96  RH   2.14
+     F*      - Add *IN95 to print msg if no records were selected.
+410 AF*    12/07/98  RH   4.10
+     F*      - Add parm $CODE to display *ALL or adjustment code.
+415aAF*    06/16/01  RH   4.15a
+     F*      - Add WOLINK to show if item is linked.
+415bAF*    06/14/01  RH   4.15b
+     F*      - Calculate total gain/loss.
+416aAF*    03/06/02  RH   4.16a
+     F*      - Fix - change to use IT317A file.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+416A F*T316A  IP  E           K        DISK
+416A FIT317A  IP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FIT316APRO   E             90     PRINTER
+415a FITEMLNK IF  E           K        DISK
+415a FITEMLNK1IF  E           K        DISK
+     F            ILREC                             KRENAMEILRECA
+     I*****************************************************************
+     IOQREC
+     I                                              IAITEML2
+     I                                              IADATEL1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $FROM  - From date - returned as unpacked numeric
+     C*      $TO    - To date - returned as unpacked numeric
+     C*      $ITEM  - Item # or *all
+     C*      $DISP  - Slot or *all
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $FROM   8
+     C                     PARM           $TO     8
+     C                     PARM           $ITEM  15
+     C                     PARM           $DISP  12
+410 AC                     PARM           $CODE   2
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C           *IN90     IFEQ '1'
+     C           FIRST     OREQ '1'
+214 AC                     MOVE '1'       *IN95
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C*  L2 break - Item change.
+     C*
+     C           *INL2     IFEQ '1'
+     C                     MOVE '1'       *IN92
+     C                     END
+     C*
+     C*  L1 break - Date change.
+     C*
+     C           *INL1     IFEQ '1'
+     C                     MOVE '1'       *IN91
+     C                     END
+     C*
+     C* Detail Calcs
+     C*
+415b C* Increment total gain/loss.
+415b C                     ADD  IAQTY1    TQTY1   50
+415b C                     ADD  IAQTY2    TQTY2   50
+415b C                     ADD  IAQTY3    TQTY3   50
+415b C                     ADD  IAQTY1    TLQTY1  70
+415b C                     ADD  IAQTY2    TLQTY2  70
+415b C                     ADD  IAQTY3    TLQTY3  70
+     C           IATIME    DIV  100       W1TIME  40
+     C*
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE IADATE    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    W1DATE  60
+     C*
+     C*    Format Memo field to print.
+     C*
+     C                     MOVE *BLANKS   W1MEM1 15
+     C                     MOVE *BLANKS   W1MEM2 15
+     C                     MOVELIAMEMO    W1MEM1
+     C                     MOVE IAMEMO    W1MEM2
+     C*
+     C*    Create a quantity string to print.
+     C*
+     C                     MOVE '*QTY2STR'$PCMD
+     C                     Z-ADDIAQTY1    $PQTY1
+     C                     Z-ADDIAQTY2    $PQTY2
+     C                     Z-ADDIAQTY3    $PQTY3
+     C                     MOVE *BLANKS   $PQSTR
+     C*
+     C                     CALL 'CVTQTY'
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PQTY1  70
+     C                     PARM           $PQTY2  70
+     C                     PARM           $PQTY3  70
+     C                     PARM           $PUM1   2
+     C                     PARM           $PUM2   2
+     C                     PARM           $PUM3   2
+     C                     PARM           $PQSTR 10
+     C                     PARM           $PUSTR 17
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*
+     C                     MOVE $PQSTR    W1QTY
+     C                     WRITEDETAIL1
+     C*
+     C           W1MEM2    IFNE *BLANKS
+     C                     WRITEDETAIL2
+     C                     ENDIF
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE '0'       FIRST
+     C                     MOVE '0'       *IN91
+     C                     MOVE '0'       *IN92
+     C*
+415bDC*1                   WRITESKIP1
+     C*
+     C*    Create a quantity string to print.
+415b C*
+415b CL2                   MOVE '*QTY2STR'$PCMD
+415b CL2                   Z-ADDTQTY1     $PQTY1
+415b CL2                   Z-ADDTQTY2     $PQTY2
+415b CL2                   Z-ADDTQTY3     $PQTY3
+415b CL2                   MOVE *BLANKS   $PQSTR
+415b C*
+415b CL2                   CALL 'CVTQTY'
+415b CL2                   PARM           $PCMD   8
+415b CL2                   PARM           $PPRG  10
+415b CL2                   PARM           $PQTY1  70
+415b CL2                   PARM           $PQTY2  70
+415b CL2                   PARM           $PQTY3  70
+415b CL2                   PARM           $PUM1   2
+415b CL2                   PARM           $PUM2   2
+415b CL2                   PARM           $PUM3   2
+415b CL2                   PARM           $PQSTR 10
+415b CL2                   PARM           $PUSTR 17
+415b CL2                   PARM           $PRTN   8
+415b CL2                   PARM           $PERM
+415b C*
+415b CL2                   MOVE $PQSTR    TQTY
+415b CL2                   WRITETOTAL1
+415b CL2                   WRITESKIP1
+415b CL2                   Z-ADD0         TQTY1
+415b CL2                   Z-ADD0         TQTY2
+415b CL2                   Z-ADD0         TQTY3
+     C*
+214 ACLRN95                EXSR ZRFRMT
+214 ACLRN95                EXSR ZRHEAD
+214 ACLRN95                WRITEDETAIL3
+     C*
+     C*    Create a quantity string to print.
+415b C*
+415b CLR                   MOVE '*QTY2STR'$PCMD
+415b CLR                   Z-ADDTLQTY1    $PQTY1
+415b CLR                   Z-ADDTLQTY2    $PQTY2
+415b CLR                   Z-ADDTLQTY3    $PQTY3
+415b CLR                   MOVE *BLANKS   $PQSTR
+415b C*
+415b CLR                   CALL 'CVTQTY'
+415b CLR                   PARM           $PCMD   8
+415b CLR                   PARM           $PPRG  10
+415b CLR                   PARM           $PQTY1  70
+415b CLR                   PARM           $PQTY2  70
+415b CLR                   PARM           $PQTY3  70
+415b CLR                   PARM           $PUM1   2
+415b CLR                   PARM           $PUM2   2
+415b CLR                   PARM           $PUM3   2
+415b CLR                   PARM           $PQSTR 10
+415b CLR                   PARM           $PUSTR 17
+415b CLR                   PARM           $PRTN   8
+415b CLR                   PARM           $PERM
+415b C*
+415b CLR                   MOVE $PQSTR    TLQTY
+415b CLR                   WRITETOTAL2
+     CLR                   WRITEFOOT1
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   TIME           TIME
+     CSR                   MOVE '1'       FIRST   1
+     C*
+     C*   Convert dates to MMDDYY format.
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $FROM     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1FROM  60
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $TO       $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1TO    60
+     C*
+415aAC                     EXSR ZZINZ
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           IAWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*
+     C*   Move item # and slot description.
+     C*
+     C                     MOVE *BLANKS   ITEM
+     C                     MOVE *BLANKS   DISP
+     C                     MOVEL$ITEM     ITEM
+     C                     MOVEL$DISP     DISP
+410 ACSR         $CODE     IFEQ *BLANKS
+410 ACSR                   MOVE '*ALL'    CODE
+410 ACSR                   ELSE
+410 ACSR                   MOVEL$CODE     CODE
+410 ACSR                   ENDIF
+415aACSR         $ITEM     IFNE '*ALL'
+415aACSR         LINKKY    CHAINITEMLNK              79
+415aACSR         *IN79     IFEQ *OFF
+415aACSR                   MOVE 'LINKED'  WOLINK
+415aACSR                   ELSE
+415aACSR         LINKKY    SETLLITEMLNK1
+415a CSR         LINKKY    READEITEMLNK1                 78
+415a CSR         *IN78     IFEQ *OFF
+415aACSR                   MOVE 'LINKED'  WOLINK
+415aACSR                   ENDIF
+415aACSR                   ENDIF
+415aACSR                   ENDIF
+     C                     ENDSR
+     C*****************************************************************
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         *INL1     IFEQ '0'
+     CSR                   MOVE '1'       *IN91
+     CSR                   END
+     C*
+     CSR         *INL2     IFEQ '0'
+     CSR                   MOVE '1'       *IN92
+     CSR                   END
+     C*
+     CSR                   MOVE '0'       *IN90
+     CSR                   WRITEHEAD1
+     CSR                   WRITECOLUMNS
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+415aAC*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+415aACSR         ZZINZ     BEGSR
+415a C*
+415aACSR         LINKKY    KLIST
+415aACSR                   KFLD           IAWHSE
+415aACSR                   KFLD           IAITEM
+     C*
+415aACSR                   ENDSR
+     C*

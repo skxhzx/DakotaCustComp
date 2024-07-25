@@ -1,0 +1,872 @@
+      /COPY *libl/qcopysrc,hspecs
+     *----------------------------------------------------------------
+     *   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     *   BFC Software, Inc.
+     *   245 W Roosevelt Rd.  Bldg 8, Suite 51
+     *   West Chicago, IL 60185
+     *   (630) 562-0375
+     *----------------------------------------------------------------
+     *
+     *  ER430     Piece count by employee
+     *  30 June, 2003
+     *  Hemant Kapadia
+     *
+     *  Revisions
+     *
+     *  06/30/03 HNK 4.17
+     *  - Created
+     *
+     *  07/23/09   GJA     5.30
+     *  - Converted to RPGLE, cleaned up and revamped for suspended
+     *             transactions.
+     *
+     *----------------------------------------------------------------
+     *  Indicator usage
+     *
+     *  21 - 30   Field input error (Reverse Display)
+     *  90        View mode (Protect input fields)
+     *  91        Change mode (Protect key)
+     *  97        Always ON (Used for SFLEND Keyword)
+     *  98        Error on screen (Sound buzzer)
+     *  99        Universal record indicator (Very temporary usage)
+     *
+     *----------------------------------------------------------------
+     *  File Specs
+     *
+     Fer430fm   cf   e             workstn
+     F                                     infds(infds)
+     F                                     sfile(msgrec:msgk)
+     Fpiruser1  if   e           k disk
+     *----------------------------------------------------------------
+     *  Table and array definitions
+     *
+     D a10             s              1    dim(10)
+     D desc            s             60    dim(6) ctdata perrcd(1)
+     *----------------------------------------------------------------
+     *  Called programs
+     *
+     D @cvtdt          c                   const('CVTDTE')
+     *  Constants
+     D digits          c                   const('0123456789 ')
+     D $cvtdt          ds
+     D  $cvcmd                 1      8
+     D  $cvprg                 9     18
+     D  $cvd6i                19     24
+     D  $cvd8i                25     32
+     D  $cvd6o                33     38  0
+     D  $cvd8o                39     46  0
+     D  $cvsto                47     64
+     D  $cvrtn                65     72
+     D  $cverm                73    132
+     D  $cvmsg                73     76
+     D                 ds
+     D  t#date                 1      6  0
+     D  month                  1      2  0
+     D  day                    3      4  0
+     D  year                   5      6  0
+     D                 ds
+     D  t#time                 1      6  0
+     D  hrsmin                 1      4  0
+     D  hrs                    1      2  0
+     D  min                    3      4  0
+     D  sec                    5      6  0
+     *
+     D                 ds
+     D  dshms                  1      6  0
+     D  dshm                   1      4  0
+     D  dshh                   1      2  0
+     D  dsmm                   3      4  0
+     D  dsss                   5      6  0
+     *----------------------------------------------------------------
+     *
+     D                 ds
+     D  dsmdy                  1      6  0
+     D  dsmo                   1      2  0
+     D  dsdd                   3      4  0
+     D  dsyy                   5      6  0
+     *----------------------------------------------------------------
+     *  Program parameters
+     *
+     D $lparm          ds
+     D  $lcmd                  1      8
+     D  $lprg                  9     18
+     D  $luky                 19     68
+     D  $lrtn                 69     76
+     D  $lerm                 77    136
+     D  $lmsg                 77     80
+     *
+     *   Redefine key
+     *
+     D  $ltask                19     24
+     *
+     D  $lwhse                19     21  0
+     *----------------------------------------------------------------
+     *  Data structure for error message parameters
+     *
+     D $mdt            ds
+     D  errmsg                 1     50
+     *
+     D  ertask                 1      6
+     *
+     D  ersdte                 7     14
+     D  ersm                   7      8
+     D  ers1                   9      9
+     D  ersd                  10     11
+     D  ers2                  12     12
+     D  ersy                  13     14
+     *
+     D  erstim                15     22
+     D  ershr                 15     16
+     D  ersc1                 17     17
+     D  ersmi                 18     19
+     D  ersc2                 20     20
+     D  ersss                 21     22
+     *
+     D  eretim                23     30
+     D  erehr                 23     24
+     D  erec1                 25     25
+     D  eremi                 26     27
+     D  erec2                 28     28
+     D  eress                 29     30
+     *
+     D  eredte                31     38
+     D  erem                  31     32
+     D  ere1                  33     33
+     D  ered                  34     35
+     D  ere2                  36     36
+     D  erey                  37     38
+     *
+     *
+     D                 ds
+     D  $ec                    1      2p 0
+     *----------------------------------------------------------------
+     *  Message control
+     *
+     D #msgf           c                   const('PIRMSGF   ')
+     *
+     D                 ds
+     D  #msgdt                 1    128
+     D  $md                    1    128
+     D                                     DIM(128)
+     *----------------------------------------------------------------
+     *  Program info data structure
+     *
+     D                sds
+     D  #prog            *proc
+     D  #job                 244    253
+     D  #user                254    263
+     D  #jobn                264    269
+     D  #jobdt               276    281  0
+     D  #jobtm               282    287  0
+     *----------------------------------------------------------------
+     *  Workstation exception data structure
+     *
+     D infds           ds
+     D  status           *status
+     D  rowin                370    370
+     D  colin                371    371
+     *----------------------------------------------------------------
+     *  Workstation exception redefinition data structure
+     *
+     D                 ds
+     D  row#                   1      2b 0
+     D  row                    2      2
+     D  col#                   3      4b 0
+     D  col                    4      4
+     *----------------------------------------------------------------
+     *  Variables
+     *
+     D $msgf           s             10
+     D $plen           s              3  0
+     D $pstr           s             60
+     D #msgid          s              7
+     D #msgtp          s              7
+     D #pgmq           s             10
+     D cmdtkn          s              1
+     D e               s              2  0
+     D error           s              1
+     D kyemp#          s              5  0
+     D msgk            s              4  0
+     D nxtscr          s              3
+     D sclear          s              1
+     D warn            s              1
+     D work1a          s              1
+     D zzemdy          s              6  0
+     D zzetim          s              6  0
+     D zzsmdy          s              6  0
+     D zzstim          s              6  0
+     *----------------------------------------------------------------
+     *  Parameters
+     *
+     *    Input Parameters
+     *      None
+     *
+     *    Returned Parameters
+     *      $PFMDT  From date (YYYYMMDD)
+     *      $PTODT  To date (YYYYMMDD)
+     *      $PWHSE  Warehouse code
+     *      $PEMP#  Employee number
+     *      $PDETL  Detail report (Y,N)
+     *      $PJOBQ  Put on jobq (Y,N)
+     *      $PRTN   *EXIT    - CMD3 was entered
+     *              *CANCEL  - CMD12 was entered
+     *
+     *----------------------------------------------------------------
+     *  Let the show begin .....
+     *
+     C     *entry        plist
+     C                   parm                    $pfmdt            8
+     C                   parm                    $ptodt            8
+     C                   parm                    $pwhse            3
+     C                   parm                    $pbtim            6
+     C                   parm                    $petim            6
+     C                   parm                    $pemp#            5
+     C                   parm                    $pjobq            1
+     C                   parm                    $prtn             8
+     C                   parm                    $pdev            10
+     C                   parm                    $pform           10
+     *----------------------------------------------------------------
+     *  Main line
+     *
+     C                   eval      *in97 = *on
+     C                   eval      *in90 = *off
+     C                   eval      *in91 = *off
+     C                   eval      error = *off
+     C                   exsr      zzinz2
+     C                   if        error = *on
+     C                   eval      nxtscr = 'EOJ'
+     C                   endif
+     *
+     C                   dow       nxtscr <> 'EOJ'
+     C                   exsr      dspscr
+     C     nxtscr        caseq     '01 '         sc1
+     C                   endcs
+     C                   enddo
+     *
+     *   Do some clean up before leaving.
+     *
+     C                   exsr      zsclr
+     C                   eval      *inlr = *on
+     *----------------------------------------------------------------
+     *  DSPSCR - Display screen
+     *
+     C     dspscr        begsr
+     *
+     *   Set ON alarm indicator if error occured
+     *
+     C                   if        error = *on
+     C                   eval      *in98 = *on
+     C                   endif
+     *
+     *   Overlay screen with error messages
+     *
+     C                   exsr      zmdmsg
+     *
+     *  Overlay screen with screen to be processed.
+     *
+     C                   if        nxtscr = '01 '
+     C                   exfmt     screen1                              50
+     C                   endif
+     *
+     *   Initialize error indicators and fields
+     *
+     C                   setoff                                       010203
+     C                   setoff                                       040506
+     C                   setoff                                       070809
+     C                   setoff                                       101112
+     C                   setoff                                       131415
+     C                   setoff                                       161718
+     C                   setoff                                       1920
+     C                   setoff                                       212223
+     C                   setoff                                       242526
+     C                   setoff                                       272829
+     C                   setoff                                       30
+     C                   setoff                                       98
+     C                   eval      warn = *off
+     C                   eval      error = *off
+     C                   eval      cmdtkn = *off
+     C                   eval      e = 0
+     *
+     *   Initialize error subfile
+     *
+     C                   exsr      zmcmsg
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *     Screen initialization and wrap-up routines
+     *
+     *----------------------------------------------------------------
+     *
+     *  Screen 01 initialization
+     *
+     C     scr01i        begsr
+     C                   eval      nxtscr = '01 '
+     *
+     *  Get existing record.
+     *
+     C                   exsr      zzfil1
+     C     end01i        endsr
+     *----------------------------------------------------------------
+     *
+     *              Screen Processing Routines
+     *
+     *----------------------------------------------------------------
+     *
+     *  SC1  -  Screen 1
+     *
+     C     sc1           begsr
+     *
+     *  Test for F3 - Exit
+     *
+     C                   if        *inkc
+     C                   eval      $prtn = '*EXIT   '
+     C                   eval      nxtscr = 'EOJ'
+     C                   goto      endsc1
+     C                   endif
+     *
+     *  Test for F5 - Refresh
+     *
+     C                   if        *inke
+     C                   exsr      scr01i
+     C                   goto      endsc1
+     C                   endif
+     *
+     *  Test for F12 - Previous
+     *
+     C                   if        *inkl
+     C                   eval      $prtn = '*CANCEL '
+     C                   eval      nxtscr = 'EOJ'
+     C                   goto      endsc1
+     C                   endif
+     *
+     *  Test for other command keys
+     *
+     C                   exsr      zzcmd1
+     C     cmdtkn        cabeq     *on           endsc1
+     *
+     *  Some other key pressed.
+     *
+     *     Check input and write/update record.
+     *
+     C                   exsr      zzchk1
+     C     error         cabeq     *on           endsc1
+     C                   exsr      zznxt1
+     C     endsc1        endsr
+     *----------------------------------------------------------------
+     *
+     *          SUBROUTINES IN ALPHABETICAL ORDER
+     *
+     *----------------------------------------------------------------
+     *
+     *  *INZSR  Initialization subrotine
+     *
+     C     *inzsr        begsr
+     *
+     *  Initialize message handling
+     *
+     C                   exsr      zmimsg
+     *
+     *   Call user added initialization routine.
+     *
+     C                   exsr      zzinz
+     C                   endsr
+     *---------------------------------------------------------------
+     *
+     *  SUBROUTINE ZMxxxx  Control message display subfile
+     *
+     *    ZMCMSG  Clear message record subfile
+     *
+     C     zmcmsg        begsr
+     C                   eval      *in97 = *off
+     C                   write     msgctl
+     C                   eval      msgk = *zeros
+     C                   write     msgclr
+     C                   eval      #msgid = '*CLEAR '
+     C                   eval      #msgtp = '*NULL  '
+     C                   exsr      zmpmsg
+     C                   endsr
+     *
+     *    ZMDMSG  Display message record subfile
+     *
+     C     zmdmsg        begsr
+     C                   eval      *in97 = *on
+     C                   if        msgk > 0
+     C                   write     msgctl
+     C                   eval      msgk = *zeros
+     C                   endif
+     C                   endsr
+     *
+     *    ZMIMSG  Initialization necessary for message subfile
+     *
+     C     zmimsg        begsr
+     C                   eval      #pgmq = #prog
+     C                   exsr      zmcmsg
+     C                   endsr
+     *
+     *    ZMPMSG  Add message record to subfile
+     *
+     C     zmpmsg        begsr
+     C                   if        $msgf = *blanks
+     C                   eval      $msgf = #msgf
+     C                   endif
+     C                   call      'PUTMSG'
+     C                   parm                    $msgf
+     C                   parm                    #msgid
+     C                   parm                    #msgtp
+     C                   parm                    #msgdt
+     C                   parm                    #pgmq
+     C                   parm                    #msgk
+     C                   if        #msgid <> '*CLEAR '
+     C                   add       1             msgk
+     C                   write     msgrec
+     C                   endif
+     C                   eval      #msgdt = *blanks
+     C                   eval      $msgf = *blanks
+     C                   endsr
+     *
+     *    ZMQMSG  Add message record to subfile from program queue
+     *
+     C     zmqmsg        begsr
+     C                   add       1             msgk
+     C                   write     msgrec
+     C                   endsr
+     *
+     *    ZSCLR   Clear screen
+     *
+     C     zsclr         begsr
+     *R                   WRITECLRSCR
+     C                   eval      sclear = *on
+     C                   endsr
+     *----------------------------------------------------------------
+     *    ZMnnnn  Build and send message nnnn to this program
+     *----------------------------------------------------------------
+     *
+     *    PIR9901  From date greater than To date.
+     *
+     C     zm9901        begsr
+     C                   eval      #msgid = 'PIR9901'
+     C                   eval      #msgtp = '*DIAG  '
+     C                   movea     errmsg        $md(1)
+     C                   exsr      zmpmsg
+     C                   endsr
+     *   PIR9905  Cursor not in correct position for lookup.
+     *
+     C     zm9905        begsr
+     C                   eval      #msgid = 'PIR9905'
+     C                   eval      #msgtp = '*DIAG  '
+     C                   eval      $md = *blanks
+     C                   exsr      zmpmsg
+     C                   endsr
+     *----------------------------------------------------------------
+     *      0105
+     *
+     C     zm0105        begsr
+     C                   eval      #msgid = 'PIR0105'
+     C                   eval      #msgtp = '*DIAG  '
+     C                   movea     errmsg        $md(1)
+     C                   exsr      zmpmsg
+     C                   endsr
+     *----------------------------------------------------------------
+     *    PIR1001  Invalid option entered.
+     *
+     C     zm1001        begsr
+     C                   eval      #msgid = 'PIR1001'
+     C                   eval      #msgtp = '*DIAG  '
+     C                   movea     errmsg        $md
+     C                   exsr      zmpmsg
+     C                   endsr
+     *----------------------------------------------------------------
+     *   TE11212  If the dates are same, end time must be > start time
+     C     zm1212        begsr
+     C                   eval      #msgid = 'TE11212'
+     C                   eval      #msgtp = '*DIAG  '
+     C                   movea     errmsg        $md(1)
+     C                   exsr      zmpmsg
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZCHK1   Screen 1 error checking.
+     *
+     C     zzchk1        begsr
+     C                   eval      error = *off
+     *
+     *  Verify From Date.
+     *
+     C                   if        w1fmdt <> 0
+     C                   eval      $cvcmd = '*MDYEDT '
+     C                   move      w1fmdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   if        $cvrtn = '*PGMQ   '
+     C                   eval      error = *on
+     C                   eval      *in21 = *on
+     C                   eval      *in01 = *on
+     C                   eval      #msgk = $cvmsg
+     C                   exsr      zmqmsg
+     C                   else
+     C                   eval      w1fmdt = $cvd6o
+     C                   endif
+     C                   endif
+     *
+     *  Verify To Date.
+     *
+     C                   if        w1todt <> 0
+     C                   eval      $cvcmd = '*MDYEDT '
+     C                   move      w1todt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   if        $cvrtn = '*PGMQ   '
+     C                   eval      error = *on
+     C                   eval      *in22 = *on
+     C                   eval      *in02 = *on
+     C                   eval      #msgk = $cvmsg
+     C                   exsr      zmqmsg
+     C                   else
+     C                   eval      w1todt = $cvd6o
+     C                   endif
+     C                   endif
+     *
+     *  Verify From date <= To date
+     *
+     C                   if        not *in21  and
+     C                             not *in22
+     *
+     C                   if        w1fmdt = 0
+     C                   eval      $pfmdt = *blanks
+     C                   else
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1fmdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        $pfmdt
+     C                   endif
+     *
+     C                   if        w1todt = 0
+     C                   eval      $ptodt = *blanks
+     C                   else
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1todt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        $ptodt
+     C                   endif
+     *
+     C                   if        w1fmdt <> 0  and
+     C                             w1todt <> 0  and
+     C                             $pfmdt > $ptodt
+     C                   eval      error = *on
+     C                   eval      *in22 = *on
+     C                   eval      *in02 = *on
+     C                   eval      errmsg = *blanks
+     C                   exsr      zm9901
+     C                   endif
+     *
+     C                   endif
+     *
+     *  From time cannot be > 2400
+     *
+     C                   if        w1fmtm > 2400
+     C                   eval      error = *on
+     C                   eval      *in23 = *on
+     C                   eval      *in03 = *on
+     C                   eval      errmsg = *blanks
+     C                   movel     desc(1)       errmsg
+     C                   exsr      zm1001
+     C                   endif
+     *
+     *  To time cannot be > 2400
+     *
+     C                   if        w1totm > 2400
+     C                   eval      error = *on
+     C                   eval      *in24 = *on
+     C                   eval      *in04 = *on
+     C                   eval      errmsg = *blanks
+     C                   movel     desc(1)       errmsg
+     C                   exsr      zm1001
+     C                   endif
+     *
+     *  To time cannot be < from time, if the dates entered are same.
+     *
+     C                   if        w1fmdt = w1todt  and
+     C                             w1totm < w1fmtm
+     C                   eval      error = *on
+     C                   eval      *in24 = *on
+     C                   eval      *in04 = *on
+     C                   eval      errmsg = *blanks
+     C                   eval      zzsmdy = w1fmdt
+     C                   eval      zzemdy = w1todt
+     C                   eval      hrsmin = w1fmtm
+     C                   eval      zzstim = t#time
+     C                   eval      hrsmin = w1totm
+     C                   eval      zzetim = t#time
+     C                   exsr      zztidy
+     C                   exsr      zm1212
+     C                   endif
+     *
+     *  Verify warehouse code.
+     *
+     C                   eval      $lcmd = '*VERIFY '
+     C                   eval      $lwhse = w1whse
+     C                   call      'WH900'
+     C                   parm                    $lparm
+     C                   if        $lrtn = '*ERROR  '
+     C                   eval      error = *on
+     C                   eval      *in25 = *on
+     C                   eval      *in05 = *on
+     C                   movel     $lerm         errmsg
+     C                   exsr      zm0105
+     C                   else
+     C                   if        $lrtn = '*PGMQ   '
+     C                   eval      error = *on
+     C                   eval      *in25 = *on
+     C                   eval      *in05 = *on
+     C                   eval      #msgk = $lmsg
+     C                   exsr      zmqmsg
+     C                   endif
+     C                   endif
+     *
+     *  Verify jobq option
+     *
+     C                   if        w1jobq <> 'Y'  and
+     C                             w1jobq <> 'N'
+     C                   eval      error = *on
+     C                   eval      *in26 = *on
+     C                   eval      *in06 = *on
+     C                   eval      errmsg = *blanks
+     C                   movel     desc(1)       errmsg
+     C                   exsr      zm1001
+     C                   endif
+     *
+     *  Verify default device
+     *
+     C                   movel     w1dev         work1a
+     C                   if        work1a = '*'  and
+     C                             w1dev <> '*SYSVAL'  and
+     C                             w1dev <> '*JOB'  or
+     C                             w1dev = *blanks
+     C                   eval      error = *on
+     C                   eval      *in27 = *on
+     C                   eval      *in07 = *on
+     C                   eval      errmsg = *blanks
+     C                   movel     desc(2)       errmsg
+     C                   exsr      zm1001
+     C                   endif
+     *
+     *  Verify default form type
+     *
+     C                   movel     w1form        work1a
+     C                   if        work1a = '*'  and
+     C                             w1form <> '*STD'  or
+     C                             w1form = *blanks
+     C                   eval      error = *on
+     C                   eval      *in28 = *on
+     C                   eval      *in08 = *on
+     C                   eval      errmsg = *blanks
+     C                   movel     desc(3)       errmsg
+     C                   exsr      zm1001
+     C                   endif
+     *
+     *  Verify Employee Number
+     *
+     C                   if        w1emp# <> '*ALL '
+     C     digits        check     w1emp#                                 79
+     C                   if        *in79
+     C                   eval      error = *on
+     C                   eval      *in29 = *on
+     C                   eval      *in09 = *on
+     C                   eval      errmsg = *blanks
+     C                   movel     desc(4)       errmsg
+     C                   exsr      zm1001
+     C                   goto      endck1
+     C                   endif
+     C                   endif
+     *
+     C                   if        w1emp# <> '*ALL '
+     C                   eval      $cstr = *blanks
+     C                   move      w1emp#        $cstr
+     C                   call      'ADJUST'
+     C                   parm      '*RIGHT  '    $ccmd             8
+     C                   parm                    $cstr            30
+     C                   move      $cstr         kyemp#
+     C     kyemp#        chain     piruser1                           79
+     C                   if        *in79
+     C                   eval      error = *on
+     C                   eval      *in29 = *on
+     C                   eval      *in09 = *on
+     C                   eval      errmsg = *blanks
+     C                   movel     desc(4)       errmsg
+     C                   exsr      zm1001
+     C                   endif
+     C                   endif
+     *
+     C     endck1        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZCMD1   User defined command keys for screen 1.
+     *
+     C     zzcmd1        begsr
+     C                   eval      cmdtkn = *off
+     *
+     *  Test for F4 - Lookup
+     *
+     C                   if        *inkd
+     C                   eval      cmdtkn = *on
+     C                   z-add     0             row#
+     C                   eval      row = rowin
+     C                   z-add     0             col#
+     C                   eval      col = colin
+     C                   endif
+     *
+     C     endcm1        endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZFIL1   Fill screen 1 fields with info from file.
+     *
+     C     zzfil1        begsr
+     *
+     C                   eval      w1fmdt = *zeros
+     C                   eval      w1todt = *zeros
+     C                   eval      w1fmtm = *zeros
+     C                   eval      w1totm = *zeros
+     **                   MOVE 'N'       W1DETL
+     C                   eval      w1jobq = 'N'
+     C                   eval      w1emp# = *blanks
+     *   Get Report Title
+     C                   call      'GETRPTE'
+     C                   parm      '*DESC  '     $cmd              8
+     C                   parm      'ER432PR'     $lrpt            10
+     C                   parm      0             $whse             3 0
+     C                   parm      ' '           $styp             1
+     C                   parm      ' '           $whdp             5
+     C                   parm                    $desc            50
+     C                   parm                    $dev             10
+     C                   parm                    $form            10
+     C                   eval      rptttl = $desc
+     *
+     *   Center report title.
+     *
+     C                   movel     rptttl        $pstr
+     C                   eval      $plen = 50
+     C                   call      'CENTER'
+     C                   parm                    $pstr
+     C                   parm                    $plen
+     C                   movel     $pstr         rptttl
+     *   Get Device and Form
+     C                   call      'GETRPTE'
+     C                   parm      '*DEVFORM'    $cmd
+     C                   parm      'ER432PR'     $lrpt
+     C                   parm      0             $whse
+     C                   parm      ' '           $styp
+     C                   parm      ' '           $whdp
+     C                   parm                    $desc
+     C                   parm                    $dev
+     C                   parm                    $form
+     C                   eval      w1dev = $dev
+     C                   eval      w1form = $form
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZINZ    Extra program initialization. Called from *INZSR.
+     *
+     C     zzinz         begsr
+     *
+     C                   eval      sec = 0
+     *
+     C                   eval      $cvprg = #prog
+     C                   eval      $lprg = #prog
+     C                   eval      $lprg = #prog
+     *
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZINZ2   Program initialization. Called from main line.
+     *
+     C     zzinz2        begsr
+     *
+     *   Select first screen to display.
+     *
+     C                   exsr      scr01i
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZNXT1   What to do next when screen 1 input is ok.
+     *
+     C     zznxt1        begsr
+     *
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1fmdt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        $pfmdt
+     *
+     C                   eval      $cvcmd = '*MDYCMD '
+     C                   move      w1todt        $cvd6i
+     C                   call      @cvtdt
+     C                   parm                    $cvtdt
+     C                   move      $cvd8o        $ptodt
+     *
+     C                   eval      hrsmin = w1fmtm
+     C                   move      t#time        $pbtim
+     C                   eval      hrsmin = w1totm
+     C                   move      t#time        $petim
+     *
+     C                   move      w1whse        $pwhse
+     C                   eval      $pemp# = w1emp#
+     **                   MOVE W1DETL    $PDETL
+     C                   eval      $pjobq = w1jobq
+     C                   eval      $pdev = w1dev
+     C                   eval      $pform = w1form
+     C                   eval      $prtn = '*OK     '
+     *
+     C                   eval      nxtscr = 'EOJ'
+     C                   endsr
+     *----------------------------------------------------------------
+     *
+     *  ZZTIDY  Format date and time for error display
+     *
+     C     zztidy        begsr
+     *  Start date
+     C                   eval      dsmdy = zzsmdy
+     C                   eval      ersdte = *blanks
+     C                   move      dsmo          ersm
+     C                   eval      ers1 = '/'
+     C                   move      dsdd          ersd
+     C                   eval      ers2 = '/'
+     C                   move      dsyy          ersy
+     *  End date
+     C                   eval      dsmdy = zzemdy
+     C                   eval      eredte = *blanks
+     C                   move      dsmo          erem
+     C                   eval      ere1 = '/'
+     C                   move      dsdd          ered
+     C                   eval      ere2 = '/'
+     C                   move      dsyy          erey
+     *  Start time
+     C                   eval      dshms = zzstim
+     C                   move      dshh          ershr
+     C                   eval      ersc1 = ':'
+     C                   move      dsmm          ersmi
+     C                   eval      ersc2 = ':'
+     C                   move      dsss          ersss
+     *  End time
+     C                   eval      dshms = zzetim
+     C                   move      dshh          erehr
+     C                   eval      erec1 = ':'
+     C                   move      dsmm          eremi
+     C                   eval      erec2 = ':'
+     C                   move      dsss          eress
+     C                   endsr
+     *
+     *----------------------------------------------------------------*********
+     *
+     *  COMPILE TIME TABLES
+     *
+**
+Job queue option
+Printer device
+Form type
+Employee number
+Detail report
+Time

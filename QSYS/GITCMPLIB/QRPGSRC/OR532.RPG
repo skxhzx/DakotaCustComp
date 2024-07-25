@@ -1,0 +1,447 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR532     Pick orders - Replenishment.
+     F*  27 August 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    11/01/94 DAS
+     F*      - Changed tie/high calculation to take into account
+     F*        a zero tie or high value.
+     F*
+     F*    11/28/94 DAS
+     F*      - Changed to allow replenishment of less than a full
+     F*        pallet to the pick slot.
+     F*      - Added pick slot department to parameters.
+     F*      - Changed label to contain the pick slot tie/high instead
+     F*        of the replenishment slot tie/high.
+     F*
+     F*    02/28/95 DAS  2.09
+     F*      - Changed to allow selection of a replenishment slot
+     F*        that does not have a defined tie/high.
+     F*
+     F*    01/12/96  DAS  2.10
+     F*      - Revised to call ADDSTDTRN to add a record to PIRTRAN.
+     F*
+213 AF*    05/21/96 DAS
+     F*      - Initialized new label fields LBGRP1, LBGRP2, LBRDTE
+     F*        and LBQAVL.
+     F*      - Added new transaction fields to parms (@PGRP1, @PGRP2)
+     F*
+218 AF*    01/24/97 HNK
+     F*      - Added parameter @PCMD with '*CREATE' to call ADDSTDTRN
+     F*        program.
+     F*
+407  F*    11/19/97 DAS  4.07/4.08
+408  F*      - Added return parameters entered date and expiration date.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT3   UF  E           K        DISK
+     FSLOT1   IF  E           K        DISK
+     F            SLREC                             KRENAMESLREC1
+     FITEMDEF2IF  E           K        DISK
+210eDF*IRTRAN O   E           K        DISK
+     FLABEL   O   E           K        DISK                      A
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+210eAI              'ADDSTDTRN'           C         @ADDTR
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse number.
+     C*      $PRTE   Route.
+     C*      $PITEM  Item number.
+     C*      $PUCOD  Normal unit of measure code.
+     C*      $PCUBE  Unit cube of item.
+     C*      $PSWGT  Unit weight of item.
+     C*      $PTRN#  Corresponding transaction number.
+     C*      $PWHDP  Pick slot department.
+     C*      $PAISL  Pick slot aisle.
+     C*      $PLOC   Pick slot location.
+     C*      $PRLVL  Pick slot level.
+     C*      $PHAND  Pick slot handstack.
+     C*      $PDISP  Pick slot display.
+     C*
+     C*    Returned Parameters
+     C*      $PQTY   Replenishment quantity.
+407 AC*      $PENTD  From slot entered date.
+407 AC*      $PEXPD  From slot expiration date.
+     C*      $PRTN   *OK      - Replenishment completed.
+     C*              *ERROR   - Replenishment not done.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PBAT   70
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PRTE   5
+     C                     PARM           $PITEM 15
+     C                     PARM           $PUCOD  2
+     C                     PARM           $PCUBE  73
+     C                     PARM           $PSWGT  72
+     C                     PARM           $PTRN#  70
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PAISL  3
+     C                     PARM           $PLOC   30
+     C                     PARM           $PRLVL  20
+     C                     PARM           $PHAND  2
+     C                     PARM           $PDISP 12
+     C                     PARM           $PQTY   70
+407 AC                     PARM           $PENTD  80
+407 AC                     PARM           $PEXPD  80
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *ON       FOREVR  1
+     C                     MOVE '*ERROR  '$PRTN
+     C*
+     C*  Get picking slot for item.
+     C*
+     C           KEYSL1    CHAINSLOT1                79
+     C           *IN79     CABEQ*ON       OUT
+     C*
+     C*  Ignore slot if no matching tie/high definition.
+     C*
+     C           KEYID2    CHAINITEMDEF2             79
+     C           *IN79     CABEQ*ON       OUT
+     C                     Z-ADDIDTIE     SAVTIE
+     C                     Z-ADDIDHIGH    SAVHGH
+     C*
+     C*  Calculate total quantity that can fit in slot.
+     C*
+     C                     SELEC
+     C           IDTIE     WHEQ 0
+     C                     Z-ADDIDHIGH    DSPQTY  50
+     C           IDHIGH    WHEQ 0
+     C                     Z-ADDIDTIE     DSPQTY
+     C                     OTHER
+     C           IDTIE     MULT IDHIGH    DSPQTY
+     C                     ENDSL
+     C*
+     C           DSPQTY    MULT SDPOS     DSTQTY  70
+     C*
+     C*  Get stock quantity in pick slot.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           SLSTK1
+     C                     PARM           SLSTK2
+     C                     PARM           SLSTK3
+     C*
+     C                     PARM           SLALC1
+     C                     PARM           SLALC2
+     C                     PARM           SLALC3
+     C*
+     C                     PARM           SLTFR1
+     C                     PARM           SLTFR2
+     C                     PARM           SLTFR3
+     C*
+     C                     PARM           SLPCK1
+     C                     PARM           SLPCK2
+     C                     PARM           SLPCK3
+     C*
+     C                     PARM           SLRCV1
+     C                     PARM           SLRCV2
+     C                     PARM           SLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C*  Calculate empty quantity in pick slot.
+     C*
+     C           AVAIL1    IFGE 0
+     C           DSTQTY    SUB  AVAIL1    EMPTYQ  70
+     C                     ELSE
+     C                     Z-ADDDSTQTY    EMPTYQ
+     C                     ENDIF
+     C*
+     C*  Get out if there is no empty space in the pick slot.
+     C*
+     C           EMPTYQ    CABLE0         OUT
+     C*
+     C*  Loop through reserved slots for item.
+     C*
+     C                     MOVE 'A '      KYSTAT
+     C                     MOVE 'N'       KYPICK
+     C           KEYSL3    SETLLSLOT3                79
+     C           *IN79     CABEQ*ON       OUT
+     C           FOREVR    DOUNEFOREVR
+     C           KEYSL3    READESLOT3                  7879
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*     Ignore slot if no normal stock or past expiration date.
+     C*
+     C           SLSTK1    IFLE 0
+     C           SLEXPD    ORNE 0
+     C           SLEXPD    ANDLTTODAY
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*     Get tie/high definition if one is defined.
+     C*
+     C           KEYID2    CHAINITEMDEF2             78
+     C           *IN78     IFEQ *ON
+209 DC*                    ITER
+209 AC                     Z-ADD0         IDTIE
+209 AC                     Z-ADD0         IDHIGH
+     C                     ENDIF
+     C*
+     C*     If nothing available then go to next slot.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           SLSTK1
+     C                     PARM           SLSTK2
+     C                     PARM           SLSTK3
+     C*
+     C                     PARM           SLALC1
+     C                     PARM           SLALC2
+     C                     PARM           SLALC3
+     C*
+     C                     PARM           SLTFR1
+     C                     PARM           SLTFR2
+     C                     PARM           SLTFR3
+     C*
+     C                     PARM           SLPCK1
+     C                     PARM           SLPCK2
+     C                     PARM           SLPCK3
+     C*
+     C                     PARM           SLRCV1
+     C                     PARM           SLRCV2
+     C                     PARM           SLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C           AVAIL1    IFLE 0
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*     Grab one pallet or less.
+     C*
+     C                     SELEC
+     C           IDTIE     WHEQ 0
+     C                     Z-ADDIDHIGH    PALLET  50
+     C           IDHIGH    WHEQ 0
+     C                     Z-ADDIDTIE     PALLET
+     C                     OTHER
+     C           IDTIE     MULT IDHIGH    PALLET
+     C                     ENDSL
+     C           PALLET    IFLE AVAIL1
+209 AC           PALLET    ANDGT0
+     C                     Z-ADDPALLET    TOPICK  50
+     C                     ELSE
+     C                     Z-ADDAVAIL1    TOPICK
+     C                     ENDIF
+     C*
+     C*  Make sure quantity will fit in slot.
+     C*
+     C           TOPICK    IFGT EMPTYQ
+     C                     Z-ADDEMPTYQ    TOPICK
+     C                     ENDIF
+     C*
+     C*  Create transaction record.
+     C*
+     C                     CALL 'PIRTRN#'
+210eMC                     PARM           PTTRN#  70
+210eDC*                    MOVE 'RP'      PTTYPE
+210eDC*          $PCUBE    MULT TOPICK    PTCUBE
+210eDC*          $PSWGT    MULT TOPICK    PTSWGT
+210eDC*                    Z-ADDTOPICK    PTPCS
+210eDC*                    Z-ADDTODAY     PTSDTE
+210eDC*                    TIME           PTSTIM
+210eDC*                    Z-ADD0         PTEDTE
+210eDC*                    Z-ADD0         PTETIM
+210eDC*                    MOVE $PRTE     PTRTE
+210eDC*                    WRITEPTREC
+210eAC*
+210eAC                     MOVE 'REPL  '  @PTASK
+210eAC           $PCUBE    MULT TOPICK    @PCUBE
+210eAC           $PSWGT    MULT TOPICK    @PSWGT
+210eAC                     CALL @ADDTR
+218 AC                     PARM '*CREATE '@PCMD   8
+210eAC                     PARM           #JOB
+210eAC                     PARM PTTRN#    @PTRN#  70
+210eAC                     PARM           @PTASK  6
+210eAC                     PARM SLWHSE    @PWHSE  30
+210eAC                     PARM SLWHDP    @PWHDP  5
+210eAC                     PARM SLSTYP    @PSTYP  1
+210eAC                     PARM           @PCUBE  93
+210eAC                     PARM           @PSWGT  92
+210eAC                     PARM TOPICK    @PPCS   50
+210eAC                     PARM 1         @PAISL  50
+210eAC                     PARM 0         @PQTY1  50
+210eAC                     PARM 0         @PQTY2  50
+210eAC                     PARM 0         @PQTY3  50
+210eAC                     PARM $PRTE     @PRTE   5
+210eAC                     PARM ' '       @PPO    9
+213 AC                     PARM 'L'       @PGRP1  1
+213 AC                     PARM ' '       @PGRP2  1
+210eAC                     PARM ' '       @PRTN   8
+210eAC                     PARM ' '       @PMSG   4
+     C*
+     C*  Create label record.
+     C*
+     C                     CLEARLBREC
+     C                     Z-ADD$PWHSE    LBWHSE
+     C                     MOVE SLWHDP    LBWHDP
+     C                     MOVE SLAISL    LBAISL
+     C                     Z-ADDSLLOC     LBLOC
+     C                     Z-ADDSLRLVL    LBRLVL
+     C                     MOVE SLHAND    LBHAND
+     C                     Z-ADDSLPSEQ    LBPSEQ
+     C                     MOVE SLSTYP    LBSTYP
+     C           LBSTYP    IFEQ 'P'
+     C                     Z-ADD1         LBQRYF
+     C                     ELSE
+     C                     Z-ADD0         LBQRYF
+     C                     ENDIF
+     C                     MOVE SLDISP    LBDISP
+213 AC                     Z-ADDAVAIL1    LBQAVL
+     C                     Z-ADD$PWHSE    LBWHS2
+     C                     MOVE $PWHDP    LBWHD2
+     C                     MOVE $PAISL    LBASL2
+     C                     Z-ADD$PLOC     LBLOC2
+     C                     Z-ADD$PRLVL    LBLVL2
+     C                     MOVE $PHAND    LBHND2
+     C                     MOVE $PDISP    LBDSP2
+     C                     MOVE $PRTE     LBRTE
+     C                     MOVE $PITEM    LBITEM
+     C                     Z-ADD$PBAT     LBPBAT
+     C                     MOVE 'N'       LBUTYP
+     C                     MOVE $PUCOD    LBUCOD
+     C                     Z-ADDTOPICK    LBQALC
+     C                     Z-ADDTOPICK    LBQPCK
+     C                     Z-ADD$PCUBE    LBUCUB
+     C           LBUCUB    MULT TOPICK    LBCUBE
+     C                     Z-ADD$PSWGT    LBUWGT
+     C           LBUWGT    MULT TOPICK    LBSWGT
+     C                     Z-ADDSAVTIE    LBTIE
+     C                     Z-ADDSAVHGH    LBHIGH
+     C                     Z-ADDPTTRN#    LBTRN#
+     C                     Z-ADD$PTRN#    LBCTR#
+     C                     CALL 'PIRLBL#'
+     C                     PARM           LBLBL#
+213 AC                     MOVE 'L'       LBGRP1
+213 AC                     MOVE ' '       LBGRP2
+     C                     MOVE 'R'       LBTYPE
+     C                     MOVE 'P'       LBSTAT
+     C                     Z-ADDTODAY     LBSDTE
+     C                     TIME           LBSTIM
+213 AC                     Z-ADDTODAY     LBRDTE
+     C                     WRITELBREC
+     C*
+     C*     Update slot.
+     C*
+     C                     ADD  TOPICK    SLTFR1
+     C                     UPDATSLREC
+     C*
+     C                     Z-ADDTOPICK    $PQTY
+407 AC                     Z-ADDSLENTD    $PENTD
+407 AC                     Z-ADDSLEXPD    $PEXPD
+     C                     MOVE '*OK     '$PRTN
+     C                     LEAVE
+     C*
+     C                     ENDDO
+     C*
+     C           $PRTN     IFNE '*OK     '
+     C                     UNLCKSLOT3
+     C                     ENDIF
+     C*
+     C           OUT       TAG
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define key for SLOT1 file.
+     C*
+     CSR         KEYSL1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           $PAISL
+     CSR                   KFLD           $PLOC
+     CSR                   KFLD           $PRLVL
+     CSR                   KFLD           $PHAND
+     C*
+     C*  Define partial key for SLOT3 file.
+     C*
+     CSR         *LIKE     DEFN SLSTAT    KYSTAT
+     CSR         *LIKE     DEFN SLPICK    KYPICK
+     CSR         KEYSL3    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     CSR                   KFLD           KYSTAT
+     CSR                   KFLD           KYPICK
+     C*
+     C*  Define key for ITEMDEF2 file.
+     C*
+     CSR         KEYID2    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     CSR                   KFLD           SLSDEF
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR         *LIKE     DEFN IDTIE     SAVTIE
+     CSR         *LIKE     DEFN IDHIGH    SAVHGH
+     CSR                   ENDSR

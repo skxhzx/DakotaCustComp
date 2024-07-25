@@ -1,0 +1,199 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2008 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*----------------------------------------------------------------
+     F*
+     F*  LOADRTE:  Driver Route flagged Items report interface.
+     F*            Load current night exported routes into RTEFLGD
+     F*            file to be used by LOADFLCL3 CLP to print the
+     F*            "Driver Route Flagged/Items" report. This
+     F*            report is part of the paperwork handed out
+     F*            to each driver every night.
+     F*
+     F*  February 22, 2008
+     F*  Jose Duque
+     F*
+     F*  Revisions:
+     F*
+520 AF*    06/16/09  RBD  5.20
+     F*      - Removed hardcoding of start and end times, will use
+     F*        new pgm GETLOARNG instead to retrieve *LOADER options.
+     F*      - Added call to GETWHSE.
+     F*
+     *----------------------------------------------------------------
+     F*
+     F*  File Specs
+     F*
+     FRTEHED1 IF  E           K        DISK
+     F*
+     FRTEFLGD UF  E           K        DISK                      A
+     F*
+     *----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I                                      133 140 $CVDR1
+     I                                      141 1450$CVVL1
+     I                                      146 153 $CVDR2
+     I                                      154 1580$CVVL2
+     I                                      159 166 $CVDR3
+     I                                      167 1710$CVVL3
+     I                                      172 179 $CVDR4
+     I                                      180 1840$CVVL4
+     I*----------------------------------------------------------------
+     I*  Constants
+     I*
+     I              'BREAKERS'            C         BRKRS
+520 AI              'GETLOARNG'           C         GETLOA
+     I              'LOADRDTE'            C         LOADTE
+     I              'LOADFLCL3'           C         RPTCL
+     I*
+     I*----------------------------------------------------------------
+520 AI*  Program info data structure
+520 AI*
+520 AI           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     *----------------------------------------------------------------
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $STOP   1
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*
+     C           RTHKEY    KLIST
+     C                     KFLD           RHWHSE
+     C                     KFLD           RHRTE
+     C*----------------------------------------------------------------
+     C                     MOVE *ZEROS    HLDDT1  8
+     C                     MOVE *ZEROS    HLDDT2  8
+     C                     MOVE 'P'       HLDMIN  1
+     C                     Z-ADD*ZEROS    CNTR    30
+     C*----------------------------------------------------------------
+      *
+      *
+     C* Find if there is anybody already printing
+     C* reports, if true then stop the user trying
+     C* to get on by signaling back to the calling
+     C* program "RH150A" to display a message to
+     C* the second user trying to print reports.
+     C* NOTE: One user at the time only can create
+     C*       reports, this prevents record lockups.
+     C*
+     C           *NAMVAR   DEFN DRVFLG    IUSE    1
+     C           *LOCK     IN   IUSE
+     C           IUSE      IFEQ 'N'
+     C                     MOVE 'Y'       IUSE
+     C                     OUT  IUSE
+     C                     MOVE 'N'       $STOP
+     C                     ELSE
+     C                     OUT  IUSE
+     C                     MOVE 'Y'       $STOP
+     C                     GOTO BYPAS1
+     C                     ENDIF
+      *
+      *
+     C* Get current date MMDDYY.
+     C*
+     C                     MOVE '*CURMDY '$CVCMD
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     MOVEL$CVD6O    HLDDTE  6
+     C                     TIME           HLDTIX  60
+      *
+520 AC*      Get warehouse for user.
+     C*
+520 AC                     CALL 'GETWHSE'
+520 AC                     PARM           #USER
+520 AC                     PARM 0         #WHSE   30
+      *
+520 AC*      Get loader start and end times.
+     C*
+520 AC                     CALL GETLOA
+520 AC                     PARM           #WHSE
+520 AC                     PARM 0         STIME   60
+520 AC                     PARM 0         ETIME   60
+      *
+520 MC           HLDTIX    IFLT STIME
+     C                     MOVE 'M'       HLDMIN
+     C                     ENDIF
+      *
+      * Get FROM and TO dates
+     C                     CALL LOADTE
+     C                     PARM           HLDDTE
+     C                     PARM           HLDDT1
+     C                     PARM           HLDDT2
+     C                     PARM           HLDMIN
+      *
+     C                     MOVE HLDDT1    FRMDTE  80
+     C                     MOVE HLDDT2    TODTE   80
+      *
+      *
+     C                     READ RTEHED1                  LR
+     C           *INLR     DOWNE*ON
+     C           RHEXPD    IFEQ FRMDTE                     Getting
+520 MC           RHEXPT    ANDGESTIME                      current
+     C           RHTYPE    ANDNE'W'                        night
+      *                                                    exported
+     C           RHEXPD    OREQ TODTE                      routes #s
+520 MC           RHEXPT    ANDLEETIME
+     C           RHTYPE    ANDNE'W'
+      *
+     C           RHEXPD    OREQ FRMDTE
+520 MC           RHEXPT    ANDGESTIME
+     C           RHTRUK    ANDEQBRKRS
+      *
+     C           RHEXPD    OREQ TODTE
+520 MC           RHEXPT    ANDLEETIME
+     C           RHTRUK    ANDEQBRKRS
+      *
+     C           RTHKEY    CHAINRTEFLGD              77
+     C           *IN77     IFEQ *ON
+     C                     Z-ADDRHWHSE    RTWHSE
+     C                     MOVE RHRTE     RTRTE
+     C                     MOVE RHRTID    RTRTID
+     C                     Z-ADDRHEXPD    RTEXPD
+     C                     Z-ADDRHEXPT    RTEXPT
+     C                     MOVE 'N'       RTPRNT
+     C                     MOVE 'Y'       RTFLAG
+     C                     WRITERTEFREC
+     C                     ADD  1         CNTR
+     C                     ELSE
+     C                     UNLCKRTEFLGD
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C                     READ RTEHED1                  LR
+     C                     ENDDO
+      *----------------------------------------------------------------
+      *
+      * Print report on selected route numbers.
+      *
+     C           BYPAS1    TAG
+     C           CNTR      IFGT *ZEROS
+     C                     CALL RPTCL                      PrntRouteRpt
+     C                     ENDIF
+      *
+     C           $STOP     IFEQ 'N'
+     C           *LOCK     IN   IUSE                       Control back
+     C                     MOVE 'N'       IUSE             to calling
+     C                     OUT  IUSE                       pgm: RH150A
+     C                     ENDIF
+      *
+     C                     SETON                         LR
+      *
+     *----------------------------------------------------------------

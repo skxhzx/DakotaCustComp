@@ -1,0 +1,392 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  OR660CL   Pallet summary report.                                 */
+/*  26 June, 1997                                                    */
+/*  Hemant Kapadia                                                   */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*  Notes:                                                           */
+/*                                                                   */
+/*    The OPNQRYF statement is used to select the records needed     */
+/*    to print the pallet summary. It is also used to arrange the    */
+/*    records so the PIR records will print with there corresponding */
+/*    fixed pallet. The corresponding fixed pallet number is stored  */
+/*    in field LBCTR# in the PIR records. To get this field to       */
+/*    jump into the LBPAL# field so the records could be sorted      */
+/*    correctly a MAPFLD calculation was done using the special      */
+/*    numeric field LBQRYF which is 0 for fixed items and 1 for      */
+/*    PIR items. The calculation assumes that LBCTR# is 0 for fixed  */
+/*    records.                                                       */
+/*                                                                   */
+/*    09/24/97  DAS  4.06                                            */
+/*      -  Added PSPLID to Qryslt key.                               */
+/*                                                                   */
+/*    09/19/02  HNK/MLB 4.16                                         */
+/*      -  Select type 'O' and 'B' records from PLTSUM file and      */
+/*         ignore label records with tran # = 0                      */
+/*                                                                   */
+/*    09/26/02  HNK 4.16A                                            */
+/*      -  Select LBTYPE<>'M'                                        */
+/*                                                                   */
+/*    08/20/03  DAS 4.17                                             */
+/*      -  Reversed 4.16a change. Now including 'M' records.         */
+/*                                                                   */
+/*    08/21/03  RH  4.17a                                            */
+/*      - FIX: Changed to call OR660 with DEV & FORM                 */
+/*                                                                   */
+/*    03/24/05  HNK 5.00a                                            */
+/*      - FIX: Changed to ignore type 'A' label record.              */
+/*                                                                   */
+/*    10/15/07  RBD  5.10                                            */
+/*      - Enh: Change file used for LABEL info retrieval to LABEL13  */
+/*        from LABEL, to lower CPU utilization.                      */
+/*                                                                   */
+/*    01/08/09  CWM  5.20a                                           */
+/*      - Added code for Report Distribution/Print Over Rides        */
+/*                                                                   */
+/*    04/08/10  MLB  5.30                                            */
+/*      - Fix: Revised program to change prtf used when retrieving   */
+/*        file override when printing summary report.                */
+/*    11/22/10  GJA/JCJ  5.30a                                       */
+/*      - Fix: Substitution items were causing pallet to double      */
+/*                                                                   */
+/*    07/29/14  MLB  6.50                                            */
+/*      - Fix: Revised program to add LBORD to key sort for OR660.   */
+/*                                                                   */
+/*    05/30/13  RBD  6.50a                                           */
+/*      - Enh: Changed key field for stop from label stop to         */
+/*        stop/drop from RTESTP file.                                */
+/*                                                                   */
+/*    04/20/18  KDE  7.20a                                           */
+/*      - Fix: Added Warehouse and Route ID to Open Query join       */
+/*             for RTESTP file.  Also add data area logic to         */
+/*             determine if drag drop 2                              */
+/*                                                                   */
+/*    04/25/18  KDE  7.20b                                           */
+/*      - Fix: Call separate CL to determine whether DD2             */
+/*                                                                   */
+/*    05/08/18  KDE  7.20c                                           */
+/*      - Fix: Change to sort by Pallet number instead of Unload     */
+/*        sequence for DragDrop2                                     */
+/*                                                                   */
+/*    09/14/18  DAS  7.20d                                           */
+/*      - Revised to call GETTBTYPE instead of OR660DD2CL            */
+/*                                                                   */
+/*    09/17/18  LMC  7.20e                                           */
+/*      - Removed the opnqryf based on pstype = 'P'. Original        */
+/*        opnqryf should work for standard or enhanced.              */
+/*                                                                   */
+/*    01/18/19  RBD  7.30a                                           */
+/*      - Fix: Sometime after the 650a mod the join of fields pstrn# */
+/*        and lbtrn# got overlaid or deleted causing erroneous       */
+/*        qty totals. This fix pulls it back from a 710 version.     */
+/*                                                                   */
+/*    04/12/19  RBD  7.30b                                           */
+/*      - Fix: Added rtestp order to joined fields. Without it if    */
+/*        there were multiple orders on the same stop it included    */
+/*        the rtestp recs multiple times causing incorrect qty,      */
+/*        weight, etc.                                               */
+/*                                                                   */
+/*    01/26/22  MLB  7.50                                            */
+/*      - Enh: Added call to GETCLIENT.                              */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Cheney                                  */
+/*                                                                   */
+/*    11/03/03  RH  CBIa                                             */
+/*      - Enh: Change to sort by display before item.                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Jakes Finer Foods                       */
+/*                                                                   */
+/*    01/26/22  MLB  JFF                                             */
+/*      - Enh: Revised pgm to add sort field, &SRTUNLD for PSUNLD    */
+/*        to sort in descending sequence.                            */
+/*      - Revised all-client section for OPNQRYF to add sort field.  */
+/*        All other clients will default to sort in Ascending seq.   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+ /*520 D */
+ /* OR660CL:    PGM        PARM(&CMD &RTYPE &WHSEA &RTID &RETURN &DEV +
+                          &FORM)   */
+ /* 520 A */
+ OR660CL:    PGM        PARM(&CMD &RTYPE &WHSEA &RTID &RETURN &POVR)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client ID's.    */                                           /* (CBIaA) */
+
+             DCL        VAR(&CHENEY) TYPE(*CHAR) LEN(10) +
+                          VALUE('CHENEYBROS') /* CBIa  */
+             DCL        VAR(&CHENEYOCL) TYPE(*CHAR) LEN(8) +
+                          VALUE('OCALA') /* CBIa  */
+             DCL        VAR(&CHENEYRIV) TYPE(*CHAR) LEN(8) +
+                          VALUE('RIVIERA') /* CBIa  */
+             DCL        VAR(&JAKES) TYPE(*CHAR) LEN(10) +
+                          VALUE('JAKESFOODS')                     /* (JFF A) */
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR660CL)
+
+
+  /* Report program and printer file name. */
+
+             DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) VALUE(PLTSUM)
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) VALUE(OR660PR)
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Pallet Summary/Detail Report')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing pallet summary/detail report')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&BATCH)      TYPE(*DEC)  LEN(7 0)
+             DCL        VAR(&BATCHA)     TYPE(*CHAR) LEN(7)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&Q)          TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTID)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTIDSAV)    TYPE(*CHAR) LEN(5)  /*520 */
+             DCL        VAR(&RTYPE)      TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&SRTUNLD)    TYPE(*CHAR) LEN(8)       /* (JFF A) */
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&UNQKEY)     TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHDP)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&WHSEA)      TYPE(*CHAR) LEN(3)
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+
+/* 720a */   DCL        VAR(&PSTYPE) TYPE(*CHAR) LEN(1) VALUE('O')
+/* 720d */   DCL        VAR(&TBTYPE) TYPE(*CHAR) LEN(1)
+
+/* 520 */    DCL        VAR(&PARMS)      TYPE(*CHAR) LEN(80)      /* 520 */
+/* 520 */    DCL        VAR(&PRTCTR)     TYPE(*DEC)  LEN(15 5) VALUE(1)
+/* 520 */    DCL        VAR(&CMD2)       TYPE(*CHAR) LEN(1024)
+/* 520 */    DCL        VAR(&LEN)    TYPE(*DEC)  LEN(15 5) VALUE(1024)
+/* 520 */    DCL        VAR(&POVR)   TYPE(*CHAR) LEN(1)
+/* 520 */    DCL        VAR(&ONETIM) TYPE(*CHAR) LEN(1)
+/* CBIa */   DCL        VAR(&client)     TYPE(*CHAR) LEN(10)
+/* CBIa */   DCL        VAR(&clientloc)  TYPE(*CHAR) LEN(10)
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (750 A) */
+
+/* 720dD     CALL       PGM(OR660DD2CL) PARM(&PSTYPE)  */
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+             CHGVAR     VAR(&RTIDSAV) VALUE(&RTID)
+             CHGVAR     VAR(&WHSE) VALUE(&WHSEA)
+
+/* 720dA */  CALL       PGM(GETTBTYPE) PARM(&WHSE &RTID &TBTYPE)
+/* 720dA */  IF (&TBTYPE = 'E') THEN(DO)
+/* 720dA */    CHGVAR     VAR(&PSTYPE) VALUE('P')
+/* 720dA */  ENDDO
+
+/*  Setup One Time Run Time Print Override  */
+
+             IF (&POVR = 'Y') THEN(DO)
+             CHGVAR VAR(%SUBSTRING(&PARMS 1 8)) VALUE('*ADD    ')
+             CHGVAR VAR(%SUBSTRING(&PARMS 9 10)) VALUE(&SBMPGM)
+              IF         COND(&RTYPE = '*SUMMARY') THEN(DO)       /* (530 A) */
+                 CHGVAR  VAR(%SUBSTRING(&PARMS 19 10)) VALUE('OR660PRS  ') +
+                                                                  /* (530 A) */
+              enddo                                               /* (530 A) */
+              ELSE       CMD(DO)                                  /* (530 A) */
+             CHGVAR VAR(%SUBSTRING(&PARMS 19 10)) VALUE('OR660PR   ')
+             enddo                                                /* (530 A) */
+             CHGVAR VAR(%SUBSTRING(&PARMS 29 3)) VALUE('000')
+             CHGVAR VAR(%SUBSTRING(&PARMS 32 3)) VALUE(&WHSEA)
+             CHGVAR VAR(%SUBSTRING(&PARMS 35 45)) VALUE(' ')
+             CHGVAR VAR(%SUBSTRING(&PARMS 68 1)) VALUE('Y')
+             CALL       PGM(RP152) PARM(&PARMS)
+ /*520AA*/   CHGVAR VAR(&RETURN)  VALUE(%SST(&PARMS 69 8))
+ /*520AA*/   IF         COND(&RETURN *EQ '*CANCEL ') THEN(DO)
+ /*520AA*/   GOTO       CMDLBL(GETOUT)
+ /*520AA*/   ENDDO
+             ENDDO
+             IF         COND(&RTYPE = '*SUMMARY') THEN(DO)        /* (530 A) */
+               CHGVAR     VAR(&PRTF) VALUE('OR660PRS  ')          /* (530 A) */
+             enddo                                                /* (530 A) */
+
+/*520AA*/    DOUNTIL    COND(&PRTCTR *EQ 0)
+/*520AA*/    CALL       PGM(RPT120) PARM(&PRTF &PRTCTR &CMD2 &ONETIM)
+             IF         COND(&RTYPE = '*SUMMARY') THEN(DO)        /* (530 A) */
+/*             Change prtf to OR660PR from OR660PRS.                 (530 A) */
+               CHGVAR     VAR(%SUBSTRING(&CMD2 21 1)) VALUE(' ')  /* (530 A) */
+              enddo                                               /* (530 A) */
+/*520AA*/    IF         COND(&PRTCTR *NE 0) THEN(DO)
+
+   /* Create selection criteria string. */
+
+
+             CHGVAR     VAR(&WHSEA) VALUE(&WHSE)
+             CHGVAR     VAR(&RTID) VALUE(&RTIDSAV)
+   /* Select warehouse  */
+             CHGVAR     VAR(&QRYSLT) VALUE('PSWHSE *EQ ' *CAT &WHSEA)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select route ID   */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSRTID +
+                          *EQ ' *CAT &Q *CAT &RTID *CAT &Q)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select type  4.16 Change */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '(PSTYPE +
+                          *EQ ' *CAT &Q *CAT &PSTYPE *CAT &Q)         /*720aM*/
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*OR')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSTYPE +
+                          *EQ ' *CAT &Q *CAT 'B' *CAT &Q)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT ')')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select generation  */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSGEN=1')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select label type  */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTYPE +
+                          *NE ' *CAT &Q *CAT 'R' *CAT &Q)
+
+  /* 5.00a Change */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTYPE +
+                          *NE ' *CAT &Q *CAT 'A' *CAT &Q)
+
+  /* 4.16 Change */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTRN# +
+                          *NE ' *CAT '0')
+
+  /*                      *NE ' *CAT &Q *CAT '0' *CAT &Q)         */
+
+  /* 4.16A Change */  /* 4.17 Delete */
+        /*   CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')    */
+        /*   CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTYPE +  */
+        /*                *NE ' *CAT &Q *CAT 'M' *CAT &Q)           */
+
+   /* Use OPNQRYF to select and order the records we need */
+
+             OVRDBF     FILE(OR660) TOFILE(&FILE) SHARE(*YES)
+
+             IF         COND(&CLIENT = &JAKES) THEN(DO)           /* (JFF A) */
+               CHGVAR     VAR(&SRTUNLD) VALUE('*DESCEND')         /* (JFF A) */
+             ENDDO                                                /* (JFF A) */
+             ELSE       CMD(DO)                                   /* (JFF A) */
+               CHGVAR     VAR(&SRTUNLD) VALUE('*ASCEND ')         /* (JFF A) */
+             ENDDO                                                /* (JFF A) */
+                                                                  /* (JFF A) */
+             IF         COND(&CLIENT = &CHENEY *AND &CLIENTLOC = +
+                          &CHENEYRIV) THEN(DO)                     /* CBIaA */
+             OPNQRYF    FILE((&FILE) (LABEL13) (ORDH) (PIRITEM)) +
+                        FORMAT(OR660) QRYSLT(&QRYSLT) +
+                        KEYFLD((&FILE/PSWHSE) (&FILE/PSRTID) +
+                          (&FILE/PSCOMP) (&FILE/PSUNLD) +
+                          (&FILE/PSPLID) +
+                          (LABEL13/LBSTOP) (LABEL13/LBDISP) (LABEL13/LBSEQ) +
+                          (LABEL13/LBITEM) (LABEL13/LBUCOD)) +
+                        JFLD((&FILE/PSWHSE LABEL13/LBWHSE) +
+                          (&FILE/PSRTID LABEL13/LBRTE) (&FILE/PSPLID +
+                          LABEL13/LBPAL#) (LABEL13/LBWHSE ORDH/OHWHSE) +
+                          (LABEL13/LBORD ORDH/OHORD) (LABEL13/LBWHSE +
+                          PIRITEM/ITWHSE) (LABEL13/LBITEM +
+                          PIRITEM/ITITEM)) JDFTVAL(*YES) +
+                        OPTIMIZE(*FIRSTIO)
+             ENDDO                                                /* (CBIaA) */
+             ELSE       CMD(DO)                                   /* (CBIaA) */
+/* 720eD     IF (&PSTYPE = 'O') THEN(DO)    */            /* 720c  A*/
+             OPNQRYF    FILE((&FILE) (LABEL13) (ORDH) (PIRITEM) (RTESTP)) +
+                          FORMAT(OR660) QRYSLT(&QRYSLT) +
+                          KEYFLD((&FILE/PSWHSE) (&FILE/PSRTID) +
+                          (&FILE/PSCOMP) (&FILE/PSUNLD &SRTUNLD) +
+                          (&FILE/PSPLID) (RTESTP/RTSSD) +
+                          (LABEL13/LBSEQ) (LABEL13/LBITEM) +
+                          (LABEL13/LBORD) +
+                          (LABEL13/LBUCOD))  +
+                          JFLD((&FILE/PSWHSE LABEL13/LBWHSE) +
+                          (&FILE/PSRTID  LABEL13/LBRTE) +
+                          (&FILE/PSPLID  LABEL13/LBPAL#) +
+                          (LABEL13/LBWHSE  ORDH/OHWHSE) +
+                          (LABEL13/LBORD  ORDH/OHORD) +
+                          (LABEL13/LBWHSE PIRITEM/ITWHSE) +
+                          (LABEL13/LBITEM PIRITEM/ITITEM)  +
+ /*730aA*/                (&FILE/PSTRN# LABEL13/LBTRN#)    +
+ /*720aA*/                (LABEL13/LBWHSE RTESTP/RTSWHS)  +
+ /*720aA*/                (LABEL13/LBRTE RTESTP/RTSRID)  +
+ /*730bA*/                (LABEL13/LBORD RTESTP/RTSORD)  +
+                          (LABEL13/LBSTOP RTESTP/RTSSTP)) +
+                          JDFTVAL(*YES) OPTIMIZE(*FIRSTIO)        /* (JFF M) */
+/*720eD      ENDDO            */                               /*720c  A  */
+
+
+               ENDDO                                           /* (CBIaA) */
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+ /*520AA*/   CHGVAR     VAR(&PRTCTR) VALUE(&PRTCTR + 1)
+ /*520AA*/   CALL       PGM(QCMDEXC) PARM(&CMD2 &LEN)
+        /*   CPYFRMQRYF FROMOPNID(OR660) TOFILE(PIR900FKE/OR660QRY) CRTFILE(*YES)   */
+ /*520AA*/   CALL       PGM(OR660) PARM(&CMD &RTYPE)
+ /*520AA*/   IF         COND(&ONETIM *EQ 'Y') THEN(DO)
+ /*520AA*/   CHGVAR     VAR(&PRTCTR) VALUE(0)
+ /*520AA*/   ENDDO
+ /*520AA*/   CLOF       OPNID(&FILE)
+ /*520AA*/   DLTOVR     FILE(&PRTF)
+ /*520AA*/   MONMSG     MSGID(CPF9841)
+ /*520AA*/   ENDDO
+ /*520AA*/   ENDDO
+
+/* 520D      CALL       PGM(OR660) PARM(&CMD &RTYPE &DEV &FORM)   4.17    */
+
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+   /* Clean up before leaving */
+
+    /*       DLTOVR     FILE(*PRTF)   */
+    /*       MONMSG     MSGID(CPF9841)*/
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

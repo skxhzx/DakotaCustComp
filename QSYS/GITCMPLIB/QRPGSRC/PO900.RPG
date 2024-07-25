@@ -1,0 +1,2296 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2004 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  PO900    PO Add Individual P/O's to Super P/O - Prompt
+     F*  26 October 2001
+     F*  Max Blacknik
+     F*
+     F*  SK110 - 1.01
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+416 AF*    10/26/01  MLB  4.16
+     F*      - Created.
+     F*
+417 AF*    02/01/04  MLB  4.17
+     F*      - Enh: Added support to program to allow new option:
+     F*        Allow single po to be attached to multiple Super P/O's.
+     F*        Added new file OPTIONS.
+417aAF*    06/29/04  MLB  4.17a
+     F*      - Fix: Revised program to check status of Super P/O before
+     F*        allowing individual p/o's to be added.
+530aAF*    12/02/10  RH   5.30a
+     F*      - Enh: Added custom client support code.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Y.Hata
+YHTbAF*   12/02/10  RH   YHTb  P#01024
+     F*     - Revised program to update individual PO with super PO
+     F*       container code, address line 2 pos 31 for length of 6.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Coastal Sunbelt Produce
+CSP AF*   12/16/10  MLB  CSP  P#01028
+     F*     - Revised program to update individual PO with super PO
+     F*       load number, address line 2 pos 35 for length of 6.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  20        POSITION CURSOR
+     F*  21 - 29   FIELD INPUT ERROR (REVERSE DISPLAY)
+     F*  79        CHAIN INDICATOR
+     F*  90        PROTECT INPUT FIELDS FOR DELETE DISPLAY
+     F*  97        ALWAYS ON (USED FOR SFLEND KEYWORD)
+     F*  98        ERROR ON SCREEN (SOUND BUZZER)
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPO900FM CF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        RECNO KSFILE DSPSFL
+     F                                        MSGK  KSFILE MSGREC
+417 AFOPTIONS IF  E           K        DISK
+YHTbMFPOHDR   UF  E           K        DISK
+YHTbDF*POHDR   IF  E           K        DISK
+     F            PHREC                             KRENAMERECORD
+     FPOSPO   UF  E           K        DISK                      A
+     FPOSPO1  IF  E           K        DISK
+     F            PUREC                             KRENAMEPUREC1
+     FWORKOPT UF  E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A2          1  1
+     E                    A10        10  1
+     E                    A75        75  1
+     E                    FKEY       10 50
+     E                    UKEY       10 50
+     E                    $MD       128  1
+     E                    OPTLST     24  1
+     E                    CMDLST     24  2
+     E                    $PODSC      3 63
+     E                    ZOPT   20  20  1
+     E                    OPTLN   1   2 75
+     E                    CMDLN   1   1 79
+     I*----------------------------------------------------------------
+     I*  Partial key redefinition
+     I*
+     I$PRTKY      DS
+     I                                        1  50 $LEN50
+     I                                        1   30$KWHSE
+     I                                        4  100$KSPO
+     I*----------------------------------------------------------------
+     I*  Data structure for FKEY and UKEY
+     I*
+     I            DS
+     I                                        1  50 DSFKEY
+     I                                        1  50 DSUKEY
+     I I            0                         1   30PHWHSE
+     I                                        4  12 PHPO
+     I                                       13  21 SPO
+417 AI*----------------------------------------------------------------
+417 AI*  *RCVLBL  -  Receiving options
+417 AI*----------------------------------------------------------------
+417 AI*
+417 AI* Fields
+417 AI*
+417 AI*    OPLPGM  -  Receiving label program.
+417 AI*    OPUPCT  -  Ideal slot usage percentage.
+417 AI*    OPPDEF  -  PIR minimum number of slots priority.
+417 AI*    OPPBLD  -  PIR same build code priority.
+417 AI*    OPPACT  -  PIR same activity zone priority.
+417 AI*    OPFDEF  -  Fixed minimum number or slots priority.
+417 AI*    OPFASL  -  Fixed same aisle priority.
+417 AI*    OPFSID  -  Fixed same side priority.
+417 AI*    OPFLVL  -  Fixed highest level priority.
+417 AI*    OPPASL  -  PIR same aisle priority.
+417 AI*    OPPFRC  -  Force PIR same aisle priority.
+417 AI*    OPPLCN  -  Use generic license plates.
+417 AI*    OPPCHM  -  Check chimney (Y,N)
+417 AI*    OPPMIX  -  Allow mixed expiration dates in fixed home slot(Y,N)
+417 AI*    OPAPCK  -  Assign pick slots automatically for fixed items(Y,N)
+417 AI*    OPFRCM  -  Force marking of all P.O. detail lines (Y,N)
+417 AI*    OPEXCK  -  Expiration date check (1,2,3)
+417 AI*                What to do when exp date being rcvd comes
+417 AI*                earlier than existing overflow exp date ...
+417 AI*                  1 = Don't allow it.
+417 AI*                  2 = Warn user & log when overriden
+417 AI*                  3 = Let it go through.
+417 AI*    OPCWEN  -  Allow catch weight entry (1,2,3)
+417 AI*                  1 = Every receipt
+417 AI*                  2 = First receipt only
+417 AI*                  3 = Never
+417 AI*    OPCWTP  -  Catch weight value entered (1,2,3)
+417 AI*                  1 = User choice
+417 AI*                  2 = Average
+417 AI*                  3 = Total
+417 AI*    OPCWFR  -  Force catch weight entry (Y,N)
+417 AI*    OPIPCK  -  Ignore existing pick slots (Y,N)
+417 AI*    OPRUPC  -  Prompt user for Retail UPC during receiving? (Y,N)
+417 AI*    OPRUPS  -  Allow user to skip Retail UPC scan? (Y,N)
+417 AI*    OPRUPF  -  Require Retail UPC on file before receipt? (Y,N)
+417 AI*    OPMSPO  -  Allow single po attached to multiple Super P/Os? (Y/N)
+417 AI*
+417 AI* Data structure
+417 AI*
+417 AIOPDTA1      DS
+417 AI                                        1  10 OPLPGM
+417 AI                                       11  130OPUPCT
+417 AI                                       14  140OPPDEF
+417 AI                                       15  150OPPBLD
+417 AI                                       16  160OPPACT
+417 AI                                       17  170OPFDEF
+417 AI                                       18  180OPFASL
+417 AI                                       19  190OPFSID
+417 AI                                       20  200OPFLVL
+417 AI                                       21  210OPPASL
+417 AI                                       22  22 OPPFRC
+417 AI                                       23  23 OPPLCN
+417 AI                                       24  24 OPPCHM
+417 AI                                       25  25 OPPMIX
+417 AI                                       26  26 OPAPCK
+417 AI                                       27  27 OPFRCM
+417 AI                                       28  28 OPEXCK
+417 AI                                       29  29 OPCWEN
+417 AI                                       30  30 OPCWTP
+417 AI                                       31  31 OPCWFR
+417 AI                                       32  32 OPIPCK
+417 AI                                       33  33 OPRUPC
+417 AI                                       34  34 OPRUPS
+417 AI                                       35  35 OPRUPF
+417 AI                                       36  36 OPMSPO
+417 AI                                      117 117 OPTEND
+530aAI*----------------------------------------------------------------
+530aAI*  Customer id
+530aAI*
+530aAI              'GETCLIENT'           C         @GETCL
+530aAI*
+YHTbA /COPY QCOPYSRC,IL#YHATA
+CSP A /COPY QCOPYSRC,IL#COASTAL
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  30 $LPO
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I              '*NONE'               C         @CHGPG
+     I              '*NONE'               C         @DELPG
+     I              '*NONE'               C         @PRTPG
+     I*----------------------------------------------------------------
+     I* Status message(s)
+     I              'Open'                C         STS00
+     I              'Partial receipt'     C         STS01
+     I              'Received in full'    C         STS02
+     I              'Ready for export'    C         STS03
+     I*----------------------------------------------------------------
+     I* Error message(s)
+     I              '** P/O not found'    C         ERR01
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$POSTN      DS
+     I                                        1   8 $POCMD
+     I                                        9  18 $POPRG
+     I                                       19  68 $POFKY
+     I                                       69 118 $POUKY
+     I                                      119 307 $PODSC
+     I                                      308 322 $POPT1
+     I                                      323 335 $POPT2
+     I                                      336 343 $PORTN
+     I                                      344 403 $POERM
+     I                                      336 339 $POMSG
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  30 $PPO
+     I                                       31  39 $PSPO
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERRCL1
+     I                                       11  16 ERRCL2
+417aAI                                       11  20 ERRCL3
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *ADD     - Add individual p/o's to Super P/O.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains unique key for delete.
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*              *OK      - Record deleted successfully.
+     C*                         Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*              *CANCEL  - CMD12 was entered
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *ON       *IN97
+     C                     EXSR ZZINZ2
+     C*
+     C           NXTSCR    DOWNE'EOJ'
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+     C           NXTSCR    CASEQ'02 '     SC2
+     C                     ENDCS
+     C                     ENDDO
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     EXSR ZSCLR
+     C                     EXSR CLRSCH
+     C*
+     C           $PRTN     IFEQ '*EXIT   '
+     C           $PRTN     OREQ '*CANCEL '
+     C                     SETON                     LR
+     C                     ENDIF
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ *ON
+     CSR                   MOVE *ON       *IN98
+     CSR                   ENDIF
+     C*
+     C*   Set OFF command key indicators
+     C*
+     CSR                   SETOF                     KCKEKF
+     CSR                   SETOF                     KL
+     C*
+     C*   Overlay screen with title
+     C*
+     CSR                   WRITETITLE
+     C*
+     C*   Overlay screen with error messages
+     C*
+     CSR                   EXSR ZMDMSG
+     C*
+     C*   Overlay screen with subfile screen
+     C*
+     CSR                   SELEC
+     CSR         NXTSCR    WHEQ '01 '
+     CSR                   EXSR SFLDSP
+     CSR                   READ POSTNREC                 50
+     C*
+     CSR         NXTSCR    WHEQ '02 '
+     CSR                   EXSR DELDSP
+     C*
+     CSR                   ENDSL
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     2021
+     CSR                   SETOF                     03
+     CSR                   SETOF                     98
+     CSR                   MOVE *OFF      WARN    1
+     CSR                   MOVE *OFF      ERROR   1
+     CSR                   MOVE *OFF      CANCEL  1
+     CSR                   Z-ADD0         E       20
+     C*
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+     CSR                   READ DSPSFC                   50
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     Screen initialization and wrap-up routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 01 initialization
+     C*
+     CSR         SCR01I    BEGSR
+     CSR                   MOVE '01 '     NXTSCR  3
+     CSR                   MOVE *LOVAL    FKEY
+     CSR                   MOVE *LOVAL    UKEY
+     CSR                   WRITECLR0306
+     CSR                   MOVE '*REFRESH'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 02 initialization
+     C*
+     CSR         SCR02I    BEGSR
+     CSR                   MOVE '02 '     NXTSCR
+     CSR                   MOVE *ON       *IN90
+     CSR                   MOVE *LOVAL    $WKOF
+     CSR                   MOVE *LOVAL    $WKOU
+     CSR                   WRITECLR0306
+     CSR                   WRITEDELREC
+     CSR                   MOVE '*REFRESH'PAGCMD
+     CSR                   EXSR PAG02
+     CSR                   WRITECMDDEL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 02 wrap-up
+     C*
+     CSR         SCR02E    BEGSR
+     CSR                   MOVE '01 '     NXTSCR
+     CSR                   MOVE *OFF      *IN90
+     CSR                   WRITECLR0306
+     C*
+     C*   If Select was not canceled (no errors)
+     C*     then reposition to record just before first selected rec.
+     C*
+     CSR         CANCEL    IFEQ *OFF
+     CSR                   MOVE '*POSTN2 '$POCMD
+     CSR                   MOVE FRSTKY    $POFKY
+     CSR                   EXSR FGTWAY
+     CSR                   MOVE '*GETPREV'$POCMD
+     CSR                   EXSR FGTWAY
+     CSR         $PORTN    IFEQ '*NOMORE '
+     CSR                   MOVE '*TOP    '$POCMD
+     CSR                   ELSE
+     C*
+     C*   Otherwise, position to last record read.
+     C*
+     CSR                   MOVE '*POSTN2 '$POCMD
+     CSR                   END
+     CSR                   EXSR FGTWAY
+     CSR                   MOVE '*REPOS  'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   EXSR OPTNS
+     CSR                   ELSE
+     CSR                   MOVE '*POSTN2U'$POCMD
+     CSR                   MOVE $PUKY     $POUKY
+     CSR                   EXSR FGTWAY
+     CSR                   MOVE '*REPOS  'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen 1
+     C*
+     CSR         SC1       BEGSR
+     CSR         STATUS    CASEQROLLUP    ROLL01
+     CSR         STATUS    CASEQROLLDN    ROLL01
+     CSR         STATUS    CASEQCOMAND    CMD01
+     CSR                   CAS            ENT01
+     CSR                   END
+     CSR         ENDSC1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SC2  -  Screen 2
+     C*
+     CSR         SC2       BEGSR
+     CSR         STATUS    CASEQROLLUP    ROLL02
+     CSR         STATUS    CASEQROLLDN    ROLL02
+     CSR         STATUS    CASEQCOMAND    CMD02
+     CSR                   CAS            ENT02
+     CSR                   END
+     CSR         ENDSC2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+530aAC*
+530aAC* Get client id.
+530aAC*
+530aAC                     CALL @GETCL
+530aAC                     PARM           CLIENT 10
+530aAC                     PARM           CLILOC 10
+530aAC*
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01122     ROLLUP  50
+     C                     Z-ADD01123     ROLLDN  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*  Initialize subfile (DSPSFL) record
+     C*
+     C                     Z-ADD1         RECNO
+     C                     WRITEDSPSFL                 79
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CLRSCH   Clear everything out of work file
+     C*
+     CSR         CLRSCH    BEGSR
+     CSR         WKOPRT    SETLLWORKOPT
+     CSR         WKOPRT    READEWORKOPT                7979
+     CSR         *IN79     DOWEQ*OFF
+     CSR                   DELETWKOREC
+     CSR         WKOPRT    READEWORKOPT                7979
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CMD01    Screen 1 command key routine
+     C*
+     CSR         CMD01     BEGSR
+     C*
+     C*  TEST FOR CMD3 - EXIT
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  TEST FOR CMD12 - PREVIOUS
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  EXECUTE COMMAND KEYS THAT DON'T NEED THE OPTIONS VERIFIED
+     C*
+     C*     TEST FOR CMD5 - REFRESH
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR                   EXSR CLRSCH
+     CSR         1         DO   10        X
+     CSR         X         CHAINDSPSFL               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE '  '      OPTION
+     CSR                   UPDATDSPSFL
+     CSR                   END
+     CSR                   END
+     CSR                   MOVE '*REFRESH'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  VERIFY AND SAVE ANY OPTIONS THAT WERE ENTERED
+     C*
+     CSR                   EXSR SAVOPT
+     CSR         ERROR     CABEQ*ON       CMD01E
+     C*
+     C*  EXECUTE COMMAND KEYS THAT DID NEED THE OPTIONS VERIFIED
+     C*
+     C*  TEST FOR CMD6 - ADD RECORD
+     C*
+     CSR         *INKF     IFEQ *ON
+     CSR                   EXSR INZPAR
+     CSR                   MOVE '*ADD    '$PCMD
+     CSR                   CALL @CHGPG
+     CSR                   PARM           $PARMS
+     CSR         $PRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVEL$PERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $PRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE $PMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ELSE
+     CSR         $PRTN     IFNE '*CANCEL '
+     CSR         $PRTN     ANDNE'*EXIT   '
+     CSR                   MOVE '*POSTN2U'$POCMD
+     CSR                   MOVE $PUKY     $POUKY
+     CSR                   EXSR FGTWAY
+     CSR                   MOVE '*REPOS  'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   MOVE '*REFRESH'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  TEST FOR CMD10 - MOVE RECORD THAT CUSOR IS ON TO TOP
+     C*
+     CSR         *INKJ     IFEQ *ON
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     C*
+     C*     MAKE SURE CURSOR IS ON ONE OF THE DISPLAYED RECORDS
+     C*
+     CSR                   SUB  10        ROW#
+     CSR         ROW#      IFLT 1
+     CSR         ROW#      ORGT DSPLYD
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   EXSR ZM0106
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*     REPOSITION RECORD THAT CURSOR IS ON TO THE TOP
+     C*
+     CSR                   MOVE '*POSTN2U'$POCMD
+     CSR                   MOVE UKEY,ROW# $POUKY
+     CSR                   EXSR FGTWAY
+     C*R         CLERR     CABEQ*ON       CMD01E
+     CSR                   MOVE '*REPOS  'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  TEST FOR CMD17 - REPOSITION TO TOP OF DISPLAY
+     C*
+     CSR         *INKR     IFEQ *ON
+     CSR                   MOVE '*TOP    'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  TEST FOR CMD18 - REPOSITION TO BOTTOM OF DISPLAY
+     C*
+     CSR         *INKS     IFEQ *ON
+     CSR                   MOVE '*BOTTOM 'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*   Process non-standard function keys.
+     C*
+     CSR                   EXSR ZZCMD
+     CSR         CMD01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CMD02    Screen 2 command key routine
+     C*
+     CSR         CMD02     BEGSR
+     C*
+     C*  TEST FOR CMD12 - PREVIOUS
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR                   MOVE *ON       CANCEL
+     CSR                   EXSR SCR02E
+     CSR                   GOTO CMD02E
+     CSR                   END
+     CSR         CMD02E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  DELADD   Add record to subfile for delete display
+     C*
+     CSR         DELADD    BEGSR
+     CSR         RECNO     IFLT 11
+     CSR                   ADD  1         RECNO
+     CSR                   Z-ADDRECNO     Y
+     C*
+     C*  GET RECORD INFO
+     C*
+     CSR                   MOVE '*GET    '$POCMD
+     CSR                   MOVE WKOKYU    $POUKY
+     CSR                   EXSR FGTWAY
+     C*R         CLERR     CABEQ*ON       DELADE
+     C*
+     C*  SAVE KEY TO RECORD OF FIRST SCREEN LINE
+     C*
+     CSR         RECNO     IFEQ 1
+     CSR                   MOVE WKOKYF    $WKOF
+     CSR                   MOVE WKOKYU    $WKOU
+     CSR                   END
+     C*
+     C*  WRITE DISPLAY LINE TO SUBFILE
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   MOVE WKOOPT    OPTION
+     CSR                   WRITEDSPSFL
+     CSR                   END
+     CSR         DELADE    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  DELDSP   Display subfile of records marked for deletion
+     C*
+     CSR         DELDSP    BEGSR
+     C*
+     C*  WRITE 'BOTTOM/MORE...' FIELD TO DISPLAY
+     C*
+     CSR                   WRITEMORREC
+     C*
+     C*  WRITE SUBFILE TO DISPLAY
+     C*
+     CSR                   MOVE *ON       *IN01
+     CSR                   Z-ADD1         RECNO
+     CSR                   WRITEDSPSFC
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ENT01    Screen 1 enter key routine
+     C*
+     CSR         ENT01     BEGSR
+     C*
+     C*  VERIFY AND SAVE OPTIONS
+     C*
+     CSR                   EXSR SAVOPT
+     CSR         ERROR     CABEQ*ON       ENT01E
+     C*
+     C*  SEE IF USER IS TRYING TO POSITION TO A CERTAIN SPOT
+     C*
+     CSR                   MOVE *OFF      REPOS   1
+     CSR                   EXSR ZZPOS
+     CSR         ERROR     CABEQ*ON       ENT01E
+     CSR         REPOS     IFEQ *ON
+     CSR                   MOVE DSFKEY    $POFKY
+     CSR                   MOVE '*POSTN2 '$POCMD
+     CSR                   EXSR FGTWAY
+     CSR                   MOVE '*REPOS  'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO ENT01E
+     CSR                   ENDIF
+     C*
+     C*  IF NOT POSITIONING THEN EXECUTE THE ENTERED OPTIONS
+     C*
+     CSR                   EXSR OPTNS
+     C*
+     C*  IF OPTION WAS NOT TAKEN THEN RETURN LIKE CMD12 WAS ENTERED
+     C*
+     C*R         OTAKEN    IFEQ *OFF
+     C*R                   MOVE 'EOJ'     NXTSCR
+     C*R                   GOTO ENT01E
+     C*R                   END
+     CSR         ENT01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ENT02    Screen 2 enter key routine
+     C*
+     CSR         ENT02     BEGSR
+     C*
+     C*  Save first Select key.
+     C*
+     CSR         *LIKE     DEFN $PUKY     FRSTKY
+     CSR                   MOVE $PUKY     FRSTKY
+     C*
+     C*  Add the records that have been selected
+     C*
+     CSR         WKOPRT    SETLLWORKOPT
+     CSR                   MOVE *OFF      STOP
+     CSR         STOP      DOUEQ*ON
+     CSR         WKOPRT    READEWORKOPT                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       STOP
+     CSR                   ELSE
+     C*
+     CSR         WKOOPT    IFEQ ' 1'
+     C*
+     C*  Add selected records to Super P/O.
+     C*
+     CSR                   MOVE WKOKYU    DSUKEY
+417aAC*
+417aAC*    Verify Super P/O exists and get status.
+417aAC*
+417aACSR                   MOVE '*VERIFY '$LCMD
+417aACSR                   Z-ADDPHWHSE    $LWHSE
+417aACSR                   MOVE SPO       $LPO
+417aACSR                   CALL 'PO901'
+417aACSR                   PARM           $LPARM
+417aACSR                   MOVEL$LERM     POSTS
+417aAC*
+417aAC*    Super P/O not found or wrong status. Stop user
+417aAC*    from adding to this Super P/O.
+417aACSR                   SELEC
+417aACSR         $LRTN     WHEQ '*ERROR  '
+417aACSR         $LRTN     OREQ '*PGMQ   '
+417aACSR         $LRTN     OREQ '*OK     '
+417aACSR         POSTS     ANDGE'3'
+417aACSR                   MOVE *ON       ERROR
+417aACSR                   MOVE *ON       CANCEL
+417aACSR                   MOVE *ON       *IN21
+417aACSR                   MOVE *ON       WKOERR
+417aACSR                   UPDATWKOREC
+417aAC*
+417aACSR                   MOVELSPO       ERRCL1    P
+417aACSR                   MOVELPHPO      ERRCL3
+417aACSR                   EXSR ZM3247
+417aAC*
+417aAC*    All ok. Add individual p/o to Super P/O.
+417aACSR         $LRTN     WHEQ '*OK     '
+417aACSR         POSTS     ANDLT'3'
+417aAC*
+     CSR         KEYPU     CHAINPOSPO                77
+     CSR                   SELEC
+     CSR         *IN77     WHEQ *ON
+     CSR                   Z-ADD$PWHSE    PUWHSE
+     CSR                   MOVE $PSPO     PUSPO
+     CSR                   MOVE PHPO      PUPO
+     CSR                   WRITEPUREC                  78
+YHTbAC*
+YHTbAC*    All ok. Update individual p/o with Super P/O container code.
+CSP AC                     SELEC
+CSP DC*          CLIENT    IFEQ 'YHATA  '
+CSP MC           CLIENT    WHEQ YHATA
+YHTbAC*    Get container code from super P/O
+YHTbACSR                   MOVE $PSPO     KYPO
+YHTbACSR                   MOVE *BLANKS   WKCONT
+YHTbACSR         KEYPO     CHAINPOHDR               N75
+YHTbACSR                   SELEC
+YHTbACSR         *IN75     WHEQ *OFF
+YHTbACSR                   MOVE PHVAD2    WKWRK9  9
+YHTbACSR                   MOVELWKWRK9    WKCONT  6
+YHTbACSR                   ENDSL
+YHTbAC*
+YHTbAC*  Re-set key for selected P/O.
+YHTbACSR                   MOVE WKOKYU    DSUKEY
+YHTbAC*  If container exitst, update individual PO.
+YHTbAC           WKCONT    IFNE ' '
+YHTbACSR                   MOVE PUPO      KYPO
+YHTbAC*
+YHTbACSR         KEYPO     CHAINPOHDR                75
+YHTbACSR                   SELEC
+YHTbACSR         *IN75     WHEQ *OFF
+YHTbACSR                   MOVE PHVAD2    WKWRK9
+YHTbACSR                   MOVELWKCONT    WKWRK9
+YHTbACSR                   MOVE WKWRK9    PHVAD2
+YHTbACSR                   UPDATRECORD
+YHTbACSR                   ENDSL
+YHTbAC                     ENDIF
+YHTbAC*
+CSP AC           CLIENT    WHEQ COASTL
+CSP AC*    Get Load Number from Super P/O
+CSP AC                     MOVE $PSPO     KYPO
+CSP AC                     MOVE *BLANKS   WKLODN
+CSP AC           KEYPO     CHAINPOHDR               N75
+CSP AC                     SELEC
+CSP AC           *IN75     WHEQ *OFF
+CSP AC                     MOVE PHVAD2    WKLODN  6
+CSP AC                     ENDSL
+CSP AC*
+CSP AC*  Re-set key for selected P/O.
+CSP AC                     MOVE WKOKYU    DSUKEY
+CSP AC*  If Load Number exists, update individual PO.
+CSP AC           WKLODN    IFGT ' '
+CSP AC                     MOVE PUPO      KYPO
+CSP AC*
+CSP AC           KEYPO     CHAINPOHDR                75
+CSP AC                     SELEC
+CSP AC           *IN75     WHEQ *OFF
+CSP AC                     MOVE WKLODN    PHVAD2
+CSP AC                     UPDATRECORD
+CSP AC                     ENDSL
+CSP AC                     ENDIF
+CSP AC*
+CSP DC*                    ENDIF
+CSP MC                     ENDSL
+     C*
+     CSR                   DELETWKOREC
+     C*
+     CSR         *IN77     WHEQ *OFF
+     CSR                   UNLCKPOSPO
+     C*
+     CSR                   ENDSL
+417aAC*
+417aACSR                   ENDSL
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR                   EXSR SCR02E
+     CSR         ENT02E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FGTWAY   Gateway to file handling routines
+     C*
+     C*    Input Parameters
+     C*      $POCMD   *INIT    - Initialize and return
+     C*               *GET     - Get record for $POUKY value
+     C*               *GETNEXT - Get next record
+     C*               *GETPREV - Get previous record
+     C*               *WRITPOS - Write position record to display
+     C*               *READPOS - Read position record
+     C*               *POSTN2  - Position to $POFKY
+     C*               *POSTN2U - Position to $POUKY
+     C*               *TOP     - Position to top of file
+     C*               *BOTTOM  - Position to bottom of file
+     C*      $POFKY   Key for positioning within file
+     C*      $POUKY   Unique key used for change/delete operations
+     C*
+     C*    Returned Parameters
+     C*      $PORTN   *NOMORE  - Beginning/End of file was reached
+     C*               *NOTFND  - Record not found on a GET
+     C*               *FOUND   - Record found
+     C*               *REPOS   - Repositioning took place
+     C*               *ERROR   - Error occured
+     C*      $POERM   Error message
+     C*
+     CSR         FGTWAY    BEGSR
+     CSR                   MOVE *BLANKS   $PORTN
+     CSR         $POCMD    CASEQ'*GET    'FGET
+     CSR         $POCMD    CASEQ'*GETNEXT'FGETN
+     CSR         $POCMD    CASEQ'*GETPREV'FGETP
+     CSR         $POCMD    CASEQ'*POSTN2 'FPOS2
+     CSR         $POCMD    CASEQ'*POSTN2U'FPOS2U
+     CSR         $POCMD    CASEQ'*TOP'    ZZPOS2
+     CSR         $POCMD    CASEQ'*BOTTOM' ZZPOS2
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FGET     Get record using file with unique key
+     C*
+     C*              In this case the lookup file and the unique key
+     C*              file are the same.
+     C*
+     CSR         FGET      BEGSR
+     CSR                   MOVE $POUKY    DSUKEY
+     CSR                   EXSR ZZFGET
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*NOTFND '$PORTN
+     CSR                   MOVE *BLANKS   $POUKY
+     CSR                   MOVE *BLANKS   $POFKY
+     CSR                   ELSE
+     CSR                   MOVE '*FOUND  '$PORTN
+     CSR                   EXSR ZZKEYF
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FGETN    Get next record
+     C*
+     CSR         FGETN     BEGSR
+     CSR                   EXSR ZZFGTN
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*NOMORE '$PORTN
+     CSR                   MOVE *BLANKS   $POUKY
+     CSR                   MOVE *BLANKS   $POFKY
+     CSR                   ELSE
+     CSR                   MOVE '*FOUND  '$PORTN
+     CSR                   EXSR ZZKEYF
+     CSR                   EXSR ZZKEYU
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FGETP    Get previous record
+     C*
+     CSR         FGETP     BEGSR
+     CSR                   EXSR ZZFGTP
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*NOMORE '$PORTN
+     CSR                   MOVE *BLANKS   $POUKY
+     CSR                   MOVE *BLANKS   $POFKY
+     CSR                   ELSE
+     CSR                   MOVE '*FOUND  '$PORTN
+     CSR                   EXSR ZZKEYF
+     CSR                   EXSR ZZKEYU
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FPOS2    Position to record
+     C*
+     CSR         FPOS2     BEGSR
+     CSR                   MOVE $POFKY    DSFKEY
+     CSR         FILEKY    SETLLRECORD
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FPOS2U   Position to record using unique key
+     C*
+     CSR         FPOS2U    BEGSR
+     C*
+     C*  GET RECORD FOR UNIQUE KEY
+     C*
+     CSR                   EXSR FGET
+     C*
+     C*  POSITION TO RECORD IN LOOKUP FILE
+     C*
+     CSR                   EXSR FPOS2
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  INZPAR   Initialize parameters for calling add/chg/del program
+     C*
+     CSR         INZPAR    BEGSR
+     CSR                   CLEAR$PARMS
+     CSR                   MOVE #PROG     $PPRG
+     CSR                   MOVE $PRTKY    $PUKY
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  OPTNS    Perform options that user entered
+     C*
+     CSR         OPTNS     BEGSR
+     CSR                   MOVE *OFF      OTAKEN  1
+     C*
+     C*     DO ALL Selects First (OPTION 1)
+     C*
+     CSR         WKOPRT    SETLLWORKOPT
+     CSR                   MOVE *OFF      STOP
+     CSR         WKOPRT    READEWORKOPT                  79
+     CSR         *IN79     DOWEQ*OFF
+     CSR         WKOOPT    ANDNE' 1'
+     CSR         WKOPRT    READEWORKOPT                  79
+     CSR                   END
+     CSR         *IN79     IFEQ *OFF
+     CSR         WKOOPT    ANDEQ' 1'
+     CSR                   MOVE *ON       OTAKEN
+     CSR                   MOVE WKOKYU    $PUKY
+     CSR                   EXSR SCR02I
+     CSR                   GOTO OPTNSE
+     CSR                   END
+     C*
+     C*  THEN DO THE OTHER OPTIONS IN THE ORDER THEY WERE ENTERED
+     C*     STOP WHEN NO MORE OPTIONS OR USER ENTERS CMD12
+     C*
+     CSR         WKOPRT    SETLLWORKOPT
+     CSR                   MOVE *OFF      CANCEL  1
+     CSR                   MOVE *OFF      STOP    1
+     CSR         STOP      DOUEQ*ON
+     CSR         CANCEL    OREQ *ON
+     CSR         WKOPRT    READEWORKOPT                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       STOP
+     CSR                   ELSE
+     CSR         WKOOPT    IFNE '  '
+     CSR                   MOVE *ON       OTAKEN
+     CSR                   EXSR OPTNS2
+     CSR         WKOUNQ    CHAINWORKOPT              78
+     CSR                   MOVE *ON       REFRSH
+     CSR         ERROR     IFEQ *OFF
+     CSR                   DELETWKOREC
+     CSR                   END
+     CSR         CANCEL    IFEQ *ON
+     CSR                   MOVE *ON       STOP
+     CSR         ERROR     IFEQ *ON
+     CSR                   MOVE *ON       WKOERR
+     CSR                   UPDATWKOREC
+     CSR                   END
+     CSR                   MOVE '*POSTN2U'$POCMD
+     CSR                   MOVE $PUKY     $POUKY
+     CSR                   EXSR FGTWAY
+     CSR                   MOVE '*REPOS  'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   MOVE *OFF      REFRSH
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR         REFRSH    IFEQ *ON
+     CSR                   MOVE '*REFRESH'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   MOVE *OFF      REFRSH  1
+     CSR                   END
+     CSR         OPTNSE    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  OPTNS2   Execute individual options
+     C*
+     CSR         OPTNS2    BEGSR
+     CSR                   EXSR INZPAR
+     CSR                   MOVE WKOKYU    $PUKY
+     C*
+     C*   Change
+     C*
+     CSR         WKOOPT    IFEQ ' 2'
+     CSR                   MOVE '*CHANGE '$PCMD
+     CSR                   CALL @CHGPG
+     CSR                   PARM           $PARMS
+     CSR                   ELSE
+     C*
+     C*   View
+     C*
+     CSR         WKOOPT    IFEQ ' 5'
+     CSR                   MOVE '*VIEW   '$PCMD
+     CSR                   CALL @CHGPG
+     CSR                   PARM           $PARMS
+     CSR                   ELSE
+     C*
+     C*   Print
+     C*
+     CSR         WKOOPT    IFEQ ' 6'
+     CSR                   MOVE '*PRINT  '$PCMD
+     CSR                   CALL @PRTPG
+     CSR                   PARM           $PARMS
+     CSR                   ELSE
+     CSR                   EXSR ZZOPT
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     C*
+     CSR         $PRTN     IFEQ '*CANCEL '
+     CSR                   MOVE *ON       CANCEL
+     CSR                   ELSE
+     CSR         $PRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       CANCEL
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVEL$PERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $PRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       CANCEL
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE $PMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PAG01    Screen 1 page routines
+     C*
+     CSR         PAG01     BEGSR
+     C*
+     C*  NEXT PAGE
+     C*
+     CSR         PAGCMD    IFEQ '*NEXT   '
+     CSR                   EXSR PAG1FW
+     CSR                   ELSE
+     C*
+     C*  PREVIOUS PAGE
+     C*
+     CSR         PAGCMD    IFEQ '*PREV   '
+     CSR                   EXSR PAG1BK
+     CSR                   ELSE
+     C*
+     C*  TOP
+     C*
+     CSR         PAGCMD    IFEQ '*TOP    '
+     CSR                   MOVE '*TOP    '$POCMD
+     CSR                   EXSR FGTWAY
+     C*R         CLERR     CABEQ*ON       PAG01E
+     CSR                   MOVE *OFF      TOP
+     CSR                   MOVE *OFF      BOT
+     CSR                   MOVE *OFF      FORCEB
+     CSR                   EXSR PAG1FW
+     CSR                   ELSE
+     C*
+     C*  BOTTOM
+     C*
+     CSR         PAGCMD    IFEQ '*BOTTOM '
+     CSR                   MOVE *ON       BOT
+     CSR                   Z-ADD0         DSPLYD
+     CSR                   EXSR PAG1BK
+     CSR                   ELSE
+     C*
+     C*  REFRESH SCREEN
+     C*
+     CSR         PAGCMD    IFEQ '*REFRESH'
+     CSR         FKEY,1    IFEQ *LOVAL
+     CSR                   MOVE '*TOP    '$POCMD
+     CSR                   ELSE
+     CSR                   MOVE '*POSTN2 '$POCMD
+     CSR                   MOVE FKEY,1    $POFKY
+     CSR                   END
+     CSR                   EXSR FGTWAY
+     C*R         CLERR     CABEQ*ON       PAG01E
+     CSR                   MOVE *OFF      BOT
+     CSR                   EXSR PAG1FW
+     CSR                   ELSE
+     C*
+     C*  REPOSITIONING
+     C*
+     CSR         PAGCMD    IFEQ '*REPOS  '
+     CSR                   MOVE *OFF      BOT
+     CSR                   MOVE *OFF      FORCEB
+     CSR                   EXSR PAG1FW
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   MOVE *BLANKS   PAGCMD  8
+     CSR         PAG01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PAG02    Screen 2 page routines
+     C*
+     CSR         PAG02     BEGSR
+     C*
+     C*  NEXT PAGE
+     C*
+     CSR         PAGCMD    IFEQ '*NEXT   '
+     CSR                   EXSR PAG2FW
+     CSR                   ELSE
+     C*
+     C*  PREVIOUS PAGE
+     C*
+     CSR         PAGCMD    IFEQ '*PREV   '
+     CSR                   EXSR PAG2BK
+     CSR                   ELSE
+     C*
+     C*  REFRESH SCREEN
+     C*
+     CSR         PAGCMD    IFEQ '*REFRESH'
+     CSR         DELTOP    SETLLWORKOPT
+     CSR                   MOVE *OFF      BOT
+     CSR                   EXSR PAG2FW
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR                   MOVE *BLANKS   PAGCMD
+     CSR         PAG02E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PAG1FW   Let's see that next page of records
+     C*
+     CSR         PAG1FW    BEGSR
+     C*
+     C*  IF WE ARE AT THE BOTTOM THEN DO NOTHING
+     C*
+     CSR         BOT       CABEQ*ON       ENDF
+     C*
+     C*  INITIALIZE VARIABLES FOR LOOKUP
+     C*
+     CSR                   EXSR SFLCLR
+     CSR                   MOVE *LOVAL    FKEY
+     CSR                   MOVE *LOVAL    UKEY
+     CSR                   MOVE *OFF      BOT     1
+     CSR                   MOVE *OFF      TOP     1
+     CSR                   MOVE *OFF      STOP    1
+     CSR                   Z-ADD0         P       20
+     C*
+     C*  GET 10 RECORDS TO DISPLAY
+     C*
+     CSR         STOP      DOUEQ*ON
+     CSR                   MOVE '*GETNEXT'$POCMD
+     CSR                   EXSR FGTWAY
+     C*
+     C*  OUT OF RECORDS - INFORM USER AND SET FLAG
+     C*
+     CSR         $PORTN    IFEQ '*NOMORE '
+     CSR                   MOVE *ON       STOP
+     CSR                   MOVE *ON       BOT
+     CSR                   MOVE 'Bottom ' MORELN
+     CSR                   GOTO ENDFAC
+     CSR                   END
+     C*
+     C*  RECORD READ - STOP AFTER 10 GOOD RECORDS
+     C*
+     CSR                   ADD  1         P
+     CSR                   EXSR SFLADD
+     CSR         P         IFGE 10
+     CSR                   MOVE *ON       STOP
+     CSR         FORCEB    IFEQ *ON
+     CSR                   MOVE *ON       BOT
+     CSR                   MOVE 'Bottom ' MORELN
+     CSR                   ELSE
+     CSR                   MOVE 'More...' MORELN
+     CSR                   END
+     CSR                   END
+     CSR         ENDFAC    TAG
+     CSR                   END
+     C*
+     C*  SAVE NUMBER OF RECORDS THAT HAVE BEEN DISPLAYED
+     C*
+     CSR                   Z-ADDP         DSPLYD  20
+     CSR                   MOVE *OFF      FORCEB
+     CSR         ENDF      ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PAG1BK   Let's see the previous page
+     C*
+     CSR         PAG1BK    BEGSR
+     C*
+     C*  IF WE ARE AT THE TOP THEN DO NOTHING
+     C*
+     CSR         TOP       CABEQ*ON       ENDB
+     CSR                   MOVE *OFF      FORCEB  1
+     C*
+     C*  CALCULATE HOW MANY RECORDS TO GO BACKWARDS
+     C*
+     CSR         DSPLYD    ADD  10        GOBACK  20
+     CSR         BOT       IFEQ *ON
+     CSR         GOBACK    IFEQ 10
+     CSR                   MOVE *ON       FORCEB
+     CSR                   END
+     CSR                   MOVE '*BOTTOM '$POCMD
+     CSR                   EXSR FGTWAY
+     CSR                   ADD  1         GOBACK
+     CSR                   END
+     C*
+     C*  INITIALIZE VARIABLES FOR LOOKUP
+     C*
+     CSR                   Z-ADD0         P
+     CSR                   MOVE *OFF      TOP
+     CSR                   MOVE *OFF      BOT
+     CSR                   MOVE *OFF      STOP
+     C*
+     C*  READ SPECIFIED FLITCHES FILE
+     C*
+     CSR         STOP      DOUEQ*ON
+     CSR                   MOVE '*GETPREV'$POCMD
+     CSR                   EXSR FGTWAY
+     C*
+     C*  HIT TOP OF FILE
+     C*
+     CSR         $PORTN    IFEQ '*NOMORE '
+     CSR                   MOVE *ON       STOP
+     CSR                   MOVE *ON       TOP
+     CSR                   GOTO ENDBK
+     CSR                   END
+     C*
+     C*  RECORD READ - STOP AFTER READING 'GOBACK' NUMBER OF GOOD RECS
+     C*
+     CSR                   ADD  1         P
+     CSR         P         IFGE GOBACK
+     CSR                   MOVE *ON       STOP
+     CSR                   END
+     CSR         ENDBK     TAG
+     CSR                   END
+     C*
+     C* IF THE TOP WAS REACHED THEN POSITION POINTER TO TOP OF FILE
+     C*
+     CSR         TOP       IFEQ *ON
+     CSR                   MOVE '*TOP    '$POCMD
+     CSR                   EXSR FGTWAY
+     CSR                   END
+     CSR                   EXSR PAG1FW
+     CSR         ENDB      ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PAG2FW   Let's see that next page of delete records
+     C*
+     CSR         PAG2FW    BEGSR
+     C*
+     C*  IF WE ARE AT THE BOTTOM THEN DO NOTHING
+     C*
+     CSR         BOT       CABEQ*ON       ENDF2
+     C*
+     C*  INITIALIZE VARIABLES FOR LOOKUP
+     C*
+     CSR                   EXSR SFLCLR
+     CSR                   MOVE *LOVAL    $WKOF
+     CSR                   MOVE *LOVAL    $WKOU
+     CSR                   MOVE *OFF      BOT     1
+     CSR                   MOVE *OFF      TOP     1
+     CSR                   MOVE *OFF      STOP    1
+     CSR                   Z-ADD0         P       20
+     C*
+     C*  GET 10 RECORDS TO DISPLAY
+     C*
+     CSR         STOP      DOUEQ*ON
+     CSR         WKOPRT    READEWORKOPT                  79
+     C*
+     C*  OUT OF RECORDS - INFORM USER AND SET FLAG
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       STOP
+     CSR                   MOVE *ON       BOT
+     CSR                   MOVE 'Bottom ' MORELN
+     CSR                   GOTO ENDFW2
+     CSR                   END
+     C*
+     C*  RECORD READ - STOP AFTER 10 GOOD RECORDS
+     C*
+     CSR         WKOOPT    IFEQ ' 1'
+     CSR                   ADD  1         P
+     CSR                   EXSR DELADD
+     CSR         P         IFGE 10
+     CSR                   MOVE *ON       STOP
+     CSR         FORCEB    IFEQ *ON
+     CSR                   MOVE *ON       BOT
+     CSR                   MOVE 'Bottom ' MORELN
+     CSR                   ELSE
+     CSR                   MOVE 'More...' MORELN
+     CSR                   END
+     CSR                   END
+     CSR                   END
+     CSR         ENDFW2    TAG
+     CSR                   END
+     C*
+     C*  SAVE NUMBER OF RECORDS THAT HAVE BEEN DISPLAYED
+     C*
+     CSR                   Z-ADDP         DSPLYD  20
+     CSR                   MOVE *OFF      FORCEB
+     CSR         ENDF2     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PAG2BK   Let's see the previous page of delete records
+     C*
+     CSR         PAG2BK    BEGSR
+     C*
+     C*  IF WE ARE AT THE TOP THEN DO NOTHING
+     C*
+     CSR         TOP       CABEQ*ON       ENDB2
+     CSR                   MOVE *OFF      FORCEB  1
+     C*
+     C*  CALCULATE HOW MANY RECORDS TO GO BACKWARDS
+     C*
+     CSR         DSPLYD    ADD  10        GOBACK  20
+     CSR         BOT       IFEQ *ON
+     CSR         WKOPRT    SETGTWORKOPT
+     CSR                   ADD  1         GOBACK
+     CSR                   END
+     C*
+     C*  INITIALIZE VARIABLES FOR LOOKUP
+     C*
+     CSR                   Z-ADD0         P
+     CSR                   MOVE *OFF      TOP
+     CSR                   MOVE *OFF      BOT
+     CSR                   MOVE *OFF      STOP
+     C*
+     C*  READ FILE
+     C*
+     CSR         STOP      DOUEQ*ON
+     CSR         WKOPRT    REDPEWORKOPT                  79
+     C*
+     C*  HIT TOP OF FILE
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       STOP
+     CSR                   MOVE *ON       TOP
+     CSR                   GOTO ENDBK2
+     CSR                   END
+     C*
+     C*  RECORD READ - STOP AFTER READING 'GOBACK' NUMBER OF GOOD RECS
+     C*
+     CSR         WKOOPT    IFEQ ' 1'
+     CSR                   ADD  1         P
+     CSR         P         IFGE GOBACK
+     CSR                   MOVE *ON       STOP
+     CSR                   END
+     CSR                   END
+     CSR         ENDBK2    TAG
+     CSR                   END
+     C*
+     C* IF WE HIT THE TOP REPOSITION POINTER TO TOP OF FILE
+     C*
+     CSR         TOP       IFEQ *ON
+     CSR         WKOPRT    SETLLWORKOPT
+     CSR                   END
+     CSR                   EXSR PAG2FW
+     CSR         ENDB2     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ROLL01   Screen 1 roll up/down routine
+     C*
+     CSR         ROLL01    BEGSR
+     C*
+     C*  TEST FOR ROLLUP
+     C*
+     CSR         STATUS    IFEQ ROLLUP
+     CSR                   EXSR SAVOPT
+     CSR         ERROR     CABEQ*ON       ROL01E
+     CSR                   MOVE '*NEXT   'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO ROL01E
+     CSR                   END
+     C*
+     C*  TEST FOR ROLLDOWN
+     C*
+     CSR         STATUS    IFEQ ROLLDN
+     CSR                   EXSR SAVOPT
+     CSR         ERROR     CABEQ*ON       ROL01E
+     CSR                   MOVE '*PREV   'PAGCMD
+     CSR                   EXSR PAG01
+     CSR                   GOTO ROL01E
+     CSR                   END
+     CSR         ROL01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ROLL02   Screen 2 roll up/down routine
+     C*
+     CSR         ROLL02    BEGSR
+     C*
+     C*  TEST FOR ROLLUP
+     C*
+     CSR         STATUS    IFEQ ROLLUP
+     CSR                   MOVE '*NEXT   'PAGCMD
+     CSR                   EXSR PAG02
+     CSR                   GOTO ROL02E
+     CSR                   END
+     C*
+     C*  TEST FOR ROLLDOWN
+     C*
+     CSR         STATUS    IFEQ ROLLDN
+     CSR                   MOVE '*PREV   'PAGCMD
+     CSR                   EXSR PAG02
+     CSR                   GOTO ROL02E
+     CSR                   END
+     CSR         ROL02E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SAVOPT   Verify and save options that were entered
+     C*
+     CSR         SAVOPT    BEGSR
+     C*
+     C*  READ ONLY THE CHANGED OPTIONS
+     C*
+     CSR                   MOVE *OFF      NOMORE  1
+     CSR         NOMORE    DOUEQ*ON
+     CSR                   MOVE *OFF      *IN21
+     CSR                   READCDSPSFL                   79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       NOMORE
+     CSR                   GOTO ENDDO1
+     CSR                   END
+     C*
+     C*  DISPLAY ERROR IF OPTION IS NOT VALID
+     C*
+     CSR         OPTION    IFNE *BLANKS
+     C*R                   MOVEAOPTION    A2
+     C*R         A2,2      IFEQ ' '
+     C*R                   MOVE A2,1      A2,2
+     C*R                   MOVE ' '       A2,1
+     C*R                   MOVEAA2        OPTION
+     C*R                   END
+     C*
+     C*    LOOK UP OPTION IN PROFILE - ERROR IF NOT FOUND
+     C*
+     CSR         OPTION    LOKUPZOPT                     50
+     CSR         *IN50     IFEQ *OFF
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   EXSR ZM0108
+     CSR                   END
+     CSR                   END
+     C*
+     C*  SAVE OPTION
+     C*
+     CSR                   Z-ADDRECNO     Y       30
+     CSR                   MOVE FKEY,Y    WKOKYF
+     CSR                   MOVE UKEY,Y    WKOKYU
+     CSR         WKOUNQ    CHAINWORKOPT              79
+     CSR         *IN79     IFEQ *OFF
+     CSR         OPTION    IFEQ *BLANKS
+     CSR                   DELETWKOREC
+     CSR                   ELSE
+     CSR                   MOVE OPTION    WKOOPT
+     CSR                   MOVE *IN21     WKOERR
+     CSR                   UPDATWKOREC
+     CSR                   END
+     CSR                   ELSE
+     CSR         OPTION    IFNE *BLANKS
+     CSR                   MOVE #USER     WKOUSR
+     CSR                   MOVE #PROG     WKOPGM
+     CSR                   MOVE FKEY,Y    WKOKYF
+     CSR                   MOVE UKEY,Y    WKOKYU
+     CSR                   MOVE OPTION    WKOOPT
+     CSR                   MOVE *IN21     WKOERR
+     CSR                   WRITEWKOREC
+     CSR                   END
+     CSR                   END
+     CSR         ENDDO1    TAG
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLADD   Add record to subfile
+     C*
+     CSR         SFLADD    BEGSR
+     CSR         RECNO     IFLT 11
+     CSR                   ADD  1         RECNO
+     CSR                   Z-ADDRECNO     Y
+     C*
+     C*  SAVE FILE AND UNIQUE KEYS
+     C*
+     CSR                   MOVE $POFKY    FKEY,Y
+     CSR                   MOVE $POUKY    UKEY,Y
+     C*
+     C*  WRITE DISPLAY LINE TO SUBFILE
+     C*
+     CSR                   EXSR ZZFILL
+     CSR                   WRITEDSPSFL
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLCLR   Clear display subfile
+     C*
+     CSR         SFLCLR    BEGSR
+     C*
+     C*  CLEAR DISPLAY SUBFILE
+     C*
+     CSR                   MOVE *OFF      *IN01
+     CSR                   WRITEDSPSFC
+     CSR                   Z-ADD0         RECNO   40
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLDSP   Display subfile
+     C*
+     CSR         SFLDSP    BEGSR
+     C*
+     C*  WRITE OPTION AND COMMAND LINES TO DISPLAY
+     C*
+     CSR                   WRITEOPTREC
+     CSR                   WRITECMDREC
+     C*
+     C*  WRITE 'BOTTOM/MORE...' FIELD TO DISPLAY
+     C*
+     CSR                   WRITEMORREC
+     C*
+     C*  WRITE POSITION TO FIELD TO DISPLAY
+     C*
+414dAC*  Write POSTNREC first if error occured.
+414dAC*
+414dACSR         ERROR     IFEQ '1'
+     CSR                   WRITEPOSTNREC
+414dACSR                   END
+     C*
+     C*  GET ANY EXISTING VALUES FOR THE OPTIONS
+     C*
+     CSR                   EXSR SFLOPT
+     C*
+     C*  POSITION CURSOR TO FIRST OPTION WHEN NO ERRORS EXIST
+     C*
+     CSR         ERROR     IFNE *ON
+     CSR         1         CHAINDSPSFL               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE *ON       *IN20
+     CSR                   UPDATDSPSFL
+     CSR                   END
+     CSR                   END
+     C*
+     C*  WRITE SUBFILE TO DISPLAY
+     C*
+     CSR                   MOVE *ON       *IN01
+     CSR                   Z-ADD1         RECNO
+     CSR                   WRITEDSPSFC
+     C*
+     C*  Write POSTNREC last if no error occured.
+     C*
+     CSR         ERROR     IFNE '1'
+     CSR                   WRITEPOSTNREC
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLOPT   Initialize options for subfile
+     C*
+     CSR         SFLOPT    BEGSR
+     CSR         1         DO   10        X       30
+     CSR         X         CHAINDSPSFL               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE FKEY,X    WKOKYF
+     CSR                   MOVE UKEY,X    WKOKYU
+     CSR         WKOUNQ    CHAINWORKOPT              78
+     CSR         *IN78     IFEQ *OFF
+     CSR                   MOVE WKOOPT    OPTION
+     CSR                   MOVE WKOERR    *IN21
+     CSR                   MOVE WKOERR    *IN20
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   OPTION
+     CSR                   MOVE *OFF      *IN21
+     CSR                   MOVE *OFF      *IN20
+     CSR                   END
+     CSR                   UPDATDSPSFL
+     CSR                   END
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE *ON       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM #PROG     #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C*R                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM '*PREV'   #PGMQ
+     CSR                   PARM           #MSGK
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*      0101  Program not found.
+     C*
+     CSR         ZM0101    BEGSR
+     CSR                   MOVE 'PIR0101' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     C*R                   MOVE CLPRGM    ERRCL1
+     C*R                   MOVE CLINFO    ERRCL2
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0102  Program not found.
+     C*
+     CSR         ZM0102    BEGSR
+     CSR                   MOVE 'PIR0102' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     C*R                   MOVE CLPRGM    ERRCL1
+     C*R                   MOVE CLINFO    ERRCL2
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0103  Program not found while exec. subroutine.
+     C*
+     CSR         ZM0103    BEGSR
+     CSR                   MOVE 'PIR0103' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     C*R                   MOVE CLPRGM    ERRCL1
+     C*R                   MOVE CLINFO    ERRCL2
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0104  Pressed an invalid key.
+     C*
+     CSR         ZM0104    BEGSR
+     CSR                   MOVE 'PIR0104' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0105
+     C*
+     CSR         ZM0105    BEGSR
+     CSR                   MOVE 'PIR0105' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0106  Invalid cursor position.
+     C*
+     CSR         ZM0106    BEGSR
+     CSR                   MOVE 'PIR0106' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0107  Invalid value for "position To"
+     C*
+     CSR         ZM0107    BEGSR
+     CSR                   MOVE 'PIR0107' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0108  Invalid Option.
+     C*
+     CSR         ZM0108    BEGSR
+     CSR                   MOVE 'PIR0108' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVELOPTION    ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+417aAC*----------------------------------------------------------------
+417aAC*   PO13247  Super P/O at wrong status or not found.
+417aAC*
+417aACSR         ZM3247    BEGSR
+417aACSR                   MOVE 'PO13247' #MSGID
+417aACSR                   MOVE '*DIAG  ' #MSGTP
+417aACSR                   MOVEAERRMSG    $MD,1
+417aACSR                   EXSR ZMPMSG
+417aACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR9905  Cursor not in correct position for lookup.
+     C*
+     CSR         ZM9905    BEGSR
+     CSR                   MOVE 'PIR9905' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD    Process non-standard function keys
+     C*
+     CSR         ZZCMD     BEGSR
+     C*
+     C*  Test for F4 - Lookup
+     C*
+     CSR         *INKD     IFEQ *ON
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     C*
+     C*     Warehouse department.
+     C*
+     CSR         ROW#      IFEQ 4
+     CSR         COL#      ANDGE38
+     CSR                   MOVE *ON       *IN03
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   Z-ADDPTINP1    $LWHSE
+     CSR                   CALL 'WH900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   Z-ADD$LWHSE    PTINP1
+     CSR                   END
+     CSR                   ELSE
+     C*
+     C*     Cursor not on a valid lookup field.
+     C*
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM9905
+     CSR                   END
+     CSR                   GOTO ENDCM1
+     CSR                   END
+     C*
+     CSR         ENDCM1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFGET   Get record with unique key.
+     C*
+     CSR         ZZFGET    BEGSR
+     C*
+     C*    Code to use when file key and unique key are the same.
+     C*
+     CSR         FILUKY    CHAINRECORD               79
+     C*
+     C*    Code to use when file key and unique key are different.
+     C*
+     C*R         FILUKY    CHAINRECORDU              79
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFGTN   Get next record
+     C*
+     CSR         ZZFGTN    BEGSR
+     CSR         TRY1      TAG
+     C*
+     C*    Code to use when we are not using a partial key.
+     C*
+     C*R                   READ RECORD                   79
+     C*
+     C*    Code to use when we do have a partial key to use.
+     C*
+YHTbDC*R         PARTKY    READERECORD                   79
+YHTbMCSR         PARTKY    READERECORD              N    79
+     C*
+     C*    Select only p/o's that are open or partially received.
+     CSR                   SELEC
+     CSR         *IN79     WHEQ *OFF
+     CSR                   MOVELPHPO      CKFLD   2
+     CSR         PHSTAT    IFGT '1'
+     CSR         CKFLD     OREQ 'SP'
+     CSR                   GOTO TRY1
+     CSR                   ENDIF
+     C*
+     C*    Omit Super P/O's from the list.
+     CSR         KEYPU2    SETLLPOSPO                    76
+     CSR         *IN76     IFEQ *ON
+     CSR                   GOTO TRY1
+     CSR                   ENDIF
+417 AC*
+417 AC*    Omit Individual P/O's already attached to this Super P/O
+417 AC*    When Individual P/O's allowed on multiple Super P/O's.
+417 ACSR         KEYPU     SETLLPOSPO                    76
+417 ACSR         *IN76     IFEQ *ON
+417 ACSR         OPMSPO    ANDEQ'Y'
+417 ACSR                   GOTO TRY1
+417 ACSR                   ENDIF
+     C*
+     C*    Omit Individual P/O's already attached to Super P/O's
+     CSR         KEYPU2    SETLLPOSPO1                   76
+     CSR         *IN76     IFEQ *ON
+417 AC*
+417 aC*    Individual p/o's not allowed on multiple Super P/O's.
+417 ACSR         OPMSPO    ANDEQ'N'
+     CSR                   GOTO TRY1
+     CSR                   ENDIF
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFGTP   Get previous record
+     C*
+     CSR         ZZFGTP    BEGSR
+     CSR         TRY2      TAG
+     C*
+     C*    Code to use when we are not using a partial key.
+     C*
+     C*R                   READPRECORD                   79
+     C*
+     C*    Code to use when we do have a partial key to use.
+     C*
+YHTbDC*R         PARTKY    REDPERECORD                   79
+YHTbMCSR         PARTKY    REDPERECORD              N    79
+     C*
+     C*    Select only p/o's that are open or partially received.
+     CSR                   SELEC
+     CSR         *IN79     WHEQ *OFF
+     CSR                   MOVELPHPO      CKFLD
+     CSR         PHSTAT    IFGT '1'
+     CSR         CKFLD     OREQ 'SP'
+     CSR                   GOTO TRY2
+     CSR                   ENDIF
+     C*
+     C*    Omit Super P/O's from the list.
+     CSR         KEYPU2    SETLLPOSPO                    76
+     CSR         *IN76     IFEQ *ON
+     CSR                   GOTO TRY2
+     CSR                   ENDIF
+417 AC*
+417 AC*    Omit Individual P/O's already attached to this Super P/O
+417 AC*    When Individual P/O's allowed on multiple Super P/O's.
+417 ACSR         KEYPU     SETLLPOSPO                    76
+417 ACSR         *IN76     IFEQ *ON
+417 ACSR         OPMSPO    ANDEQ'Y'
+417 ACSR                   GOTO TRY2
+417 ACSR                   ENDIF
+     C*
+     C*    Omit Individual P/O's already attached to Super P/O's
+     CSR         KEYPU2    SETLLPOSPO1                   76
+     CSR         *IN76     IFEQ *ON
+417 AC*
+417 aC*    Individual p/o's not allowed on multiple Super P/O's.
+417 ACSR         OPMSPO    ANDEQ'N'
+     CSR                   GOTO TRY2
+     CSR                   ENDIF
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFILL   Fill display line with values that need
+     C*           to be converted.
+     C*
+     CSR         ZZFILL    BEGSR
+     CSR                   MOVELPHVNAM    W1VNAM
+     CSR                   SELEC
+     CSR         PHSTAT    WHEQ '0'                        Open p/o
+     CSR                   MOVELSTS00     W1STAT    P
+     CSR         PHSTAT    WHEQ '1'                        Partial receipt
+     CSR                   MOVELSTS01     W1STAT    P
+     CSR         PHSTAT    WHEQ '2'                        Rcv'd in full
+     CSR                   MOVELSTS02     W1STAT    P
+     CSR         PHSTAT    WHEQ '3'                        Closed p/o
+     CSR                   MOVELSTS03     W1STAT    P
+     CSR                   OTHER
+     CSR                   MOVE *BLANKS   W1STAT
+     CSR                   ENDSL
+     CSR                   MOVE PHDATE    W1DATE
+     CSR                   MOVE PHTIME    W1TIME
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+417aACSR         *LIKE     DEFN PHSTAT    POSTS
+     C*
+     C*  Define keys
+     C*
+     C*     WORKOPT  (Unique key)
+     C*
+     CSR         WKOUNQ    KLIST
+     CSR                   KFLD           #USER
+     CSR                   KFLD           #PROG
+     CSR                   KFLD           WKOKYF
+     CSR                   KFLD           WKOKYU
+     C*
+     C*     WORKOPT  (Partial key)
+     C*
+     CSR         WKOPRT    KLIST
+     CSR                   KFLD           #USER
+     CSR                   KFLD           #PROG
+     C*
+     C*     WORKOPT  (Save key for top record on delete display)
+     C*
+     CSR         *LIKE     DEFN WKOKYF    $WKOF
+     CSR         *LIKE     DEFN WKOKYU    $WKOU
+     CSR         DELTOP    KLIST
+     CSR                   KFLD           #USER
+     CSR                   KFLD           #PROG
+     CSR                   KFLD           $WKOF
+     CSR                   KFLD           $WKOU
+417 AC*
+417 AC*     OPTIONS
+417 AC*
+417 ACSR         KEYOP     KLIST
+417 ACSR                   KFLD           OPWHSE
+417 ACSR                   KFLD           OPCODE
+     C*
+     C*     USERCODE
+     C*
+     CSR         USKEY     KLIST
+     CSR                   KFLD           #USER
+     C*
+     C*  Define unique file key.
+     C*
+     CSR         FILUKY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           PHPO
+     C*
+     C*  Define full key for main file.
+     C*
+     CSR         FILEKY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           PHPO
+     C*
+     C*  Define partial key for main file (if needed).
+     C*
+     CSR         PARTKY    KLIST
+     CSR                   KFLD           $PWHSE
+     C*
+     C*  POSPO - Super P/O Cross Ref - Full key.
+     C*
+     CSR         KEYPU     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PSPO
+     CSR                   KFLD           PHPO
+     C*
+     C*  POSPO - Super P/O Cross Ref - Partial key.
+     C*
+     CSR         KEYPU2    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           PHPO
+YHTb C*  POHDR - PO header key
+YHTb C*
+YHTb CSR         KEYPO     KLIST
+YHTb CSR                   KFLD           $PWHSE
+YHTb CSR                   KFLD           KYPO    9
+     C*
+     C*  Setup option and command display lines.
+     C*
+     CSR                   MOVE OPTLN,1   OPTLN1
+     CSR                   MOVE OPTLN,2   OPTLN2
+     CSR                   MOVE CMDLN,1   CMDLN1
+     C*
+     CSR                   MOVE #PROG     $PPRG
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Extra program initialization. Called from main line.
+     C*
+     CSR         ZZINZ2    BEGSR
+     C*
+     C*   Verify warehouse and get description.
+     C*
+     CSR                   Z-ADD$PWHSE    PUWHSE
+     CSR                   Z-ADD$PWHSE    WHCODE
+     CSR                   MOVE *BLANKS   WHDESC
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADDPUWHSE    $LWHSE
+     CSR                   CALL 'WH900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE '1'       *IN03
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE '1'       *IN03
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ELSE
+     CSR                   Z-ADDPUWHSE    $KWHSE
+     CSR                   Z-ADDPUWHSE    WHCODE
+     CSR                   MOVEL$LERM     WHDESC
+     CSR                   ENDIF
+     CSR                   ENDIF
+417 AC*
+417 AC*   Retrieve Receiving Options record.
+417 AC*
+417 ACSR                   EXSR ZZRCVL
+     C*
+     CSR                   EXSR CLRSCH
+     CSR                   EXSR SCR01I
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZKEYF   Create key for file being used
+     C*
+     CSR         ZZKEYF    BEGSR
+     CSR                   MOVE $PSPO     SPO
+     CSR                   MOVE DSFKEY    $POFKY
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZKEYU   Create unique key for file
+     C*             (to be used in delete and change programs)
+     C*
+     CSR         ZZKEYU    BEGSR
+     CSR                   MOVE $PSPO     SPO
+     CSR                   MOVE DSUKEY    $POUKY
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZOPT    Process non-standard options.
+     C*              Note: Error handling is done in routine OPTNS2.
+     C*
+     CSR         ZZOPT     BEGSR
+     C*
+     C*   Work with detail
+     C*
+     CSR         WKOOPT    IFEQ '12'
+     CSR                   CALL 'PO120CL'
+     CSR                   PARM           $PUKY
+     CSR                   PARM           $PRTN
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZPOS    Position to a different record.
+     C*
+     CSR         ZZPOS     BEGSR
+     C*
+     C*      Verify warehouse entry.
+     C*
+     CSR         PTINP1    IFNE 0
+     CSR                   Z-ADDPTINP1    WHCODE
+     CSR                   MOVE *BLANKS   WHDESC
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADDPTINP1    $LWHSE
+     CSR                   CALL 'WH900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN03
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   GOTO ENDZPS
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN03
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   GOTO ENDZPS
+     CSR                   ELSE
+     CSR                   Z-ADDPTINP1    PHWHSE
+     CSR                   Z-ADDPUWHSE    $KWHSE
+     CSR                   MOVE *BLANKS   PUSPO
+     CSR                   Z-ADDPTINP1    WHCODE
+     CSR                   MOVEL$LERM     WHDESC
+     CSR                   Z-ADD0         PTINP1
+     CSR                   MOVE *ON       REPOS
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*  See if user is trying to position to PO number
+     C*
+     CSR         PTINP2    IFNE *BLANKS
+     CSR                   MOVELPTINP2    PHPO
+     CSR                   MOVE *BLANKS   PTINP2
+     CSR                   MOVE *ON       REPOS
+     CSR                   ENDIF
+     CSR         ENDZPS    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZPOS2   Position to record
+     C*
+     CSR         ZZPOS2    BEGSR
+     C*
+     C*    Code to use when we are not using a partial key.
+     C*
+     C*R         $POCMD    IFEQ '*TOP'
+     C*R         *LOVAL    SETLLRECORD
+     C*R                   ELSE
+     C*R         $POCMD    IFEQ '*BOTTOM'
+     C*R         *HIVAL    SETLLRECORD
+     C*R                   END
+     C*R                   END
+     C*
+     C*    Code to use when we do have a partial key to use.
+     C*
+     CSR         $POCMD    IFEQ '*TOP'
+     CSR         PARTKY    SETLLRECORD
+     CSR                   ELSE
+     CSR         $POCMD    IFEQ '*BOTTOM'
+     CSR         PARTKY    SETGTRECORD
+     CSR                   END
+     CSR                   END
+     CSR                   ENDSR
+417 AC*----------------------------------------------------------------
+417 AC*
+417 AC*  ZZRCVL   Get RCVLBL options record.
+417 AC*
+417 ACSR         ZZRCVL    BEGSR
+417 AC*
+417 ACSR                   Z-ADD$PWHSE    OPWHSE
+417 ACSR                   MOVE '*RCVLBL 'OPCODE
+417 AC*
+417 ACSR         KEYOP     CHAINOPTIONS              79
+417 AC*
+417 AC*  Record not found.
+417 AC*
+417 ACSR         *IN79     IFEQ *ON
+417 ACSR                   MOVE 'N'       OPMSPO
+417 ACSR                   ELSE
+417 ACSR                   MOVE OPDATA    OPDTA1
+417 ACSR                   ENDIF
+417 AC*
+417 ACSR         ENDRLB    ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**  ZOPT - Valid options
+1
+**  OPTLN - Option display line
+  1=Select
+
+**  CMDLN - Command display line
+F5=Refresh  F12=Cancel

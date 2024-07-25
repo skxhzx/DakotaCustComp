@@ -1,0 +1,469 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  EX128   PO Quantity exception report.
+     F*  14 December 2006
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+     F*
+510 AF*    12/14/06  RH   5.10
+     F*      - Created using EX126
+520aAF*    03/02/09  RH   5.20a
+     F*      - Enh: Added custom client support
+520bAF*    04/09/09  RH   5.20b
+     F*      - Enh: Change to print multiple PO exceptions on page.
+     F*             Report will print for one PO or export date range.
+520cAF*    04/16/09  RH   5.20c
+     F*      - Fix: Change to direct print to DEV entered.
+     F*
+     F*----------------------------------------------------------------
+     A*  Custom changes - YHata
+YHAaAA*    03/02/09  RH   YHAa
+     A*      - Enh: Replace emp# with buyer #
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  91        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPOHEXCP IP  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+YHAa FITEMMSC IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FRCVEXCP IF  E           K        DISK
+     F*X128PR O   E             90     PRINTER
+     FEX128PR O   E             90     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*
+     E                    RECK        3  7 0
+     E                    LVLK        3  7 0
+     E                    A80        80  1
+     E*
+     E                    CLS         3  5 0
+     E                    OVRPRT  1   1 80
+     I*----------------------------------------------------------------
+     IPHEREC
+     I                                              PHEPO L1
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I*           DS
+     I*                                       1   9 DSPO
+     I*                                      10  160DSLBL
+     I*                                      17  240DSEXPD
+520aAI*----------------------------------------------------------------
+520aAI*  Customer id
+520aAI*
+520aAI              'GETCLIENT'           C         @GETCL
+520aAI*
+520aA /COPY QCOPYSRC,IL#YHATA
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I*
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE  3
+     C                     PARM           $PO     9
+     C                     PARM           $EXDT   8
+     C                     PARM           $EXTI   6
+     C                     PARM           $EXTDT  8
+520c C                     PARM           $PDEV  10
+520c C                     PARM           $PFORM 10
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Level break occurred.
+     C*     - Filled page.
+     C*
+520bDC*          *IN90     IFEQ '1'
+520bDC*          *INL1     OREQ '1'
+520bDC*                    EXSR ZRZERO
+     C*
+YHAaAC           CLIENT    IFEQ 'YHATA  '
+YHAAAC                     MOVE *ON       *IN88
+YHAaAC                     ELSE
+YHAAAC                     MOVE *OFF      *IN88
+YHAaAC                     END
+     C*
+520bAC           *IN90     IFEQ '1'
+520b C                     EXSR ZRHEAD
+520b C                     ENDIF
+520bAC           *INL1     IFEQ '1'
+520bAC                     EXSR ZRZERO
+520b C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - Dept/Section
+     C*
+     C           *INL1     IFEQ *ON
+     C                     Z-ADD1         L
+     C                     ENDIF
+     C*
+     C*
+     C*  Output Headings
+     C*
+520bDC*          *IN91     IFEQ '1'
+520bDC*          *INL1     OREQ '1'
+     C*          *IN91     IFEQ '1'
+     C*                    WRITERPHEAD
+     C*                    END
+520bDC*                    WRITECOLUMNS
+520bDC*                    END
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*
+     C*  Retrieve item description.
+     C*
+     C           ITKEY     CHAINPIRITEM              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   ITDESC
+     C                     ENDIF
+520a C*  Get buyer #
+520a C           ITKEY     CHAINITEMMSC              79
+520a C           *IN79     IFEQ *ON
+520a C                     MOVE *BLANKS   IMBNBR
+520a C                     ENDIF
+     C*
+     C*
+     C*  Setup error description for printing.
+     C*
+     C*  Retrieve Error description.
+     C*
+     C           PHECOD    CHAINRCVEXCP              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   ERRMSG
+     C                     ELSE
+     C                     MOVE REDESC    ERRMSG
+     C                     ENDIF
+     C*
+     C*
+     C*  Write detail line
+     C*
+YHAaAC           CLIENT    IFEQ 'YHATA  '
+YHAAAC                     MOVE *ON       *IN88
+YHAaAC                     ELSE
+YHAAAC                     MOVE *OFF      *IN88
+YHAaAC                     END
+     C                     WRITEDETAIL1
+     C*
+     C*  Accumulate totals
+     C*
+     C                     ADD  1         CLS,1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN92
+     C                     MOVE *OFF      *IN91
+     C*----------------------------------------------------------------
+     C*
+     C* Slot type totals
+     C*
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     C*
+     CL1         RECK,L    IFGT 0
+     CL1                   WRITESKIP1
+     CL1                   EXSR ZRTOTL
+     CL1                   END
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD3         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     CSR         RPKEY     KLIST
+     CSR                   KFLD           WKPRTF 10
+     C*
+     C           ITKEY     KLIST
+     C                     KFLD           PHEWHS
+     C                     KFLD           PHEITM
+     C*
+     C*  Variables and constants.
+     CSR         *LIKE     DEFN $WHSE     LSTWHS
+     CSR         *LIKE     DEFN $DEV      LSTDEV
+     CSR         *LIKE     DEFN $FORM     LSTFRM
+     CSR                   MOVE $PWHSE    $WHSE
+     C*
+520aAC*
+520aAC* Get client id.
+520aAC*
+520aAC                     CALL @GETCL
+520aAC                     PARM           CLIENT 10
+520aAC*
+     C*
+     CSR                   EXSR OPNPRT
+     C*
+     CSR                   Z-ADD40        $PLEN   30
+     C*
+520bACSR                   CALL 'GETRPT'
+520bACSR                   PARM '*DESC   '$CMD    8
+520bACSR                   PARM 'EX128PR' $LRPT  10
+520bACSR                   PARM           $WHSE   30
+520bACSR                   PARM ' '       $STYP   1
+520bACSR                   PARM ' '       $WHDP   5
+520bACSR                   PARM           $DESC  50
+520bACSR                   PARM           $DEV   10
+520bACSR                   PARM           $FORM  10
+520bACSR                   MOVEL$DESC     RPTTTL
+     C*   Center report title.
+     C*
+520bACSR                   MOVELRPTTTL    $PSTR  60
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR
+     CSR                   PARM           $PLEN
+     CSR                   MOVEL$PSTR     RPTTTL
+     C*
+     C*
+     C*   Convert dates to MMDDYY format.
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $EXDT     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    EXDT    60
+     C*
+     CSR                   MOVE $EXTI     EXTI    60
+     C*
+520b C*
+520b CSR         $PO       IFEQ '*ALL'
+520b CSR                   MOVE '*CMDMDY '$CVCMD
+520b CSR                   MOVE $EXTDT    $CVD8I
+520b CSR                   CALL @CVTDT
+520b CSR                   PARM           $CVTDT
+520b CSR                   Z-ADD$CVD6O    EXTDT   60
+520b CSR                   MOVEL'THRU'    RANGE
+520b CSR                   MOVE *ON       *IN61
+520b CSR                   ELSE
+520b CSR                   MOVE *OFF      *IN61
+520b CSR                   ENDIF
+     C*
+     C*
+     CSR                   MOVE #PROG     $CVPRG
+     C*
+     C                     Z-ADD3         L       10
+     C                     EXSR ZRZERO
+520bAC                     MOVE *ON       *IN90
+520bAC                     EXSR ZRFRMT
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  OPNPRT  Open printer file.
+     C*
+     CSR         OPNPRT    BEGSR
+     C*
+     C*   Get device and form type for department.
+     C*
+     CSR         $WHSE     IFNE LSTWHS
+     CSR                   CALL 'GETRPT'
+     CSR                   PARM '*DEVFORM'$CMD    8
+     CSR                   PARM 'EX128PR' $LRPT  10
+     CSR                   PARM           $WHSE   30
+     CSR                   PARM ' '       $STYP   1
+     CSR                   PARM ' '       $WHDP   5
+     CSR                   PARM           $DESC  50
+     CSR                   PARM           $DEV   10
+     CSR                   PARM           $FORM  10
+     CSR                   Z-ADD$WHSE     LSTWHS
+     CSR                   ENDIF
+520cACSR         $PDEV     IFNE '*DFT'
+520cACSR                   MOVE $PDEV     $DEV
+520cACSR                   MOVE $PFORM    $FORM
+520cACSR                   ENDIF
+     C*
+     C*   Open printer file for department.
+     C*
+     CSR         OPENED    IFNE *ON
+     CSR         $DEV      ORNE LSTDEV
+     CSR         $FORM     ORNE LSTFRM
+     C*
+     C*      If printer already open then close it.
+     C*
+     CSR         OPENED    IFEQ *ON
+     CSR                   CLOSEEX128PR
+     CSR                   ENDIF
+     C*
+     C*      Override printer file.
+     C*
+     C*          OVRPRTF FILE(OR610PR) OUTQ(*DEV) DEV($dev)
+     C*                  FORMTYPE($form)
+     C*
+     CSR                   MOVEAOVRPRT,1  A80
+     CSR                   MOVEA$DEV      A80,38
+     CSR                   MOVEA$FORM     A80,59
+     CSR                   MOVEAA80       QCMD
+     C*
+     CSR                   CALL 'QCMDEXC'
+     CSR                   PARM           QCMD   80
+     CSR                   PARM 80        QLEN   155
+     C*
+     C*      Open printer file.
+     C*
+     CSR                   OPEN EX128PR
+     CSR                   MOVE *ON       OPENED  1
+     CSR                   MOVE $DEV      LSTDEV
+     CSR                   MOVE $FORM     LSTFRM
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+520bDC*          PHEWHS    CHAINWAREHS               79
+520bMC           $WHSE     CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*   PO #
+     C                     MOVE $PO       PO      9
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*
+520a C*          *INL1     IFEQ '0'
+520a C*                    MOVE '1'       *IN91
+520a C*                    END
+     C*
+     C                     MOVE *OFF      *IN90
+520bDC*                    EXSR ZRFRMT
+     C*
+     C                     WRITEHEAD1
+     C***                  WRITEHEAD2
+520b C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ADD  CLS,L     CLS,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C                     Z-ADDCLS,L     T#CLS
+     C                     MOVE *BLANKS   T#DESC
+     C           PHEPO     CAT  '/':1     T#DESC
+     C*
+     C           L         IFEQ 1
+     C                     WRITETOTAL1
+     C                     ENDIF
+     C*
+     C           L         IFEQ 2
+     C                     WRITETOTAL2
+     C                     ENDIF
+     C*
+520bAC                     WRITESKIP1
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     Z-ADD0         CLS,L
+     C*
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*
+**   OVRPRTF statment
+OVRPRTF FILE(EX128PR) OUTQ(*DEV) DEV(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)

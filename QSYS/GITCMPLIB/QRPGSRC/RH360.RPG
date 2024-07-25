@@ -1,0 +1,227 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  RH360     Route transactions close exceptions report
+     F*  Dave Sommerville
+     F*  05 June 2001
+     F*
+     F*  Revisions
+     F*
+415 AF*    06/05/01  DAS  4.15
+     F*      - Created.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FITEMADJ1IP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FRTEHED  IF  E           K        DISK
+     FRH360PR O   E             90     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    A80        80  1
+     E                    TTL     1   1 40
+     E                    OVRPRT  1   1 80
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSA - Warehouse
+     C*      $PRTID - Route id
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSA  3
+     C                     PARM           $PRTID  5
+     C                     MOVE $PWHSA    $PWHSE  30
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C           *IN90     IFEQ '1'
+     C           FIRST     OREQ '1'
+     C                     MOVE '1'       *IN95
+     C                     EXSR OPNPRT
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C* Detail Calcs
+     C*
+     C*    Get item description
+     C*
+     C           ITKEY     CHAINPIRITEM              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   W1DESC
+     C                     ELSE
+     C                     MOVELITDESC    W1DESC
+     C                     ENDIF
+     C*
+     C                     WRITEDETAIL1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE '0'       FIRST
+     C*
+     CLRN95                EXSR OPNPRT
+     CLRN95                EXSR ZRFRMT
+     CLRN95                EXSR ZRHEAD
+     CLR                   WRITEFOOT1
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   TIME           TIME
+     CSR                   MOVE '1'       FIRST   1
+     C*
+     C*   Define key for file PIRITEM.
+     C*
+     CSR         ITKEY     KLIST
+     CSR                   KFLD           IAWHSE
+     CSR                   KFLD           IAITEM
+     C*
+     C*   Define key for file RTEHED.
+     C*
+     CSR         RTKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  OPNPRT  Open printer file.
+     C*
+     CSR         OPNPRT    BEGSR
+     C*
+     C*   Get device and form type for department.
+     C*
+     CSR                   CALL 'GETRPT'
+     CSR                   PARM '*DEVFORM'$CMD    8
+     CSR                   PARM 'RH360PR' $LRPT  10
+     CSR                   PARM $PWHSE    $WHSE   30
+     CSR                   PARM ' '       $STYP   1
+     CSR                   PARM ' '       $WHDP   5
+     CSR                   PARM           $DESC  50
+     CSR                   PARM           $DEV   10
+     CSR                   PARM           $FORM  10
+     C*
+     C*   Open printer file for department.
+     C*
+     C*      If printer already open then close it.
+     C*
+     CSR         OPENED    IFEQ *ON
+     CSR                   CLOSERH360PR
+     CSR                   ENDIF
+     C*
+     C*      Override printer file.
+     C*
+     C*          OVRPRTF FILE(RH360PR) OUTQ(*DEV) DEV($dev)
+     C*                  FORMTYPE($form)
+     C*
+     CSR                   MOVEAOVRPRT,1  A80
+     CSR                   MOVEA$DEV      A80,38
+     CSR                   MOVEA$FORM     A80,59
+     CSR                   MOVEAA80       QCMD
+     C*
+     CSR                   CALL 'QCMDEXC'
+     CSR                   PARM           QCMD   80
+     CSR                   PARM 80        QLEN   155
+     C*
+     C*      Open printer file.
+     C*
+     CSR                   OPEN RH360PR
+     CSR                   MOVE *ON       OPENED  1
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     C                     MOVE TTL,1     TITLE
+     C                     MOVELTITLE     $PSTR  60
+     C                     Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     TITLE
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           IAWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*   Format Route number.
+     C*
+     C           RTKEY     CHAINRTEHED               79
+     C           *IN79     IFEQ *ON
+     C                     MOVE $PRTID    RHRTE
+     C                     ENDIF
+     C                     MOVE *BLANKS   BATCH
+     C                     MOVE *BLANKS   $PSTR
+     C           BATCH     CAT  'Route:':1BATCH
+     C           BATCH     CAT  RHRTE:1   BATCH
+     C                     MOVELBATCH     $PSTR  60
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center batch/route description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR  60
+     C                     PARM           $PLEN   30
+     C                     MOVEL$PSTR     BATCH
+     C*
+     C                     ENDSR
+     C*****************************************************************
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR                   MOVE '0'       *IN90
+     CSR                   WRITEHEAD1
+     CSR                   WRITECOLUMNS
+     C*
+     CSR                   ENDSR
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**      TTL   Report title descriptions
+Route Transaction Close Exception Report
+**   OVRPRTF statment
+OVRPRTF FILE(RH360PR) OUTQ(*DEV) DEV(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)

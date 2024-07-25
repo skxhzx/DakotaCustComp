@@ -1,0 +1,400 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  HQ240CL   Import FTP item Qty Adjustments                        */
+/*  30 April 2008                                                    */
+/*  Chuck Manny                                                      */
+/*                                                                   */
+/*  Notes:                                                           */
+/*    Uses IMPFPCKQ file for 5.20                                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*                                                                   */
+/*   10/25/09  MLB  5.30                                             */
+/*     - Enh: Revised program when called with &CMD *PCKADJ or       */
+/*       *ADJDEMD to process item adjustments against item slots.    */
+/*       When &CMD is *ADJDEMD or *DEMDOLY, data in file IMPFPCKQ    */
+/*       will be fed into ITEMSLS file to be used to create *AVGQTY  */
+/*       priority replenishments.                                    */
+/*   10/25/09  MLB  5.30a                                            */
+/*     - Enh: Added client custom code support to pgm.               */
+/*   09/16/10  MLB  5.30b                                            */
+/*     - Fix: Revised pgm to remove temp code that was preventing    */
+/*       import file member from being removed at pgm completion.    */
+/*                                                                   */
+/*   11/18/11  RH   6.40a                                            */
+/*     - Enh: Call HQ245 with Parms, HQ245 was changed to use parms  */
+/*   02/09/12  MLB  6.40b                                            */
+/*     - Fix: Change to 6.40a mod. &WHSE was defined as 15,5 which   */
+/*       caused a CPF0819 Receiver value too small to hold result    */
+/*       error. Defined &WHSE as 3 alpha with default value of '000'.*/
+/*                                                                   */
+/*   11/17/15  MLB  7.00                                             */
+/*     - Fix: Corrected parms on sbmjob cmd for HQ240CL.             */
+/*   11/01/17  RTR  7.00a                                            */
+/*     - Enh: Added conversion to staging.                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revision: Fox River Foods                          */
+/*                                                                   */
+/*   10/25/09  MLB  FRF                                              */
+/*     - Enh: Revised program to add code for cmd *FRFROC to process */
+/*       item adjustments from off-site storage into ovrflow slots.  */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revision: Stern Produce                            */
+/*                                                                   */
+/*   10/27/17  MLB  SPI                                              */
+/*     - Enh: Revised program to call pgm IT505CL when cmd is        */
+/*       *PCKADJ so that demand will be populated into ITEMSLS       */
+/*       so that *AVGQTY replenishments can be created.              */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revision: Greenleaf Produce                        */
+/*   01/05/22  RH/MLB  GLPa                                          */
+/*     - FIX: Revised to call program HQ245 not HQ246                */
+/*       Update V7.40 on 12-10-21 did not merge custom changes       */
+/*       RT and RF adjustments were not created correctly, both      */
+/*       were created as negative.  RT should be positive            */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &CMD   -  *PCKADJ - Process only pick slot adjustments.(530 A) */
+/*           -  *ADJDEMD- Process both adjustments and daily demand  */
+/*           -  *DEMDOLY  Process daily demand only.         (530 A) */
+/*           -  *FRFROC   Process only slot adjustments.     (FRF A) */
+/*    &MBR   -  Member to create. Must start with alpha character.   */
+/*    &RUN   -  *INTER  Run interactively                            */
+/*              *JOBQ   Run on Jobq                                  */
+/*    &OUTQ  -  Printer output queue (Default is *JOB)               */
+/*    &FORM  -  Printer form (Default is *STD)                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  FTP command sequence                                             */
+/*                                                                   */
+/*    PUT localitem PIRFTPF/IMPFPCKQ.P123456789                      */
+/*    QUOTE RCMD PIRFTP/FTPLIBL *PROD                                */
+/*    QUOTE RCMD HQ240CL (P123456789 *INTER *JOB *STD)               */
+/*                                                                   */
+/*     where P123456789 is the unique member name                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Member name notes                                                */
+/*                                                                   */
+/*   - Member name must be unique for each PUT operation.  If not,   */
+/*     PUT will delete any existing information and replace it       */
+/*     with the new information.                                     */
+/*                                                                   */
+/*   - The first character of the member name must be an alpha       */
+/*     character.  It is suggested that 'P' be used for the          */
+/*     qty adjustments.                                              */
+/*                                                                   */
+/*   - Do not use date and/or time to make the member name unique.   */
+/*     There is always a possibility that two terminals processing   */
+/*     will call orders will generate the same date/time.            */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*   FTP items are sent into a special FTP import file.  Unlike     */
+/*   the normal import where everything goes into a single member,   */
+/*   the FTP import files contain multiple members.  The member      */
+/*   that is used for a particular session is sent in as a           */
+/*   parameter.                                                      */
+/*                                                                   */
+/*   This is designed to be called from the command line or as a     */
+/*   remote command using the FTP Quote command. When called from    */
+/*   the command line the user will be prompted for the necessary    */
+/*   parameters.  When called as a remote command, the necessary     */
+/*   parameters are passed in.                                       */
+/*                                                                   */
+/*   Normally this program is called as a remote FTP command after   */
+/*   the data has been sent.  The option to call this from the       */
+/*   command line is mainly for testing and the instances when       */
+/*   something goes wrong with the import process.                   */
+/*                                                                   */
+/*   When called as a remote FTP command the job 'Type' is '0'       */
+/*   which means it looks like a batch job.                          */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+/* HQ240CL:    PGM        PARM(&MBR &RUN &OUTQ &FORM)                (530 D) */
+ HQ240CL:    PGM        PARM(&CMD &MBR &RUN &OUTQ &FORM)          /* (530 M) */
+
+/*-------------------------------------------------------------------*/
+/*  Customer ID's                                           (530aA)  */
+/*-------------------------------------------------------------------*/
+             DCL        VAR(&Foxriver)    TYPE(*CHAR) LEN(10) +
+                          VALUE('FRF')                            /* (FRF A) */
+             DCL        VAR(&SternP)      TYPE(*CHAR) LEN(10) +
+                          VALUE('STERN')                          /* (SPI A) */
+             DCL        VAR(&greenleaf)   TYPE(*CHAR) LEN(10) +
+                          VALUE('GREENLEAF')                      /* (GLPaA) */
+
+             DCL        VAR(&CLIENT) TYPE(*CHAR) LEN(10) +
+                          VALUE(' ')                              /* (530aA) */
+             DCL        VAR(&CLIENTLOC) TYPE(*CHAR) LEN(10) +
+                          VALUE(' ')                              /* (530aA) */
+
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(HQ240CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(HQ240)
+
+  /* Report program and printer file names. */
+
+             DCL        VAR(&RPTPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(HQ245)                               /* (417) */
+             DCL        VAR(&RPTPGM2) TYPE(*CHAR) LEN(8) +
+                          VALUE(HQ246)                            /* (700aA) */
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) +
+                          VALUE(HQ245PR)                             /* (417) */
+
+  /* Informational messages */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Import FTP Inv Adjustments')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Importing FTP Inv Adjustments')
+
+  /* Messag queues */
+
+             DCL        VAR(&FTPMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('PCKADJ')
+             DCL        VAR(&FTPERRMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('PCKADJERR')
+
+  /* Import files */
+
+             DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) +
+                          VALUE('IMPFPCKQ')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&PARMS)      TYPE(*CHAR) LEN(136)     /* (640aA) */
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(8)       /* (530 A) */
+             DCL        VAR(&ERRCNT)     TYPE(*DEC)  LEN(1 0)
+             DCL        VAR(&EXIST)      TYPE(*LGL)
+             DCL        VAR(&FINISHED)   TYPE(*LGL)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&OUTQ)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&RUN)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+/*           DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(15 5)       (640bD) */
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3) +
+                                           VALUE('000')           /* (640bM) */
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*    * Get client id.                                                (530aA) */
+
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)    /* (530aA) */
+
+             CHGVAR     VAR(&ERRCNT) VALUE(0)
+             CHGVAR     VAR(&EXIST) VALUE('0')
+             CHGVAR     VAR(&FINISHED) VALUE('0')
+
+             CHGVAR VAR(%SUBSTRING(&PARMS 1 8)) VALUE(&CMD)           /* 640a */
+             CHGVAR VAR(%SUBSTRING(&PARMS 19 3)) VALUE(&WHSE)         /* 640a */
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Get job information */
+
+             RTVJOBA    JOB(&JOB) USER(&USER) TYPE(&TYPE)
+
+/* See if user wants to run from Jobq. */
+
+             IF (&RUN = '*JOBQ') THEN(DO)
+               CHGVAR VAR(&RETURN) VALUE('*JOBQ')
+               GOTO CMDLBL(SKIP1)
+             ENDDO
+
+/* Don't get options if being run from JOBQ. */
+
+             IF ((&TYPE = '0') *OR (&MBR *NE ' ')) THEN(GOTO REPORT)
+
+/*  Get report options. */
+
+             CALL       PGM(&OPTPGM) PARM(&RETURN &MBR &OUTQ +
+                          &FORM)
+
+/*  See if user wants to proceed. */
+
+             IF         COND((&RETURN *EQ '*CANCEL') *OR (&RETURN +
+                          *EQ '*EXIT')) THEN(DO)
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+
+ SKIP1:
+
+/*  Make sure members exist                                          */
+
+             CHKOBJ     OBJ(&FILE) OBJTYPE(*FILE) MBR(&MBR)
+             CHGVAR     VAR(&EXIST) VALUE('1')
+
+/*  See if user wants to put report on JOBQ. */
+
+             IF (&RETURN *EQ '*JOBQ') THEN(DO)
+               SBMJOB  CMD(CALL PGM(&SBMPGM) PARM(&CMD &MBR '*JOBQ2' +
+                          &OUTQ &FORM)) JOB(&SBMPGM)              /* (700 M) */
+               RMVMSG     CLEAR(*ALL)
+               CHGVAR  VAR(&FINISHED) VALUE('1')
+               GOTO    CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+ REPORT:
+
+/*  Make sure members exist                                          */
+
+             CHKOBJ     OBJ(&FILE) OBJTYPE(*FILE) MBR(&MBR)
+             CHGVAR     VAR(&EXIST) VALUE('1')
+
+/* Make sure &DEV and &FORM are not blank */
+
+               IF (&OUTQ = ' ') +
+                 THEN(CHGVAR VAR(&OUTQ) VALUE('*JOB'))
+               IF (&FORM = ' ') +
+                 THEN(CHGVAR VAR(&FORM) VALUE('*STD'))
+
+/* Clear any existing messages and display working message. */
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+/* Override printer file */
+
+             OVRPRTF    FILE(&PRTF) OUTQ(&OUTQ) FORMTYPE(&FORM)
+
+/* Override import files to correct member */
+
+             OVRDBF     FILE(&FILE) TOFILE(*FILE) MBR(&MBR)
+
+/* Import orders */
+
+             IF         COND(&CMD = '*PCKADJ' +
+                         *OR &CMD = '*ADJDEMD' +
+                         *OR (&CLIENT = &FOXRIVER +
+                        *AND &CMD = '*FRFROC')) THEN(DO)          /* (530 A) */
+             IF (&CLIENT = &GREENLEAF) THEN(DO)                   /* (GLPaA) */
+             CALL       PGM(&RPTPGM) PARM(&PARMS)                 /* (GLPaA) */
+             ENDDO                                                /* (GLPaA) */
+             ELSE       CMD(DO)                                   /* (GLPaA) */
+             CALL       PGM(&RPTPGM2) PARM(&RETURN)               /* (700aA) */
+             ENDDO                                                /* (GLPaA) */
+             ENDDO                                                /* (530 A) */
+
+             IF         COND(&CMD = '*ADJDEMD' +
+                         *OR (&client = &SternP) +
+                         *and (&cmd = '*PCKADJ') +
+                         *OR &CMD = '*DEMDOLY') THEN(DO)          /* (SPI M) */
+/*             Update daily demand for Avg Qty priority replen's.    (530 A) */
+               CALL       PGM(IT505CL) PARM('*TODAY' &MBR &RUN &OUTQ +
+                            &FORM)                                /* (530 A) */
+             ENDDO                                                /* (530 A) */
+
+             CHGVAR     VAR(&FINISHED) VALUE('1')
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RMVM       FILE(&FILE) MBR(&MBR)                     /* (530bM) */
+             MONMSG     MSGID(CPF320A CPF3203 CPF3220 CPF3273 +
+                          CPF7301 CPF7310) /* Ignore not removed.    (530bM) */
+             RMVMSG     CLEAR(*ALL)
+
+/*  Send 'Successful message */
+
+             IF COND(&FINISHED = '1') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import successful for' *BCAT &MBR +
+                          *TCAT '/' *CAT &RUN +
+                          *TCAT '/' *CAT &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+             ENDDO
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+
+             CHGVAR     VAR(&ERRCNT) VALUE(&ERRCNT + 1)
+             IF COND(&ERRCNT = 3) THEN(GOTO CMDLBL(BOTTOM))
+
+             IF COND(&FINISHED = '0') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import FAILED, see following +
+                          message(s):' *BCAT &MBR *TCAT '/' *CAT +
+                          &RUN *TCAT '/' *CAT +
+                          &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import FAILED, see following +
+                          message(s):' *BCAT &MBR *TCAT '/' *CAT +
+                          &RUN *TCAT '/' *CAT +
+                          &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPERRMSGQ) MSGTYPE(*INFO)
+             ENDDO
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+             IF COND(&TYPE = '1') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             ENDDO
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) TOMSGQ(&FTPMSGQ) MSGTYPE(*COMP)
+
+             IF COND(&FINISHED = '0') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) TOMSGQ(&FTPERRMSGQ) +
+                          MSGTYPE(*COMP)
+             ENDDO
+
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+ BOTTOM:
+
+               RCLRSC     LVL(*CALLER)
+
+/*  Send '*Escape' message to caller */
+
+             IF COND(&FINISHED = '0') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Error Occured Processing Member' +
+                          *BCAT &MBR) MSGTYPE(*ESCAPE)
+             ENDDO
+
+             ENDPGM

@@ -1,0 +1,249 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  STRSKTSCL   Start BFCSKTSCL socket server                        */
+/*  23 January 2014                                                  */
+/*  Kenneth Elder                                                    */
+/*                                                                   */
+/*  Revisions                                                        */
+/*                                                                   */
+/*    01/23/14  KDE  6.20                                            */
+/*      - Created.                                                   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+ STRSKTSCL:  PGM        PARM(&PORT &PUTJOBQ &JOBD &JOBQ &LIBL)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&COPSRV)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBD)       TYPE(*CHAR) LEN(20)
+             DCL        VAR(&JOBDLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBDNAME)   TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBNAME)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(20)
+             DCL        VAR(&JOBQLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBQNAME)   TYPE(*CHAR) LEN(10)
+             DCL        VAR(&LIB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&LIBL)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(128)
+             DCL        VAR(&PORT)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&PORT15)     TYPE(*DEC)  LEN(15 5)
+             DCL        VAR(&PORT5A)     TYPE(*CHAR) LEN(5)
+             DCL        VAR(&PUTJOBQ)    TYPE(*CHAR) LEN(4)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&SKTSCL)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&SCLSRV)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WSNAME)     TYPE(*CHAR) LEN(32)
+
+             DCLF       FILE(SCALE)
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+             CHGVAR     VAR(&LIB) VALUE('*LIBL')
+
+/*  Extract job description name and library */
+
+             CHGVAR     VAR(&JOBDNAME) VALUE(%SST(&JOBD 1 10))
+             CHGVAR     VAR(&JOBDLIB) VALUE(%SST(&JOBD 11 10))
+
+/*  Extract job queue name and library */
+
+             CHGVAR     VAR(&JOBQNAME) VALUE(%SST(&JOBQ 1 10))
+             CHGVAR     VAR(&JOBQLIB) VALUE(%SST(&JOBQ 11 10))
+
+/*  Find port to get device name and warehouse  */
+             CHGVAR   VAR(&WSNAME) VALUE('NOT FOUND')
+LOOP:
+             RCVF
+             MONMSG     MSGID(CPF0864) EXEC(DO)
+                      GOTO CMDLBL(ENDALL)
+             ENDDO
+
+
+/*  if port less than 10000 then blank leading zero   */
+             CHGVAR     VAR(&PORT5A) VALUE(&SCPORT)
+
+             IF         COND(&PORT5A *EQ '00000') THEN(GOTO +
+                          CMDLBL(LOOP))
+
+             if         COND(&SCPORT *LT 10000) then(DO)
+             CHGVAR     VAR(&PORT5A) VALUE(%SST(&PORT5A 2 4))
+             ENDDO
+/*   If *ALL was passed to start all scales we should loop through */
+/*    all Scale records and start the respective jobs    */
+             IF         COND((&PORT *EQ '*ALL') *OR (&PORT *EQ +
+                          '*all')) THEN(DO)
+                          GOTO CMDLBL(PROCESS)
+             ENDDO
+
+             IF         COND(&PORT *NE &PORT5A) THEN(GOTO +
+                          CMDLBL(LOOP))
+
+PROCESS:
+/*  when IP PORT found capture the associated workstation name */
+             CHGVAR     VAR(&WSNAME) VALUE(&SCID)
+             CHGVAR     VAR(&PORT15) VALUE(&SCPORT)
+
+EXITLOOP:
+
+/*  Make sure record was found for selected PORT      */
+             if         COND(&WSNAME *EQ 'NOT FOUND') THEN(GOTO +
+                          CMDLBL(ERRORSCL))
+
+/*  Create Job Name to be used for job submit   */
+
+             IF         COND(&PORT15 *LT 10000) THEN(DO)
+             CHGVAR     VAR(&SKTSCL) VALUE('SCL0S0' *CAT &PORT5A)
+             CHGVAR     VAR(&SCLSRV) VALUE('SCLSV0' *CAT &PORT5A)
+             ENDDO
+             IF         COND(&PORT15 *GE 10000) THEN(DO)
+             CHGVAR     VAR(&SKTSCL) VALUE('SCL0S' *CAT &PORT5A)
+             CHGVAR     VAR(&SCLSRV) VALUE('SCLSV' *CAT &PORT5A)
+             ENDDO
+
+/*  Create submitted job name  */
+
+             CHGVAR     VAR(&JOBNAME) VALUE(&SKTSCL)
+
+/* Check to see if user wants to run locally   */
+             IF         COND(&PUTJOBQ *EQ '*NO') THEN(DO)
+      /*  submit server job if demo without real scale  */
+             IF         COND(%SST(&SCDEMO 1 1) *EQ 'Y') THEN(DO)
+             SBMJOB     CMD(CALL PGM(BFCSCLSRV) PARM(&PORT15)) +
+                          JOB(&SCLSRV) JOBD(&JOBD) JOBQ(QBATCH) +
+                          CURLIB(*CRTDFT) INLLIBL(&LIBL)
+             ENDDO
+             CALL       PGM(BFCSKTSCL) PARM(&WSNAME &PORT15)
+
+ /*  loop and start next scale if *ALL was passed versus one scale */
+             IF         COND((&PORT *EQ '*ALL') *OR (&PORT *EQ +
+                          '*all')) THEN(DO)
+                        GOTO CMDLBL(LOOP)
+             ENDDO
+
+/*  otherwise, for one scale end after starting */
+             GOTO ENDALL
+             ENDDO
+
+/* Otherwise, put on job queue */
+
+             CHGVAR     VAR(&MSGDTA) VALUE('Submitting BFC Scale +
+                          client program BFCSKTSCL for ip port ' *CAT +
+                          &PORT5A *CAT ' using jobd ' *CAT +
+                          &JOBDLIB *CAT '/' *CAT &JOBDNAME)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA(&MSGDTA) +
+                          TOPGMQ(*EXT) MSGTYPE(*STATUS)
+
+           CALL       PGM(CHKACTSCL) PARM(&SKTSCL &RETURN)
+           IF         (&RETURN *NE '*NOTEXIST') THEN(DO)
+             CHGVAR     VAR(&MSGDTA) VALUE('Scale socket client +
+                          program for port ' *CAT &PORT5A *CAT ' +
+                          already running')
+           SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA(&MSGDTA)
+           GOTO       CMDLBL(ERROR)
+           ENDDO
+
+             IF         COND(%SST(&JOBD 1 1) *EQ '*' & %SST(&JOBQ 1 +
+                          1) *EQ '*') THEN(DO)
+             SBMJOB     CMD(CALL PGM(BFCSKTSCL) PARM(&WSNAME +
+                          &PORT15)) JOB(&JOBNAME) JOBD(&JOBD) +
+                          JOBQ(&JOBQ) CURLIB(*CRTDFT) INLLIBL(&LIBL)
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(ERROR))
+             ENDDO
+
+
+             IF         COND(%SST(&JOBD 1 1) *EQ '*' & %SST(&JOBQ 1 +
+                          1) *NE '*') THEN(DO)
+      /*  submit server job if demo without real scale  */
+             IF         COND(%SST(&SCDEMO 1 1) *EQ 'Y') THEN(DO)
+             SBMJOB     CMD(CALL PGM(BFCSCLSRV) PARM(&PORT15)) +
+                          JOB(&SCLSRV) JOBD(&JOBD) +
+                          JOBQ(&JOBQLIB/&JOBQNAME) CURLIB(*CRTDFT) +
+                          INLLIBL(&LIBL)
+             ENDDO
+             SBMJOB     CMD(CALL PGM(BFCSKTSCL) PARM(&WSNAME +
+                          &PORT15)) JOB(&JOBNAME) JOBD(&JOBD) +
+                          JOBQ(&JOBQLIB/&JOBQNAME) CURLIB(*CRTDFT) +
+                          INLLIBL(&LIBL)
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(ERROR))
+             ENDDO
+
+
+             IF         COND(%SST(&JOBD 1 1) *NE '*' & %SST(&JOBQ 1 +
+                          1) *EQ '*') THEN(DO)
+      /*  submit server job if demo without real scale  */
+             IF         COND(%SST(&SCDEMO 1 1) *EQ 'Y') THEN(DO)
+             SBMJOB     CMD(CALL PGM(BFCSCLSRV) PARM(&PORT15)) +
+                          JOB(&SCLSRV) JOBD(&JOBDLIB/&JOBDNAME) +
+                          JOBQ(&JOBQ) CURLIB(*CRTDFT) INLLIBL(&LIBL)
+             ENDDO
+             SBMJOB     CMD(CALL PGM(BFCSKTSCL) PARM(&WSNAME +
+                          &PORT15)) JOB(&JOBNAME) +
+                          JOBD(&JOBDLIB/&JOBDNAME) JOBQ(&JOBQ) +
+                          CURLIB(*CRTDFT) INLLIBL(&LIBL)
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(ERROR))
+             ENDDO
+
+
+             IF         COND(%SST(&JOBD 1 1) *NE '*' & %SST(&JOBQ 1 +
+                          1) *NE '*') THEN(DO)
+      /*  submit server job if demo without real scale  */
+             IF         COND(%SST(&SCDEMO 1 1) *EQ 'Y') THEN(DO)
+             SBMJOB     CMD(CALL PGM(BFCSCLSRV) PARM(&PORT15)) +
+                          JOB(&SCLSRV) JOBD(&JOBDLIB/&JOBDNAME) +
+                          JOBQ(&JOBQLIB/&JOBQNAME) CURLIB(*CRTDFT) +
+                          INLLIBL(&LIBL)
+             ENDDO
+             SBMJOB     CMD(CALL PGM(BFCSKTSCL) PARM(&WSNAME +
+                          &PORT15)) JOB(&JOBNAME) +
+                          JOBD(&JOBDLIB/&JOBDNAME) +
+                          JOBQ(&JOBQLIB/&JOBQNAME) CURLIB(*CRTDFT) +
+                          INLLIBL(&LIBL)
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(ERROR))
+             ENDDO
+
+             CHGVAR     VAR(&MSGDTA) VALUE('BFC scale client program +
+                          BFCSKTSCL for port ' *CAT &PORT5A *CAT ' +
+                          submitted using jobd ' *CAT &JOBDLIB *CAT +
+                          '/' *CAT &JOBDNAME)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA(&MSGDTA)
+
+ /*  loop and start next scale if *ALL was passed versus one scale */
+             IF         COND((&PORT *EQ '*ALL') *OR (&PORT *EQ +
+                          '*all')) THEN(DO)
+                        GOTO CMDLBL(LOOP)
+             ENDDO
+
+/*  otherwise, for one scale end after starting */
+             GOTO ENDALL
+
+ ERROR:
+             CHGVAR     VAR(&MSGDTA) VALUE('Could not submit scale +
+                          program BFCSKTSCL for port ' *CAT &PORT5A +
+                          *CAT ' using jobd ' *CAT &JOBDLIB *CAT +
+                          '/' *CAT &JOBDNAME)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA(&MSGDTA)
+
+ /*  loop and start next scale if *ALL was passed versus one scale */
+             IF         COND((&PORT *EQ '*ALL') *OR (&PORT *EQ +
+                          '*all')) THEN(DO)
+                        GOTO CMDLBL(LOOP)
+             ENDDO
+
+/*  otherwise, for one scale end after starting */
+             GOTO ENDALL
+
+ ERRORSCL:
+             CHGVAR     VAR(&MSGDTA) VALUE('Could not submit server +
+                          program BFCSKTSCL because Port ' *CAT +
+                          &PORT5A *CAT ' was not found.  Please +
+                          check the Scale file for Port')
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QCPFMSG) MSGDTA(&MSGDTA)
+             GOTO ENDALL
+
+ ENDALL:     RETURN
+             ENDPGM

@@ -1,0 +1,557 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1996 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  EPMTSK      EPM task handling.
+     F*  16 October, 2001
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions
+     F*
+     F*    10/16/01  HNK 4.16
+     F*      - Created
+     F*
+416a F*    03/30/02  HNK 4.16a
+     F*      - Fix - Initialize PTRDTE field.
+640aA*    06/04/12  LMC  6.40a
+     *      - Enh: Added call to WRTTRAN1 for PIRTRAND.
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FTASK    IF  E           K        DISK
+     FPIRTRAN UF  E           K        DISK                      A
+     FPIRTRAN1IF  E           K        DISK
+     F            PTREC                             KRENAMEPTREC1
+     FPIRTRAN2IF  E           K        DISK
+     F            PTREC                             KRENAMEPTREC2
+     I*----------------------------------------------------------------
+     I*  PIRTRAN record layout for use as parameters
+     I*
+     IPTPARM    E DSPIRTRAN
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'ADJTSKDET'           C         @ADJTD
+     I              'ADJTRAN  '           C         @ADJTR
+     I              'CVTDTE'              C         @CVTDT
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*
+     I            DS
+     I                                        1   60DSHMS
+     I                                        1   40DSHM
+     I                                        1   20DSHH
+     I                                        3   40DSMM
+     I                                        5   60DSSS
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERQTY
+     I                                    P  11  120ERPAL
+     I                                       13  27 ERITEM
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *ENDCUR = End current transaction.
+     C*              *STRIDL = Start idle task.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PEMP#  Employee number
+     C*      $PSHFT  Shift code
+     C*      $PCREW  Crew code
+     C*      $PWHSE  Warehouse
+     C*      $PWHDP  Department
+     C*      $PSTYP  Section
+     C*      $PQPCK  Quantity
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   *OK      - No problem encountered.
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*                         (for use with $PTYPE = *INTER).
+     C*      $PMSG   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PEMP#  50
+     C                     PARM           $PSHFT  6
+     C                     PARM           $PCREW  6
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PSTYP  1
+     C                     PARM           $PQPCK  50
+     C                     PARM           $PRTN   8
+     C                     PARM           $PMSG   4
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PMSG
+     C*
+     C                     EXSR ZZINZ
+     C*
+     C                     SELEC
+     C           $PCMD     WHEQ '*ENDCUR '
+     C                     EXSR ZZTASK
+     C                     EXSR ZZEND
+     C*
+     C           $PCMD     WHEQ '*STRIDL '
+     C                     EXSR ZZIDLE
+     C                     ENDSL
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZEND  End current task.
+     C*
+     CSR         ZZEND     BEGSR
+     C*  No current task to end.
+     CSR         CURTRN    CABEQ0         ENDEND
+     C*  End current task
+     CSR                   Z-ADDCURTRN    WOTRN#
+     CSR         PTKEY     CHAINPIRTRAN              79
+     CSR         *IN79     IFEQ *OFF
+     CSR         CURTYP    IFEQ 'D'
+     CSR         CURTSK    ANDNE'IDLE  '
+     CSR                   MOVE '3'       PTSTAT
+     CSR                   ELSE
+     CSR                   MOVE '4'       PTSTAT
+     CSR                   ENDIF
+     CSR                   MOVE 'N'       PTETYP
+     CSR                   ENDIF
+     C*
+     CSR                   CALL @ADJTD
+     CSR                   PARM '*END    '@PCMD   8
+     CSR                   PARM '*INTER  '@PTYPE  8
+     CSR                   PARM           PTPARM
+     CSR                   PARM ' '       @PRTN   8
+     CSR                   PARM ' '       @PMSG   4
+     C*
+     CSR                   UPDATPTREC                  79
+640aAC                     EXSR ZZWRTT
+     C*
+     CSR         CURTYP    IFEQ 'D'
+     C*
+     C*        There is a posibility that a manual task might have
+     C*        been added before the current task was ended. Hence
+     C*        adjust the current task just ended, if there is
+     C*        any overlapping manual task.
+     C*
+     CSR                   Z-ADDPTTRN#    SVTRN#
+     C*  Past overnight. (PTEDTE > PTSDTE)
+     CSR         PTEDTE    IFGT PTSDTE
+     CSR                   Z-ADDPTEDTE    STDATE
+     CSR                   ELSE
+     CSR                   Z-ADDPTSDTE    STDATE
+     CSR                   ENDIF
+     CSR                   Z-ADDPTSDTE    ZZSDTE
+     CSR                   Z-ADDPTEDTE    ZZEDTE
+     CSR                   Z-ADDPTSTIM    ZZSTIM
+     CSR                   Z-ADDPTETIM    ZZETIM
+     CSR                   EXSR ZZCKU2
+     CSR                   ENDIF
+     C*
+     CSR         ENDEND    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZABRT   Abort a transaction
+     C*
+     CSR         ZZABRT    BEGSR
+     CSR                   MOVE PTTASK    @PTASK
+     CSR                   Z-ADD0         @PCUBE
+     CSR                   Z-ADD0         @PSWGT
+     CSR                   CALL @ADJTR
+     CSR                   PARM '*UNDO   '@PCMD   8
+     CSR                   PARM           #JOB
+     CSR                   PARM PTTRN#    @PTRN#  70
+     CSR                   PARM           @PTASK  6
+     CSR                   PARM $PWHSE    @PWHSE  30
+     CSR                   PARM $PWHDP    @PWHDP  5
+     CSR                   PARM $PSTYP    @PSTYP  1
+     CSR                   PARM           @PCUBE  93
+     CSR                   PARM           @PSWGT  92
+     CSR                   PARM $PQPCK    @PPCS   50
+     CSR                   PARM 0         @PAISL  50
+     CSR                   PARM 0         @PQTY1  50
+     CSR                   PARM 0         @PQTY2  50
+     CSR                   PARM 0         @PQTY3  50
+     CSR                   PARM '0'       @PRTE   5
+     CSR                   PARM ' '       @PPO    9
+     CSR                   PARM 'P'       @PGRP1  1
+     C*R                   PARM 'L'       @PGRP1  1
+     CSR                   PARM ' '       @PGRP2  1
+     CSR                   PARM ' '       @PRTN   8
+     CSR                   PARM ' '       @PMSG   4
+     C*    Start an 'IDLE' task.
+     CSR                   EXSR ZZIDLE
+     CSR         ENDABR    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCKU2   Check for overlapping task and update the current
+     C*           task just ended, by adjusting the time.
+     C*
+     CSR         ZZCKU2    BEGSR
+     CSR         *LIKE     DEFN PTTRN#    SVTRN#
+     CSR         *LIKE     DEFN PTDMIN    SVTLEN
+     CSR                   Z-ADD0         SVTLEN
+     CSR         PTKEY2    SETLLPIRTRAN2
+     CSR         FOREVR    DOWEQFOREVR
+     CSR                   READ PIRTRAN2                 79
+     CSR         *IN79     IFEQ *ON
+     CSR         PTSDTE    ORLT ZZSDTE
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*   Skip the task that just ended.
+     CSR         *IN79     IFEQ *OFF
+     CSR         PTTRN#    ANDEQSVTRN#
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*   Skip 'IDLE' task
+     C*
+     CSR         PTTASK    IFEQ 'IDLE'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE PTTASK    T#TASK
+     CSR         TKKEY     CHAINTASK                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE ' '       TKTYPE
+     CSR                   ENDIF
+     C*   Accumulate overlapping minutes.(Same start and end date)
+     C*                  Start     Start       End      End    Overlap
+     C*           Task    date      time       time     date   Minutes
+     C*Auto  (ZZ) CLEAN 1/25/96  10:00:23   11:30:35  1/25/96
+     C*Manual(PT) BREAK 1/25/96  10:30:00   10:45:00  1/25/96   (15)
+     C*
+     C*   Auto    CLEAN 1/25/96  14:50:23    9:30:23  1/26/96
+     C*   Manual  BREAK 1/25/96  23:30:00    1:30:00  1/26/96   (120)
+     C*
+     CSR         *IN79     IFEQ *OFF
+     CSR         PTSDTE    ANDEQZZSDTE
+     CSR         PTEDTE    ANDEQZZEDTE
+     CSR         PTSTIM    ANDGEZZSTIM
+     CSR         PTETIM    ANDLEZZETIM
+     CSR         TKTYPE    ANDEQ'I'
+     C*R         PTETYP    ANDEQ'M'
+     CSR                   Z-ADDPTSTIM    STRTIM
+     CSR                   Z-ADDPTETIM    FINTIM
+     CSR                   EXSR ZZTIME
+     CSR                   ADD  TIMLEN    SVTLEN
+     CSR                   ENDIF
+     C*   Accumulate overlapping minutes(Diff start date/same end date)
+     C*                                  (Past midnight)
+     C*                  Start     Start       End      End    Overlap
+     C*           Task    date      time       time     date   Minutes
+     C*Auto  (ZZ) CLEAN 1/25/96  14:50:23    9:30:23  1/26/96
+     C*Manual(PT) BREAK 1/26/96   8:00:00    8:30:00  1/26/96   (30)
+     C*
+     CSR         *IN79     IFEQ *OFF
+     CSR         PTSDTE    ANDGTZZSDTE
+     CSR         PTEDTE    ANDEQZZEDTE
+     CSR         PTETIM    ANDLEZZETIM
+     CSR         TKTYPE    ANDEQ'I'
+     C*R         PTETYP    ANDEQ'M'
+     CSR                   Z-ADDPTSTIM    STRTIM
+     CSR                   Z-ADDPTETIM    FINTIM
+     CSR                   EXSR ZZTIME
+     CSR                   ADD  TIMLEN    SVTLEN
+     CSR                   ENDIF
+     C*   Accumulate overlapping minutes.(Same start date/diff end date)
+     C*                  Start     Start       End      End    Overlap
+     C*           Task    date      time       time     date   Minutes
+     C*Auto  (ZZ) CLEAN 1/25/96  14:50:23    9:30:23  1/26/96
+     C*Manual(PT) BREAK 1/25/96  16:00:00   16:30:00  1/25/96   (30)
+     C*
+     CSR         *IN79     IFEQ *OFF
+     CSR         PTSDTE    ANDEQZZSDTE
+     CSR         PTEDTE    ANDLTZZEDTE
+     CSR         PTSTIM    ANDGEZZSTIM
+     CSR         TKTYPE    ANDEQ'I'
+     C*R         PTETYP    ANDEQ'M'
+     CSR                   Z-ADDPTSTIM    STRTIM
+     CSR                   Z-ADDPTETIM    FINTIM
+     CSR                   EXSR ZZTIME
+     CSR                   ADD  TIMLEN    SVTLEN
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*   Update the task that just ended.
+     C*
+     CSR         SVTRN#    CHAINPIRTRAN              79
+     CSR         *IN79     IFEQ *OFF
+     CSR         PTDMIN    IFGT 0
+     CSR         PTDMIN    SUB  SVTLEN    PTDMIN
+     CSR                   ELSE
+     CSR         PTIMIN    SUB  SVTLEN    PTIMIN
+     CSR                   ENDIF
+     CSR                   UPDATPTREC
+640aAC                     EXSR ZZWRTT
+     CSR                   ENDIF
+     CSR         ENDCU2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZIDLE   Create and Start an Idle task.
+     C*
+     CSR         ZZIDLE    BEGSR
+     CSR                   CALL 'PIRTRN#'
+     CSR                   PARM           PTTRN#
+     CSR                   MOVE '2'       PTSTAT
+     CSR                   MOVEL'IDLE  '  PTTASK
+     CSR                   MOVEL'IDLE  '  T#TASK
+     CSR         TKKEY     CHAINTASK                 77
+     CSR                   MOVE TKCAT     PTCAT
+     CSR                   MOVE TKSUB     PTSUB
+     CSR                   SELEC
+     CSR         TKTLVL    WHEQ 'S'
+     CSR                   Z-ADD$PWHSE    PTWHSE
+     CSR                   MOVE $PWHDP    PTWHDP
+     CSR                   MOVE $PSTYP    PTSTYP
+     CSR         TKTLVL    WHEQ 'D'
+     CSR                   Z-ADD$PWHSE    PTWHSE
+     CSR                   MOVE W1WHDP    PTWHDP
+     CSR                   MOVE *BLANKS   PTSTYP
+     CSR                   OTHER
+     CSR                   Z-ADDW1WHSE    PTWHSE
+     CSR                   MOVE *BLANKS   PTWHDP
+     CSR                   MOVE *BLANKS   PTSTYP
+     CSR                   ENDSL
+     CSR                   MOVE $PSHFT    PTSHFT
+     CSR                   MOVE $PCREW    PTCREW
+     CSR                   Z-ADDW1EMP#    PTEMP#
+     CSR                   Z-ADD0         PTCUBE
+     CSR                   Z-ADD0         PTSWGT
+     CSR                   Z-ADD0         PTPCS
+     CSR                   Z-ADD0         PTAISL
+     CSR                   Z-ADD0         PTQTY1
+     CSR                   Z-ADD0         PTQTY2
+     CSR                   Z-ADD0         PTQTY3
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    PTGDTE
+     CSR                   TIME           PTGTIM
+     CSR                   Z-ADD$CVD8O    PTSDTE
+     CSR                   TIME           PTSTIM
+     CSR                   Z-ADD0         PTEDTE
+     CSR                   Z-ADD0         PTETIM
+     CSR                   MOVE *BLANKS   PTETYP
+     CSR                   Z-ADD0         PTCDTE
+     CSR                   Z-ADD0         PTCTIM
+     CSR                   Z-ADD0         PTDMIN
+     CSR                   Z-ADD0         PTIMIN
+416aACSR                   Z-ADD$CVD8O    PTRDTE
+     CSR                   MOVE *BLANKS   PTRTPO
+     CSR                   WRITEPTREC                  79
+640aAC                     EXSR ZZWRTT
+     C*
+     CSR         ENDIDL    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     CSR                   Z-ADD0         CURTRN  70
+     CSR                   MOVE *BLANKS   CURTSK  6
+     CSR                   MOVE *BLANKS   CURTYP  1
+     CSR                   MOVE *OFF      CURENT  1
+     CSR                   MOVE *ON       FOUND   1
+     CSR                   MOVE *OFF      FOREVR  1
+     CSR                   Z-ADD$PEMP#    W1EMP#  50
+     CSR                   Z-ADD0         WOTRN#  70
+     CSR         *LIKE     DEFN PTSTIM    STRTIM
+     CSR         *LIKE     DEFN PTETIM    FINTIM
+     CSR         *LIKE     DEFN PTSTIM    ZZSTIM
+     CSR         *LIKE     DEFN PTETIM    ZZETIM
+     CSR         *LIKE     DEFN PTSDTE    ZZSDTE
+     CSR         *LIKE     DEFN PTEDTE    ZZEDTE
+     C*
+     CSR                   Z-ADD$PWHSE    W1WHSE  30
+     CSR                   MOVE $PWHDP    W1WHDP  5
+     C*
+     C*  Define key for PIRTRAN file.
+     C*
+     CSR         PTKEY     KLIST
+     CSR                   KFLD           WOTRN#
+     C*
+     C*  Define key for PIRTRAN1 file.
+     C*
+     CSR         *LIKE     DEFN PTSTAT    KYSTAT
+     CSR         PTKEY1    KLIST
+     CSR                   KFLD           W1EMP#
+     CSR                   KFLD           KYSTAT
+     C*
+     C*  Define partial key for PIRTRAN2 file.
+     C*
+     CSR         PTKEY2    KLIST
+     CSR                   KFLD           W1EMP#
+     CSR                   KFLD           STDATE
+     C*
+     C*  Define key for PIRTRAN2 file.
+     C*
+     CSR         *LIKE     DEFN PTSDTE    STDATE
+     CSR         *LIKE     DEFN PTSTIM    STTIME
+     CSR         PTKE22    KLIST
+     CSR                   KFLD           W1EMP#
+     CSR                   KFLD           STDATE
+     CSR                   KFLD           STTIME
+     C*
+     CSR         TKKEY     KLIST
+     CSR                   KFLD           T#TASK  6
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZTASK  Get current task.
+     C*
+     CSR         ZZTASK    BEGSR
+     CSR                   Z-ADD*HIVAL    STDATE
+     CSR                   Z-ADD*HIVAL    STTIME
+     C*
+     CSR                   MOVE '2'       KYSTAT
+     CSR         PTKEY1    SETLLPIRTRAN1
+     CSR         PTKEY1    READEPIRTRAN1                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *OFF      FOUND
+     CSR                   GOTO ENDTSK
+     CSR                   ENDIF
+     C*
+     CSR         PTKE22    SETLLPIRTRAN2
+     CSR         FOREVR    DOWEQFOREVR
+     CSR                   READ PIRTRAN2                 79
+     CSR         *IN79     IFEQ *ON
+     CSR         PTEMP#    ORNE W1EMP#
+     CSR                   MOVE *OFF      FOUND
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR         PTSTAT    IFNE '2'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*   Found an active transaction
+     CSR                   MOVE *ON       CURENT
+     CSR                   Z-ADDPTTRN#    CURTRN
+     CSR                   MOVE PTTASK    T#TASK
+     CSR         TKKEY     CHAINTASK                 79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE TKCODE    CURTSK
+     CSR                   MOVE TKTYPE    CURTYP
+     CSR                   ENDIF
+     CSR                   LEAVE
+     CSR                   ENDDO
+     CSR         ENDTSK    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZTIME   Update for screen 1.
+     C*
+     CSR         ZZTIME    BEGSR
+     C*
+     C*      Calculate length of time in minutes for output.
+     C*
+     CSR                   Z-ADDSTRTIM    DSHMS
+     C*   Round up minute, if the seconds is >= 30
+     CSR         DSSS      IFGE 30
+     CSR                   ADD  1         DSMM
+     CSR                   ENDIF
+     CSR         DSHH      MULT 60        TMPBEG  40
+     CSR                   ADD  DSMM      TMPBEG
+     C*
+     CSR                   Z-ADDFINTIM    DSHMS
+     C*   Round up minute, if the seconds is >= 30
+     CSR         DSSS      IFGE 30
+     CSR                   ADD  1         DSMM
+     CSR                   ENDIF
+     C*
+     C*   If the ending time is < starting time, than
+     C*   we have gone past the midnight.
+     C*
+     CSR         FINTIM    IFLT STRTIM
+     CSR                   ADD  24        DSHH
+     CSR                   ENDIF
+     CSR         DSHH      MULT 60        TMPEND  40
+     CSR                   ADD  DSMM      TMPEND
+     C*
+     CSR         *LIKE     DEFN PTDMIN    TIMLEN
+     CSR         TMPEND    SUB  TMPBEG    TIMLEN
+     CSR         TIMLEN    IFLT 0
+     CSR                   Z-ADD0         TIMLEN
+     CSR                   ENDIF
+     C*
+     CSR         ENDTIM    ENDSR
+640aAC*----------------------------------------------------------------*********
+640aAC*
+640aAC*  ZZWRTT     Execute new WRTTRAN1 program to add/update PIRTRANDn
+640aAC*
+640aAC           ZZWRTT    BEGSR
+640aAC                     MOVEL'*ONETRAN'WPCMD  10
+640aAC                     Z-ADD0         WPWAIT  20
+640aAC                     MOVELPTWHSE    WPWHSE  30
+640aAC                     MOVELPTTRN#    WPTRN#  70
+640aAC                     Z-ADD0         WPFRDT  80
+640aAC                     Z-ADD0         WPTODT  80
+640aAC                     Z-ADD0         WPEMP#  50
+640aAC                     CALL 'WRTTRAN1'
+640aAC                     PARM           WPCMD
+640aAC                     PARM           WPWAIT
+640aAC                     PARM           WPWHSE
+640aAC                     PARM           WPTRN#
+640aAC                     PARM           WPFRDT
+640aAC                     PARM           WPTODT
+640aAC                     PARM           WPEMP#
+640aAC                     ENDSR

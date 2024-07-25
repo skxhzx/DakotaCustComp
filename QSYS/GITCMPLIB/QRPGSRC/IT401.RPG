@@ -1,0 +1,454 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT401     Shelf life expiration report
+     F*  01 April, 1996
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions:
+     F*
+213 AF*    05/20/96  DAS
+     F*      - Moved PIRITMS fields into PIRITEM.
+     F*
+412 AF*    08/25/99  HNK 4.12
+     F*      - Qty field added.
+     F*
+413 AF*    10/13/99  HNK 4.13
+     F*      - Qty field added. (This did not get putin in 412)
+     F*      - Dept added on report.
+417aAF*    09/19/03  RH  4.17a
+     F*      - ENH:Change file to use Buyer #, recompile only.
+530aAF*    09/11/10  RH  5.30a
+     F*      - ENH:Only print if Available qty is not 0.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT401   IP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FIT401PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        3  7 0
+     E*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I            DS
+     I                                        1   60T#DATE
+     I                                        1   20MONTH
+     I                                        3   40DAY
+     I                                        5   60YEAR
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break -
+     C*
+     C*          *INL1     IFEQ *ON
+     C*                    Z-ADD1         L
+     C*                    EXSR ZRZERO
+     C*                    ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+417aAC*   Supress buyer# if buyer did not change.
+417aAC           IMBNBR    IFEQ SVBNBR
+417aAC                     MOVE *BLANKS   W1BNBR
+417aAC                     ELSE
+417aAC                     MOVE IMBNBR    W1BNBR
+417aAC                     ENDIF
+     C*
+417aAC*   Supress item # if item did not change.
+417aAC           ITITEM    IFEQ SVITEM
+417aAC                     MOVE *BLANKS   W1ITEM
+417aAC                     ELSE
+417aAC                     MOVE ITITEM    W1ITEM
+417aAC                     ENDIF
+     C*
+     C* Entered date
+     C*
+     C           SLENTD    IFNE 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE SLENTD    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    ENDATE
+     C                     ELSE
+     C                     Z-ADD0         ENDATE
+     C                     ENDIF
+     C*
+     C* Convert entered date to julian
+     C*
+     C                     MOVE ENDATE    G$DATE
+     C                     Z-ADD2         DTFRMT  10
+     C                     EXSR GTOJ$
+     C                     Z-ADDG$JD      ENTJUL  50
+     C*
+     C* Add shelf life to entered date and subtract notice days
+     C*
+213 DC*          ENTJUL    ADD  ISSLIF    T#EJUL  50
+213 MC           ENTJUL    ADD  ITSLIF    T#EJUL  50
+     C                     Z-ADDT#EJUL    J$JD    50
+     C                     EXSR JTOG$
+     C                     Z-ADDJ$MM      MONTH
+     C                     Z-ADDJ$DD      DAY
+     C                     MOVE J$YYYY    YEAR
+     C                     Z-ADDT#DATE    SLDATE
+213 DC*          T#EJUL    SUB  ISNDAY    T#NJUL  50
+213 MC           T#EJUL    SUB  ITNDAY    T#NJUL  50
+     C*
+     C* Convert today's date to julian
+     C*
+     C                     MOVE '*CURCMD '$CVCMD
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD8O    CURDTE  80
+     C                     MOVE CURDTE    G$DATE
+     C                     Z-ADD1         DTFRMT  10
+     C                     EXSR GTOJ$
+     C                     Z-ADDG$JD      T#CJUL  50
+     C*
+     C*
+     C* Expiration date
+     C*
+     C           SLEXPD    IFNE 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE SLEXPD    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    EXDATE
+     C                     ELSE
+     C                     Z-ADD0         EXDATE
+     C                     ENDIF
+412 AC*
+412 AC*     Call program to calculate availabe slot quantities.
+412 AC*
+412 AC                     CALL 'SLOTQTY'
+412 AC                     PARM           SLSTK1
+412 AC                     PARM           SLSTK2
+412 AC                     PARM           SLSTK3
+412 AC*
+412 AC                     PARM           SLALC1
+412 AC                     PARM           SLALC2
+412 AC                     PARM           SLALC3
+412 AC*
+412 AC                     PARM           SLTFR1
+412 AC                     PARM           SLTFR2
+412 AC                     PARM           SLTFR3
+412 AC*
+412 AC                     PARM           SLPCK1
+412 AC                     PARM           SLPCK2
+412 AC                     PARM           SLPCK3
+412 AC*
+412 AC                     PARM           SLRCV1
+412 AC                     PARM           SLRCV2
+412 AC                     PARM           SLRCV3
+412 AC*
+412 AC                     PARM           STOCK1  50
+412 AC                     PARM           STOCK2  30
+412 AC                     PARM           STOCK3  30
+412 AC*
+413 MC                     PARM           AVAIL1
+412 AC                     PARM           AVAIL2  30
+412 AC                     PARM           AVAIL3  30
+     C*
+530aAC           AVAIL1    IFNE 0
+530aAC           AVAIL2    ORNE 0
+530aAC           AVAIL3    ORNE 0
+     C           T#NJUL    IFLE T#CJUL
+     C                     WRITEDETAIL1
+     C*
+417a C                     Z-ADDIMBNBR    SVBNBR
+417a C                     MOVE ITITEM    SVITEM
+     C                     ENDIF
+530aAC                     ENDIF
+     C*
+     C*
+     C*  Accumulate totals
+     C*
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      FIRST
+     C*----------------------------------------------------------------
+     C*
+     C* L1 type totals
+     C*
+     C*1                   Z-ADD1         L
+     C*1                   EXSR ZRROLL
+     C*
+     C*1         RECK,L    IFGT 0
+     C**                   WRITESKIP1
+     C*1                   EXSR ZRTOTL
+     C*1                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD2         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C           RPKEY     KLIST
+     C                     KFLD           WKPRTF 10
+     C*
+417aACSR                   Z-ADD0         SVBNBR  30
+414aACSR                   MOVE *BLANKS   SVITEM 15
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD3         L       10
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           GTOJ$     BEGSR
+     C                     MOVE G$DATE    G$DATE  60
+     C* SPLIT DATE INTO MONTH, DAY, YEAR FIELDS
+     C           DTFRMT    IFEQ 1                          BLVL-01
+     C                     MOVELG$DATE    G$YY    20
+     C                     MOVE G$DATE    WORK4   4
+     C                     MOVELWORK4     G$MM    20
+     C                     MOVE WORK4     G$DD    20
+     C                     ELSE                            EELS-01
+     C                     MOVELG$DATE    G$MM
+     C                     MOVE G$DATE    WORK4
+     C                     MOVELWORK4     G$DD
+     C                     MOVE WORK4     G$YY
+     C                     END                             EEND-01
+     C* CREATE 4 DIGIT YEAR
+     C                     MOVE G$YY      G$YYYY  40
+     C           G$YY      IFGE 60                         BLVL-01
+     C                     MOVEL'19'      G$YYYY
+     C                     ELSE                            EELS-01
+     C                     MOVEL'20'      G$YYYY
+     C                     END                             EEND-01
+     C                     Z-ADD0         G$JD
+     C           G$MM      SUB  3         G$MMWK  20
+     C                     Z-ADDG$MMWK    GMWKSV  20
+     C           G$MMWK    IFLT 0                           LVL-01
+     C                     ADD  12        G$MMWK
+     C                     END                              END-01
+     C           GMWKSV    IFNE 0                           LVL-01
+     C           G$MMWK    MULT 30.6      G$JD      H
+     C                     END                              END-01
+     C                     ADD  G$DD      G$JD    50
+     C           G$YYYY    SUB  1900      G$YYWK  30
+     C           G$YYWK    IFNE 0                           LVL-01
+     C           GMWKSV    IFLT 0                           LVL-02
+     C                     SUB  1         G$YYWK
+     C                     END                              END-02
+     C                     END                              END-01
+     C           G$YYWK    MULT 365.25    G$JYD   70
+     C                     ADD  G$JYD     G$JD
+     C           G$JD      DIV  7         G$WK7   70
+     C                     MVR            G$DW    10
+     C* MAKE SUNDAY = 1ST DAY OF THE WEEK
+     C           G$DW      IFLE 3
+     C                     ADD  4         G$DW
+     C                     ELSE
+     C                     SUB  3         G$DW
+     C                     ENDIF
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  JTOJ$    Julian to Julian date conversion
+     C*
+     C           JTOG$     BEGSR
+     C           J$JD      DIV  365.25    J$YYWK  30
+     C           J$JD      DIV  365.25    J$TST   99
+     C           J$TST     IFEQ 0                           LVL-01
+     C                     SUB  1         J$YYWK
+     C                     END                              END-01
+     C           J$YYWK    MULT 365.25    J$YD    70
+     C           J$JD      SUB  J$YD      J$YD
+     C           J$YD      IFGT 306                         LVL-01
+     C                     ADD  1         J$YYWK
+     C                     END                              END-01
+     C                     Z-ADD0         J$X     20
+     C           J$YD      DOULEJ$MD                        LVL-01
+     C                     ADD  1         J$X
+     C           J$X       MULT 30.6      J$MD    30H
+     C                     END                              END-01
+     C                     SUB  1         J$X
+     C           J$X       MULT 30.6      J$MD      H
+     C           J$YD      SUB  J$MD      J$DD    20
+     C           J$X       ADD  3         J$MM    20
+     C           J$MM      IFGT 12                          LVL-01
+     C                     SUB  12        J$MM
+     C                     END                              END-01
+     C           J$YYWK    ADD  1900      J$YYYY  40
+     C           DTFRMT    IFEQ 1                          BLVL-01
+     C                     MOVE J$YYYY    WORK2   2
+     C                     MOVELJ$MM      WORK4   4
+     C                     MOVE J$DD      WORK4
+     C                     MOVELWORK2     J$DATE  60
+     C                     MOVE WORK4     J$DATE
+     C                     ELSE                            EELS-01
+     C                     MOVE J$YYYY    WORK2
+     C                     MOVELJ$MM      WORK4
+     C                     MOVE J$DD      WORK4
+     C                     MOVE WORK2     J$DATE
+     C                     MOVELWORK4     J$DATE
+     C                     END                             EEND-01
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     C*  Get report title.
+     C*
+     C                     MOVEL'IT401PR 'WKPRTF
+     C                     MOVE *BLANKS   RPTTTL
+     C           RPKEY     CHAINREPORTS              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELRPDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     RPTTTL
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           ITWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*          *INL1     IFEQ *OFF
+     C*                    MOVE *ON       *IN91
+     C*                    END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*                    ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C*                    ADD  CLS,L     CLS,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C*                    MOVE RPD,L     $RPD
+     C           L         IFEQ 1
+     C*                    WRITETOTAL1
+     C                     END
+     C*
+     C           L         IFEQ 2
+     C*                    WRITETOTAL2
+     C                     END
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C*                    Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C*                    Z-ADD0         CLS,L
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*

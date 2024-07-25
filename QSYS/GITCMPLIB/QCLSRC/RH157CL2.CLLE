@@ -1,0 +1,423 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  RH157CL2  FTP export closed customer orders - Host executed      */
+/*  09 May 2002                                                      */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*                                                                   */
+/*    05/09/02  DAS  4.16                                            */
+/*      - Created.                                                   */
+/*                                                                   */
+/*    02/07/06  MLB  5.00                                            */
+/*      - Enh: Added client custom code support to program.          */
+/*    02/08/06  MLB  5.00a                                           */
+/*      - Enh: Added support to program to export to additional      */
+/*        files, EXPFORDB, EXPFORDE.                                 */
+/*    05/17/07  RBD  5.10                                            */
+/*      - Added new order detail label# export file EXPFORDL.        */
+/*    06/20/07  DAS  5.10a                                           */
+/*      - Added new order detail piece seq# export file EXPFORDP.    */
+/*    02/19/08  RBD  5.20  P#00011                                   */
+/*      - Added new order detail ASN SSCC-18 export file EXPFORDASN. */
+/*    08/10/12  LMC  6.40                                            */
+/*      - Added new order detail LOT export file EXPFORDO.           */
+/*                                                                   */
+/*    06/18/91  RTR  7.30a                                           */
+/*      - Moved data area lock check to before clearing memebers.    */
+/*                                                                   */
+/*    12/10/19  MLB  7.30b                                           */
+/*      - Fix: Added code to add mbr to &FILEH if lock = On.         */
+/*        RH157A was failing with CPF4102 - mbr not found on open.   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*    This program can be used instead of having Truck Builder       */
+/*    automatically ftp the exported orders to the host system.      */
+/*    If this program is used then the EXPORD script should have     */
+/*    '*NO EXPORT*' at the top of it to prevent the file from being  */
+/*    ftp's from Truck Builder.                                      */
+/*                                                                   */
+/*    Now, with this program, the host can perform the ftp export    */
+/*    by doing a remote program call.                                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &WHSE   -  Warehouse                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  FTP command sequence                                             */
+/*                                                                   */
+/*    QUOTE RCMD PIR/FTPLIBL *PROD                                   */
+/*    QUOTE RCMD RH157CL2 ('001')                                    */
+/*    GET PIRF/EXPFORDH2.ROUTE C:\TRANSFER400\ROUTEH.TXT             */
+/*    GET PIRF/EXPFORDD2.ROUTE C:\TRANSFER400\ROUTED.TXT             */
+/*    GET PIRF/EXPFORDC2.ROUTE C:\TRANSFER400\ROUTEC.TXT             */
+/*    GET PIRF/EXPFORDT2.ROUTE C:\TRANSFER400\ROUTET.TXT             */
+/*    GET PIRF/EXPFORDB2.ROUTE C:\TRANSFER400\ROUTEB.TXT     (500aA) */
+/*    GET PIRF/EXPFORDE2.ROUTE C:\TRANSFER400\ROUTEE.TXT     (500aA) */
+/*    DEL PIRF/EXPFORDH2.ROUTE                                       */
+/*    DEL PIRF/EXPFORDD2.ROUTE                                       */
+/*    DEL PIRF/EXPFORDC2.ROUTE                                       */
+/*    DEL PIRF/EXPFORDT2.ROUTE                                       */
+/*    DEL PIRF/EXPFORDB2.ROUTE                               (500aA) */
+/*    DEL PIRF/EXPFORDE2.ROUTE                               (500aA) */
+/*                                                                   */
+/*    Note: The DEL statements are optional. This program will       */
+/*          automatically initialize the ROUTE members.              */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*   This program is to be used by a host ftp script.                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ RH157CL:    PGM        PARM(&WHSE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client ID's.    */                                           /* (500 A) */
+
+             DCL        VAR(&CITYLINE) TYPE(*CHAR) LEN(8) +
+                          VALUE('CITYLINE')                       /* (CLD A) */
+             DCL        VAR(&EI)     TYPE(*CHAR) LEN(8) +
+                          VALUE('EI')                             /* (EI  A) */
+             DCL        VAR(&CBI)     TYPE(*CHAR) LEN(10) +
+                          VALUE('CHENEYBROS')                     /* (510 A) */
+
+  /* Message queues */
+
+             DCL        VAR(&FTPMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPORD')
+             DCL        VAR(&FTPERRMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPORDERR')
+
+  /* Export files */
+
+             DCL        VAR(&FILEH) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDH2')
+             DCL        VAR(&FILED) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDD2')
+             DCL        VAR(&FILEC) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDC2')
+             DCL        VAR(&FILET) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDT2')
+             DCL        VAR(&FILEb) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDB2')                      /* (500aA) */
+             DCL        VAR(&FILEe) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDE2')                      /* (500aA) */
+             DCL        VAR(&FILEL) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDL2')                      /* (510 A) */
+             DCL        VAR(&FILEP) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDP2')                      /* (510aA) */
+             DCL        VAR(&FILEA) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDAS2')                     /* (520 A) */
+             DCL        VAR(&FILEF) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFORDO2')                      /* (640 A) */
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&client)     TYPE(*CHAR) LEN(10)      /* (500 A) */
+             DCL        VAR(&clientloc)  TYPE(*CHAR) LEN(10)      /* (500 A) */
+             DCL        VAR(&ERRCNT)     TYPE(*DEC)  LEN(1 0)
+             DCL        VAR(&EXISTC)     TYPE(*LGL)
+             DCL        VAR(&EXISTD)     TYPE(*LGL)
+             DCL        VAR(&EXISTH)     TYPE(*LGL)
+             DCL        VAR(&EXISTT)     TYPE(*LGL)
+             DCL        VAR(&FINISHED)   TYPE(*LGL)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&LOCK)       TYPE(*LGL)
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MBR2GET)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&SAVMBR)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&MSGKEY)     TYPE(*CHAR) LEN(4)
+             DCL        VAR(&RECS)       TYPE(*DEC)  LEN(10 0)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/* Get Client ID */                                               /* (500 A) */
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (500 A) */
+
+             CHGVAR     VAR(&ERRCNT) VALUE(0)
+             CHGVAR     VAR(&FINISHED) VALUE('0')
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Get job information */
+
+             RTVJOBA    JOB(&JOB) USER(&USER) TYPE(&TYPE)
+
+/* Create member names to be used */
+
+             CHGVAR     VAR(&MBR) VALUE('R' *CAT &WHSE)
+
+             CHGVAR     VAR(&MBR2GET) VALUE('ROUTE')
+
+/* Lock dataarea to prevent users from exporting routes */
+
+             CHGVAR     VAR(&LOCK) VALUE('0')
+             CHKINOUT   TYPE(*IN) DTAARA(EXPORD)
+             MONMSG     MSGID(CPF9898) EXEC(DO)
+               CHGVAR     VAR(&LOCK) VALUE('1')
+             ENDDO
+
+/* Can't proceed if export already in progress */
+/* Moved up from mod mark lower in program.                          (730aM) */
+
+             IF COND(&LOCK) THEN(DO)
+
+               CHKOBJ     OBJ(&FILEH) OBJTYPE(*FILE) MBR(&MBR2GET) +
+                                                                  /* (730bA) */
+               MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEH) +
+                            MBR(&MBR2GET))                        /* (730bA) */
+               CLRPFM     FILE(&FILEH) MBR(&MBR2GET)              /* (730bA) */
+
+               OVRDBF     FILE(&FILEH) MBR(&MBR2GET)
+               CALL       PGM(RH157A) PARM('*IN USE*')
+               DLTOVR     FILE(&FILEH)
+
+               RMVMSG     CLEAR(*ALL)
+               SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export in progress. Files cannot +
+                          be retrieved at this time') +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+
+               SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export in progress. Files cannot +
+                          be retrieved at this time') +
+                          TOMSGQ(&FTPERRMSGQ) MSGTYPE(*INFO)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+
+               GOTO BOTTOM
+
+             ENDDO
+/* End of moved code in mod 730a                                  /* (730aM) */
+
+/* Create members for export files. Reuse them if they exist. */
+
+             CHKOBJ     OBJ(&FILEH) OBJTYPE(*FILE) MBR(&MBR2GET)
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEH) +
+                          MBR(&MBR2GET))
+
+             CHKOBJ     OBJ(&FILED) OBJTYPE(*FILE) MBR(&MBR2GET)
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILED) +
+                          MBR(&MBR2GET))
+
+             CHKOBJ     OBJ(&FILEC) OBJTYPE(*FILE) MBR(&MBR2GET)
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEC) +
+                          MBR(&MBR2GET))
+
+             CHKOBJ     OBJ(&FILET) OBJTYPE(*FILE) MBR(&MBR2GET)
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILET) +
+                          MBR(&MBR2GET))
+
+             CHKOBJ     OBJ(&FILEB) OBJTYPE(*FILE) MBR(&MBR2GET)  /* (500aA) */
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEB) +
+                          MBR(&MBR2GET))                          /* (500aA) */
+
+             CHKOBJ     OBJ(&FILEE) OBJTYPE(*FILE) MBR(&MBR2GET)  /* (500aA) */
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEE) +
+                          MBR(&MBR2GET))                          /* (500aA) */
+
+             CHKOBJ     OBJ(&FILEL) OBJTYPE(*FILE) MBR(&MBR2GET)  /* (510 A) */
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEL) +
+                          MBR(&MBR2GET))                          /* (510 A) */
+
+             CHKOBJ     OBJ(&FILEP) OBJTYPE(*FILE) MBR(&MBR2GET)  /* (510aA) */
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEP) +
+                          MBR(&MBR2GET))                          /* (510aA) */
+
+             CHKOBJ     OBJ(&FILEA) OBJTYPE(*FILE) MBR(&MBR2GET)  /* (520 A) */
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEA) +
+                          MBR(&MBR2GET))                          /* (520 A) */
+             CHKOBJ     OBJ(&FILEF) OBJTYPE(*FILE) MBR(&MBR2GET)  /* (640 A) */
+             MONMSG     MSGID(CPF9815) EXEC(ADDPFM FILE(&FILEF) +
+                          MBR(&MBR2GET))                          /* (640 A) */
+
+/* Clear members */
+
+             CLRPFM     FILE(&FILEH) MBR(&MBR2GET)
+             CLRPFM     FILE(&FILED) MBR(&MBR2GET)
+             CLRPFM     FILE(&FILEC) MBR(&MBR2GET)
+             CLRPFM     FILE(&FILET) MBR(&MBR2GET)
+             CLRPFM     FILE(&FILEB) MBR(&MBR2GET)                /* (500aA) */
+             CLRPFM     FILE(&FILEE) MBR(&MBR2GET)                /* (500aA) */
+             CLRPFM     FILE(&FILEL) MBR(&MBR2GET)                /* (510 A) */
+             CLRPFM     FILE(&FILEP) MBR(&MBR2GET)                /* (510aA) */
+             CLRPFM     FILE(&FILEA) MBR(&MBR2GET)                /* (520 A) */
+             CLRPFM     FILE(&FILEF) MBR(&MBR2GET)                /* (640 A) */
+
+/* Section of code in mod 730a moved up from here.                /* (730aM) */
+
+/* Can't proceed if there are no records in header file */
+
+   /* Don't write message. Clutters up message file if host is  */
+   /* running a never-ending-job that checks every few minutes. */
+
+             RTVMBRD    FILE(&FILEH) MBR(&MBR) NBRCURRCD(&RECS)
+             MONMSG     MSGID(CPF0000) EXEC(CHGVAR VAR(&RECS) VALUE(0))
+
+             IF COND(&RECS = 0) THEN(DO)
+
+               OVRDBF     FILE(&FILEH) MBR(&MBR2GET)
+               CALL       PGM(RH157A) PARM('*NO RECS*')
+               DLTOVR     FILE(&FILEH)
+
+               RMVMSG     CLEAR(*ALL)
+          /*   SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) + */
+          /*              MSGDTA('Nothing to export') +       */
+          /*              TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)     */
+
+          /*   SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) + */
+          /*              MSGDTA('Nothing to export') +       */
+          /*              TOMSGQ(&FTPERRMSGQ) MSGTYPE(*INFO)  */
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+
+               GOTO BOTTOM
+
+             ENDDO
+
+/* Copy records from Truck Builder member into GET member */
+
+             CPYF       FROMFILE(&FILEH) TOFILE(&FILEH) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)
+
+             CPYF       FROMFILE(&FILED) TOFILE(&FILED) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)
+
+             CPYF       FROMFILE(&FILEC) TOFILE(&FILEC) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)
+
+             CPYF       FROMFILE(&FILET) TOFILE(&FILET) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)
+
+             CPYF       FROMFILE(&FILEB) TOFILE(&FILEB) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)                            /* (500aA) */
+
+             CPYF       FROMFILE(&FILEE) TOFILE(&FILEE) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)                            /* (500aA) */
+
+             CPYF       FROMFILE(&FILEL) TOFILE(&FILEL) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)                            /* (510 A) */
+
+             CPYF       FROMFILE(&FILEP) TOFILE(&FILEP) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)                            /* (510aA) */
+
+             CPYF       FROMFILE(&FILEA) TOFILE(&FILEA) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)                            /* (520 A) */
+
+             CPYF       FROMFILE(&FILEF) TOFILE(&FILEF) +
+                          FROMMBR(&MBR) TOMBR(&MBR2GET) +
+                          MBROPT(*ADD)                            /* (640 A) */
+
+/* Clear Truck Builder members */
+
+             CLRPFM     FILE(&FILEH) MBR(&MBR)
+             CLRPFM     FILE(&FILED) MBR(&MBR)
+             CLRPFM     FILE(&FILEC) MBR(&MBR)
+             CLRPFM     FILE(&FILET) MBR(&MBR)
+             CLRPFM     FILE(&FILEB) MBR(&MBR)                    /* (500aA) */
+             CLRPFM     FILE(&FILEE) MBR(&MBR)                    /* (500aA) */
+             CLRPFM     FILE(&FILEL) MBR(&MBR)                    /* (510 A) */
+             CLRPFM     FILE(&FILEP) MBR(&MBR)                    /* (510aA) */
+             CLRPFM     FILE(&FILEA) MBR(&MBR)                    /* (520 A) */
+             CLRPFM     FILE(&FILEF) MBR(&MBR)                    /* (640 A) */
+
+/* We finished without error */
+
+             CHGVAR     VAR(&FINISHED) VALUE('1')
+
+/*  Send Successful message */
+
+             RMVMSG     CLEAR(*ALL)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export successful for member' +
+                          *BCAT &MBR) TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+
+             GOTO BOTTOM
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+
+             CHGVAR     VAR(&ERRCNT) VALUE(&ERRCNT + 1)
+             IF COND(&ERRCNT = 3) THEN(GOTO CMDLBL(BOTTOM))
+
+             IF COND(&FINISHED = '0') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          TOMSGQ(&FTPERRMSGQ) MSGTYPE(*INFO)
+
+             ENDDO
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) TOMSGQ(&FTPMSGQ) MSGTYPE(*COMP)
+
+             IF COND(&FINISHED = '0') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) TOMSGQ(&FTPERRMSGQ) +
+                          MSGTYPE(*COMP)
+             ENDDO
+
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+ BOTTOM:
+
+               RCLRSC     LVL(*CALLER)
+
+/* Unlock dataarea */
+
+             CHKINOUT   TYPE(*OUT) DTAARA(EXPORD)
+
+        /*  Send '*Escape' message to caller */
+
+               IF COND(&FINISHED = '0') THEN(DO)
+                 SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Error Occured Processing Member' +
+                          *BCAT &MBR) MSGTYPE(*ESCAPE)
+               ENDDO
+
+             ENDPGM

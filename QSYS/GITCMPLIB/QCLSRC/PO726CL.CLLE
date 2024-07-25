@@ -1,0 +1,1011 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2006 BFC Software, Inc. - All Rights Reserved     */
+/*   BFC Software, Inc.                                              */
+/*   245 W. Roosevelt Rd.  Bldg 8, Suite 51                          */
+/*   West Chicago, IL  60185                                         */
+/*   (630) 562-0375                                                  */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PO726CL   FTP export closed receiving P.O.'s                     */
+/*  09 March 1999                                                    */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*                                                                   */
+/*    06/11/99  DAS  4.11                                            */
+/*     - Revised to put warehouse number in positions 2 & 3          */
+/*       of member names.                                            */
+/*                                                                   */
+/*    09/13/00  DAS  4.14                                            */
+/*      - Revised to use export script EXPFADJ instead of DEFAULT.   */
+/*      - Revised to check script for *NO EXPORT*.                   */
+/*                                                                   */
+/*    04/10/03  MLB  4.17                                            */
+/*      - Enh: Added support to program to allow PO Exceptions       */
+/*        to be exported back to host system using file EXPFPOE.     */
+/*                                                                   */
+/*    07/14/06  MLB  5.10                                            */
+/*      - Enh: Added client custom code support to program.          */
+/*    07/14/06  MLB  5.10a                                           */
+/*      - Enh: Added MONMSG's to all RMVM's at end of pgm.           */
+/*    10/08/06  MLB  5.10b                                           */
+/*      - Enh: Added 6 new return parms on call to FTPCRTSCRP        */
+/*        program to return path statement created for export files. */
+/*                                                                   */
+/*    03/26/08  MLB  5.20                                            */
+/*      - Fix: Revised CPYSRC cmd to use &EXPSCRP for MBR parm       */
+/*        instead of DEFAULT.                                        */
+/*                                                                   */
+/*    12/15/10  MLB  5.30                                            */
+/*      - Enh: Added DSPJOBLOG OUTPUT(*PRINT) if export fails.       */
+/*                                                                   */
+/*    02/01/13  MLB  6.50                                            */
+/*      - Fix: Revised program to add missing parms for Lcl/Rmt/Path */
+/*        file A, Lcl/Rmt/Path file F.                               */
+/*                                                                   */
+/*    02/19/13  RTR  6.50a                                           */
+/*      - Enh: Added file EXPFPOL - PO License Export.               */
+/*    04/11/13  RTR  6.50b                                           */
+/*      - Fix: corrected parm order for FTPCRTSCRP.                  */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: City Line                               */
+/*                                                                   */
+/*    09/02/04  MLB  CTY                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Packer's Provision                      */
+/*                                                                   */
+/*    06/26/06  MLB  PAK                                             */
+/*      - Revised program to add member to SAPEXP file for           */
+/*        SAP unique export file for purchase orders.                */
+/*    10/08/06  MLB  PAKa                                            */
+/*      - Revised program to use CPYTOIMPF command to send SAPEXP    */
+/*        file to shared folder instead of using FTP. Messages       */
+/*        will still be sent to the FTP message queues.              */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Springfield Grocery                     */
+/*                                                                   */
+/*    03/25/08  MLB  SGC                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*    03/26/08  MLB  SGCa                                            */
+/*      - Revised program to export receiving exceptions file        */
+/*        back to Host system. Use LclFileE/RmtFileE to send file.   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: TPC                                     */
+/*                                                                   */
+/*    02/22/07  MLB  TPC                                             */
+/*      - Revised program to call GETEXP# for use in creating        */
+/*        remote export file name.                                   */
+/*    04/17/07  MLB  TPCa                                            */
+/*      - Revised program to copy data from EXPFPOH, EXPFPOD to      */
+/*        extended length files, EXPFPOHSPK and EXPFPODSPK.          */
+/*        TPC's host software, Stanpack requires specific length     */
+/*        files.                                                     */
+/*    07/12/07  MLB  TPCb                                            */
+/*      - Revised program to check for exported purchase orders.     */
+/*        If none exported, skip ftp processing.                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Halsey Foodservice                      */
+/*                                                                   */
+/*    10/22/09  MLB  HAL                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added Halsey to CTY mod.                                   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Dairyland                               */
+/*                                                                   */
+/*    12/15/10  MLB  DRY                                             */
+/*      - Revised program to call BFCEPO01C to process exported      */
+/*        purchase orders.                                           */
+/*    12/15/10  MLB  DRYa                                            */
+/*      - Revised mod, DRY to pass retrieved Dakota data files       */
+/*        library name to Host interface program.                    */
+/*    07/22/11  MLB  DRYb                                            */
+/*      - Revised program to call Dairyland program, MTHENDCHKR      */
+/*        to see if any period end processes are active. If pgm      */
+/*        returns value of 1=Period end processing active, send      */
+/*        message to user and cancel export. Per email from Kelly R. */
+/*    08/31/11  MLB  DRYc                                            */
+/*      - Revised mod, DRY to retrieve number of rcds in EXPFPOH.    */
+/*        Only call BFCEPO01C if export hdr rcds greater than zero.  */
+/*    09/08/11  MLB  DRYd                                            */
+/*      - Revised mod, DRYb to add MONMSG to call to MTHENDCHKR.      */
+/*        If the calls fails, treat as if month-end in progress.     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Crumbley Paper & Foodservice            */
+/*                                                                   */
+/*    06/13/11  MLB  CPC                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added Crumbley to CTY mod.                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: European Imports                        */
+/*                                                                   */
+/*    07/16/11  MLB  EI                                              */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added EI to CTY mod.                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Stern Produce                           */
+/*                                                                   */
+/*    12/07/12  MLB  SPI                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added SPI to CTY mod.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Greenleaf Produce                       */
+/*                                                                   */
+/*    02/27/13  MLB  GLP                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added GLP to CTY mod.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Cashwa                                  */
+/*                                                                   */
+/*    02/18/13  LMC  CWD                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added CWD to CTY mod.                                      */
+/*    05/24/16  MLB  CWDa                                            */
+/*      - Revised CWD mod due to new v6.50a mod that added new       */
+/*        export file, EXPFPOL to pgm. Added file to custom mod      */
+/*        to name file as EXPFPOLxxxx.TXT.                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Get Fresh Sales                         */
+/*                                                                   */
+/*    01/31/13  MLB  GFS                                             */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added GFS to CTY mod.                                      */
+/*    01/31/13  MLB  GFSa                                            */
+/*      - Revised program to loop two times. First time, look for    */
+/*        p/o's that start with Gxxxxxxxx. Second time, will be to   */
+/*        look for p/o's that start with Fxxxxxxxx. The export files */
+/*        will be placed into a separate folder for each company.    */
+/*        BFCExpPrd/G01 or BFCExpPrd/F02 for production or           */
+/*        BFCExpTst/G01 or BFCExpTst/F02 for test.                   */
+/*    03/11/13  MLB  GFSb                                            */
+/*      - Revised GFSa mod. Needed to revise QRYSLT to include p/o's */
+/*        that begin with S so that Super P/O's will be included and */
+/*        removed if marked for export. GFSa mod was causing Super   */
+/*        P/O's to not be removed when marked for export.            */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: S.Bertram                               */
+/*                                                                   */
+/*    09/01/15  RTR  SBRa                                            */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Foods Galore                            */
+/*                                                                   */
+/*    04/06/15  RTR  FGLa                                            */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Capitol City Produce                    */
+/*                                                                   */
+/*    10/06/15  MLB  CCP  #01458                                     */
+/*      - Revised program to create remote file name in the          */
+/*        following format: EXPFPOHxxxx.txt where xxxx is            */
+/*        a unique number. The purchase order detail file will       */
+/*        have the same format.                                      */
+/*      - Added CCP to CTY mod.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &WHSE   -  Warehouse                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*   This program will create a unique member name and then create   */
+/*   new members in all of the export files and in the FTP script    */
+/*   and log files.                                                  */
+/*                                                                   */
+/*   The remote file name will start with the member name followed   */
+/*   by a letter to identify it's type (H,D). The extension          */
+/*   will be PO.                                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ PO726CL:    PGM        PARM(&WHSE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client ID's.    */                                           /* (510 A) */
+
+             DCL        VAR(&CAPITOLCTY) TYPE(*CHAR) LEN(10) +
+                          VALUE('CAPITOLCTY')                     /* (CCP A) */
+             DCL        VAR(&CITYLINE) TYPE(*CHAR) LEN(8) +
+                          VALUE('CITYLINE')                       /* (CTY A) */
+             DCL        VAR(&CRUMBLEY) TYPE(*CHAR) LEN(10) +
+                          VALUE('CRUMBLEY')                       /* (CPC A) */
+             DCL        VAR(&DAIRYLAND) TYPE(*CHAR) LEN(10) +
+                          VALUE('DAIRYLAND')                      /* (DRY A) */
+             DCL        VAR(&EuroImport) TYPE(*CHAR) LEN(10) +
+                          VALUE('EI')                             /* (EI  A) */
+             DCL        VAR(&GETFRESH) TYPE(*CHAR) LEN(10) +
+                          VALUE('GETFRESH')                       /* (GFS A) */
+             DCL        VAR(&HALSEY) TYPE(*CHAR) LEN(10) +
+                          VALUE('HALSEY    ')                     /* (HAL A) */
+             DCL        VAR(&PACKERS) TYPE(*CHAR) LEN(8) +
+                          VALUE('PACKERS ')                       /* (PAK A) */
+             DCL        VAR(&SGC)     TYPE(*CHAR) LEN(8) +
+                          VALUE('SGC')                            /* (SGC A) */
+             DCL        VAR(&TPC)     TYPE(*CHAR) LEN(8) +
+                          VALUE('TPC')                            /* (TPC A) */
+             DCL        VAR(&STERN)   TYPE(*CHAR) LEN(10) +
+                          VALUE('STERN')                          /* (SPI A) */
+             DCL        VAR(&GREENLEAF)  TYPE(*CHAR) LEN(10) +
+                          VALUE('GREENLEAF ')                     /* (GLP A) */
+             DCL        VAR(&CASHWA)  TYPE(*CHAR) LEN(10) +
+                          VALUE('CASHWA')                         /* (CWD A) */
+             DCL        VAR(&SBERTRAM) TYPE(*CHAR) LEN(10) +
+                          VALUE('SBERTRAM')                       /* (SBRaA) */
+             DCL        VAR(&FOODSGAL) TYPE(*CHAR) LEN(10) +
+                          VALUE('FOODSGALOR')                     /* (FGLaA) */
+
+  /* Export program. */
+
+             DCL        VAR(&EXPPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(PO726)
+
+  /* Export script */  /* 414A */
+
+             DCL        VAR(&EXPSCRP) TYPE(*CHAR) LEN(8) +
+                          VALUE(EXPFPO)
+
+  /* Message queues */
+
+             DCL        VAR(&FTPMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPPO')
+             DCL        VAR(&FTPERRMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPPOERR')
+
+  /* Export files */
+
+             DCL        VAR(&FILEH) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFPOH')
+             DCL        VAR(&FILED) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFPOD')
+             DCL        VAR(&FILEE) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFPOE')                          /* (417)  */
+             DCL        VAR(&FILEL) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPFPOL')                          /* (650)  */
+
+  /* Number of 'Transfer complete' messages to look for */
+
+             DCL        VAR(&TFRNEEDED) TYPE(*DEC) LEN(1 0) VALUE(2)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&client)     TYPE(*CHAR) LEN(10)      /* (510 A) */
+             DCL        VAR(&clientloc)  TYPE(*CHAR) LEN(10)      /* (510 A) */
+             DCL        VAR(&CURDTYYMD)  TYPE(*CHAR) LEN(8)       /* (PAK A) */
+             DCL        VAR(&CURDTMDY)   TYPE(*CHAR) LEN(6)       /* (PAK A) */
+             DCL        VAR(&CURTIME)    TYPE(*CHAR) LEN(6)       /* (PAK A) */
+             DCL        VAR(&CmpId)      TYPE(*CHAR) LEN(1) +
+                                              VALUE('G')          /* (GFSaA) */
+             DCL        VAR(&CmpNbr)     TYPE(*CHAR) LEN(2) +
+                                              VALUE('01')         /* (GFSaA) */
+             DCL        VAR(&ERRCNT)     TYPE(*DEC)  LEN(1 0)
+             DCL        VAR(&EXIST)      TYPE(*LGL)
+             DCL        VAR(&EXPFNBR)    TYPE(*CHAR) LEN(1)       /* (TPC A) */
+             DCL        VAR(&EXPFLAG)    TYPE(*CHAR) LEN(8) /* 414A */
+             DCL        VAR(&EXPTYPE)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&FINISHED)   TYPE(*LGL)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&HOSTLIB)    TYPE(*CHAR) LEN(10) +
+                                              VALUE('DARLIB_TST') /* (DRY A) */
+             DCL        VAR(&LCLFILEC)   TYPE(*CHAR) LEN(33)
+             DCL        VAR(&LCLFILED)   TYPE(*CHAR) LEN(33)
+             DCL        VAR(&LCLFILEE)   TYPE(*CHAR) LEN(33)         /* (417) */
+             DCL        VAR(&LCLFILEL)   TYPE(*CHAR) LEN(33)      /* (650aA) */
+             DCL        VAR(&LCLFILEP)   TYPE(*CHAR) LEN(33)      /* (650 A) */
+             DCL        VAR(&LCLFILEH)   TYPE(*CHAR) LEN(33)
+             DCL        VAR(&LCLFILET)   TYPE(*CHAR) LEN(33)
+             DCL        VAR(&LCLFILEB)   TYPE(*CHAR) LEN(33)      /* (510bA) */
+             DCL        VAR(&LCLFILEA)   TYPE(*CHAR) LEN(33)      /* (650 A) */
+             DCL        VAR(&LCLFILEF)   TYPE(*CHAR) LEN(33)      /* (650 A) */
+             DCL        VAR(&LIBD)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&LIBE)       TYPE(*CHAR) LEN(10)         /* (417) */
+             DCL        VAR(&LIBL)       TYPE(*CHAR) LEN(10)      /* (650aA) */
+             DCL        VAR(&LIBH)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&LIBC)       TYPE(*CHAR) LEN(10)      /* (510bA) */
+             DCL        VAR(&LIBB)       TYPE(*CHAR) LEN(10)      /* (510bA) */
+             DCL        VAR(&LIBT)       TYPE(*CHAR) LEN(10)      /* (510bA) */
+             DCL        VAR(&Loop)       TYPE(*DEC)  LEN(2 0) +
+                                              VALUE(01)           /* (GFSaA) */
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MonthEnd)   TYPE(*CHAR) LEN(1)       /* (DRYbA) */
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&MSGKEY)     TYPE(*CHAR) LEN(4)
+             DCL        VAR(&NBRCURRCDS) TYPE(*DEC)  LEN(10 0)    /* (DRYcA) */
+             DCL        VAR(&NXTNUM)     TYPE(*DEC)  LEN(7)
+             DCL        VAR(&NXTNUMA)    TYPE(*CHAR) LEN(7)
+             DCL        VAR(&PGM)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&PATHH)      TYPE(*CHAR) LEN(45)      /* (510bA) */
+             DCL        VAR(&PATHD)      TYPE(*CHAR) LEN(45)      /* (510bA) */
+             DCL        VAR(&PATHC)      TYPE(*CHAR) LEN(45)      /* (510bA) */
+             DCL        VAR(&PATHT)      TYPE(*CHAR) LEN(45)      /* (510bA) */
+             DCL        VAR(&PATHB)      TYPE(*CHAR) LEN(45)      /* (510bA) */
+             DCL        VAR(&PATHE)      TYPE(*CHAR) LEN(45)      /* (510bA) */
+             DCL        VAR(&PATHL)      TYPE(*CHAR) LEN(45)      /* (650aA) */
+             DCL        VAR(&PATHP)      TYPE(*CHAR) LEN(45)      /* (650 A) */
+             DCL        VAR(&PATHA)      TYPE(*CHAR) LEN(45)      /* (650 A) */
+             DCL        VAR(&PATHF)      TYPE(*CHAR) LEN(45)      /* (650 A) */
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&QUOTE)      TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&RECS)       TYPE(*DEC)  LEN(10 0)    /* (TPCbA) */
+             DCL        VAR(&RMTFILEC)   TYPE(*CHAR) LEN(16)
+             DCL        VAR(&RMTFILED)   TYPE(*CHAR) LEN(16)
+             DCL        VAR(&RMTFILEE)   TYPE(*CHAR) LEN(16)         /* (417) */
+             DCL        VAR(&RMTFILEL)   TYPE(*CHAR) LEN(16)      /* (650aA) */
+             DCL        VAR(&RMTFILEH)   TYPE(*CHAR) LEN(16)
+             DCL        VAR(&RMTFILET)   TYPE(*CHAR) LEN(16)
+             DCL        VAR(&RMTFILEB)   TYPE(*CHAR) LEN(16)      /* (510bA) */
+             DCL        VAR(&RMTFILEP)   TYPE(*CHAR) LEN(16)      /* (650 A) */
+             DCL        VAR(&LCLFILEL)   TYPE(*CHAR) LEN(33)      /* (650 A) */
+             DCL        VAR(&LCLFILEP)   TYPE(*CHAR) LEN(33)      /* (650 A) */
+             DCL        VAR(&RMTFILEA)   TYPE(*CHAR) LEN(33)      /* (650 A) */
+             DCL        VAR(&RMTFILEF)   TYPE(*CHAR) LEN(33)      /* (650 A) */
+             DCL        VAR(&RTN)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTNH)       TYPE(*CHAR) LEN(8)       /* (DRY A) */
+             DCL        VAR(&RUNTIMEENV) TYPE(*CHAR) LEN(10)      /* (DRYaM) */
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&SHORTNUMA)  TYPE(*CHAR) LEN(4)       /* (CTY A) */
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+             DCL        VAR(&WHSEN)      TYPE(*DEC)  LEN(3 0)     /* (DRY A) */
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/* Get Client ID */                                               /* (510 A) */
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (510 A) */
+
+             CHGVAR     VAR(&ERRCNT) VALUE(0)
+             CHGVAR     VAR(&EXIST) VALUE('0')
+             CHGVAR     VAR(&FINISHED) VALUE('0')
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+             CHGVAR     VAR(&PGM) VALUE('PO726CL')
+
+/* Get job information */
+
+             RTVJOBA    JOB(&JOB) USER(&USER) TYPE(&TYPE)
+
+/*  Get current date/time to create SAP FTP remote file name.        (PAK A) */
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+               RTVSYSVAL  SYSVAL(QDATE) RTNVAR(&CURDTMDY)         /* (PAK A) */
+               RTVSYSVAL  SYSVAL(QTIME) RTNVAR(&CURTIME)          /* (PAK A) */
+               CVTDAT   DATE(&CURDTMDY) TOVAR(&CURDTYYMD) +
+                          FROMFMT(*MDY) TOFMT(*YYMD) TOSEP(*NONE) /* (PAK A) */
+             ENDDO                                                /* (PAK A) */
+
+             SELECT                                               /* (DRYbA) */
+             WHEN       COND(&CLIENT = &DAIRYLAND) THEN(DO)       /* (DRYbA) */
+
+               CALL       PGM(&HOSTLIB/MTHENDCHKR)  PARM('00' +
+                            &MonthEnd)                            /* (DRY A) */
+               MONMSG     MSGID(CPF0000 CPF0001 CPF0005 CPF0006) +
+                            EXEC(DO)                              /* (DRYdA) */
+                 CHGVAR     VAR(&MONTHEND) VALUE('2')             /* (DRYdA) */
+               Enddo                                              /* (DRYdA) */
+               Select                                             /* (DRYbA) */
+/*             Period end processing active, cancel export.          (DRYbA) */
+               When       COND(&MonthEnd *eq '1') THEN(DO)        /* (DRYbA) */
+                 SNDPGMMSG  MSG('Period end processing active. Export +
+                              purchase orders Cancelled.') TOPGMQ(*EXT) +
+                                                                  /* (DRYbA) */
+                Return                                            /* (DRYbA) */
+               ENDDO                                              /* (DRYbA) */
+/*             Check period-end processing pgm failed.               (DRYdA) */
+               When       COND(&MonthEnd *eq '2') THEN(DO)        /* (DRYdA) */
+                 SNDPGMMSG  MSG('Check Period end processing pgm failed. +
+                              Export purchase orders Cancelled.') +
+                              TOPGMQ(*EXT)                        /* (DRYdA) */
+                Return                                            /* (DRYdA) */
+               ENDDO                                              /* (DRYdA) */
+               ENDSELECT                                          /* (DRYbA) */
+
+             ENDDO                                                /* (DRYbA) */
+             ENDSELECT                                            /* (DRYbA) */
+
+/* Create member name */
+
+             CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+             CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+      /*     CHGVAR     VAR(&MBR) VALUE('P' *CAT &NXTNUMA)          411 D */
+             CHGVAR     VAR(&MBR) VALUE('P' *CAT %SST(&WHSE 2 2) +
+                          *CAT &NXTNUMA)                           /* 411 M */
+
+/* Create members for export files */
+
+             ADDPFM     FILE(&FILEH) MBR(&MBR)
+             ADDPFM     FILE(&FILED) MBR(&MBR)
+             ADDPFM     FILE(&FILEE) MBR(&MBR)                       /* (417) */
+             ADDPFM     FILE(&FILEL) MBR(&MBR)                    /* (650aA) */
+/*  Add members to extended length export files for TPC.             (TPCaA) */
+             IF         COND(&client *eq &TPC) THEN(DO)           /* (TPCaA) */
+               ADDPFM     FILE(EXPFPOHSPK) MBR(&MBR)              /* (TPCaA) */
+               ADDPFM     FILE(EXPFPODSPK) MBR(&MBR)              /* (TPCaA) */
+             ENDDO                                                /* (TPCaA) */
+
+/* Use OPNQRYF to select and order the records we need */
+
+Selectrcds:                                                       /* (GFSaA) */
+             MSGBFC     MESSAGE('Selecting records to export')
+
+             OVRDBF     FILE(POHDR) SHARE(*YES)
+             CHGVAR     VAR(&QRYSLT) VALUE('(PHWHSE *EQ' *BCAT &WHSE +
+                          *CAT ') *AND (PHUDTE *EQ 0) *AND +
+                          (PHSTAT *NE "0") *AND +
+                          (%SST(PHPO 8 2) *NE' *BCAT &QUOTE *CAT +
+                          'TF' *CAT &QUOTE *CAT ')')
+
+             IF         COND(&CLIENT = &GETFRESH) THEN(DO)        /* (GFSaA) */
+               CHGVAR     VAR(&QRYSLT) VALUE(&qryslt *Bcat '*And +
+                            (%SST(PHPO 1 1) *EQ' *BCAT &QUOTE *CAT +
+                            &CmpID *CAT &QUOTE *CAT +
+                            ' *or (%SST(PHPO 1 1) *eq ''S'') )')  /* (GFSbM) */
+/*                          &CmpID *CAT &QUOTE *CAT ')' )         /* (GFSbD) */
+             ENDDO                                                /* (GFSaA) */
+                                                                  /* (GFSaA) */
+             OPNQRYF    FILE((POHDR)) OPTION(*ALL) QRYSLT(&QRYSLT) +
+                          KEYFLD((PHWHSE) (PHPO))
+
+             RMVMSG     CLEAR(*ALL)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Exporting P.O.''s into member' +
+                          *BCAT &MBR *TCAT ' in P.O. export files') +
+                          TOPGMQ(*EXT) MSGTYPE(*STATUS)
+
+/*  Create SAP Export Sales Orders file member.                      (PAK A) */
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+
+               ADDPFM     FILE(SAPEXP) MBR(&MBR)                  /* (PAK A) */
+               MONMSG     MSGID(CPF7306) EXEC(DO)
+/*               Ignore member not added at this time.               (PAK A) */
+/*               Clrpfm file(SAPEXP) mbr(&MBR)                       (PAK A) */
+               Enddo                                              /* (PAK A) */
+
+             enddo                                                /* (PAK A) */
+             IF         COND(&client *eq &TPC) THEN(DO)           /* (TPCaA) */
+               RTVMBRD    FILE(&FILEH) MBR(&MBR) NBRCURRCD(&RECS) /* (TPCbA) */
+               IF         COND(&RECS = 0) THEN(DO)                /* (TPCbA) */
+                 GOTO SKIPFTP                                     /* (TPCbA) */
+               enddo                                              /* (TPCbA) */
+               CPYF       FROMFILE(&FILEH) TOFILE(EXPFPOHSPK) +
+                            FROMMBR(&MBR) TOMBR(&MBR) +
+                            MBROPT(*REPLACE) FMTOPT(*MAP)         /* (TPCaA) */
+               CPYF       FROMFILE(&FILED) TOFILE(EXPFPODSPK) +
+                            FROMMBR(&MBR) TOMBR(&MBR) +
+                           MBROPT(*REPLACE) FMTOPT(*MAP)          /* (TPCaA) */
+             enddo                                                /* (TPCaA) */
+
+/*  Call program to move route to export files */
+
+             OVRDBF     FILE(&FILEH) MBR(&MBR)
+             OVRDBF     FILE(&FILED) MBR(&MBR)
+             OVRDBF     FILE(&FILEE) MBR(&MBR)                       /* (417) */
+             OVRDBF     FILE(&FILEL) MBR(&MBR)                    /* (650aA) */
+/*  Override to SAP Export file member.                              (PAK A) */
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+               OVRDBF     FILE(SAPEXP) MBR(&MBR)                  /* (PAK A) */
+             ENDDO                                                /* (PAK A) */
+
+             CALL       PGM(&EXPPGM)
+
+             DLTOVR     FILE(&FILEH &FILED)
+             DLTOVR     FILE(&FILEE)                                 /* (417) */
+             DLTOVR     FILE(&FILEL)                              /* (650aA) */
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+               dltovr     FILE(SAPEXP)                            /* (PAK A) */
+             enddo                                                /* (PAK A) */
+
+             SELECT                                               /* (GFSaA) */
+             WHEN       COND(&CLIENT = &Getfresh) THEN(DO)        /* (GFSaA) */
+
+               RTVMBRD    FILE(&FILEH) MBR(&MBR) +
+                            NBRCURRCD(&NBRCURRCDS)                /* (GFSaA) */
+/*             If no p/o's exported, check next company.             (GFSaA) */
+               IF         COND(&NBRCURRCDS = 0) THEN(DO)          /* (GFSaA) */
+                 CHGVAR     VAR(&LOOP) VALUE(&Loop + 1)           /* (GFSaA) */
+                 Select                                           /* (GFSaA) */
+                 When       COND(&LOOP = 2) THEN(DO)              /* (GFSaA) */
+                   CLOF       OPNID(POHDR)                        /* (GFSaA) */
+                   MONMSG     MSGID(CPF4519 CPF4520)              /* (GFSaA) */
+                   CLOF       OPNID(&FILEH)                       /* (GFSaA) */
+                   MONMSG     MSGID(CPF4519 CPF4520)              /* (GFSaA) */
+                   CLOF       OPNID(&FILED)                       /* (GFSaA) */
+                   MONMSG     MSGID(CPF4519 CPF4520)              /* (GFSaA) */
+                   CLOF       OPNID(&FILEE)                       /* (GFSaA) */
+                   MONMSG     MSGID(CPF4519 CPF4520)              /* (GFSaA) */
+
+                   CHGVAR     VAR(&CMPID) VALUE('F')              /* (GFSaA) */
+                   CHGVAR     VAR(&CMPNBR) VALUE('02')            /* (GFSaA) */
+                   GOTO       CMDLBL(SELECTRCDS)                  /* (GFSaA) */
+                 ENDDO                                            /* (GFSaA) */
+                 OTHERWISE  CMD(DO)                               /* (GFSaA) */
+/*                 Nothing to transmit, so get out.                  (GFSaA) */
+                   GOTO       CMDLBL(SKIPFTP)                     /* (GFSaA) */
+                 ENDDO                                            /* (GFSaA) */
+                 ENDSELECT                                        /* (GFSaA) */
+               ENDDO                                              /* (GFSaA) */
+             ENDDO                                                /* (GFSaA) */
+             ENDSELECT                                            /* (GFSaA) */
+
+/* Check if we should export file to host system */  /* 414 A */
+
+             OVRDBF     FILE(FTPEXPDFT) MBR(&EXPSCRP)
+             CALL       PGM(FTPCHKSCR) PARM(&EXPFLAG)
+             DLTOVR     FILE(FTPEXPDFT)
+             IF         COND(&EXPFLAG = '*NOEXP') THEN(GOTO SKIPFTP)
+
+/* Create members for ftp files */
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Creating export script from +
+                          member' *BCAT &MBR) TOPGMQ(*EXT) +
+                          MSGTYPE(*STATUS)
+
+             ADDPFM     FILE(FTPEXPLOG) MBR(&MBR)
+             MONMSG     MSGID(CPF7306) EXEC(DO)                   /* (GFS A) */
+               CLRPFM     FILE(FTPEXPLOG) MBR(&MBR)               /* (GFS A) */
+             ENDDO                                                /* (GFS A) */
+/*           CPYSRCF    FROMFILE(FTPEXPDFT) TOFILE(FTPEXPSCRP) +
+                          FROMMBR(DEFAULT) TOMBR(&MBR)               (520 D) */
+             CPYSRCF    FROMFILE(FTPEXPDFT) TOFILE(FTPEXPSCRP) +
+                          FROMMBR(&EXPSCRP) TOMBR(&MBR) +
+                          SRCOPT(*SEQNBR) /* (520 M) */
+
+/* Retrieve library names for files */
+
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+               RTVMBRD    FILE(SAPEXP) MBR(&MBR) RTNLIB(&LIBH)    /* (PAK A) */
+             ENDDO                                                /* (PAK A) */
+             Else if cond(&client = &TPC) THEN(DO)                /* (TPCaA) */
+               CHGVAR     VAR(&LCLFILEH) VALUE(&LIBH *TCAT +
+                            '/EXPFPOHSPK.' *CAT &MBR)             /* (TPCaA) */
+               CHGVAR     VAR(&LCLFILED) VALUE(&LIBD *TCAT +
+                            '/EXPFPODSPK.' *CAT &MBR)             /* (TPCaA) */
+               CHGVAR     VAR(&LCLFILEE) VALUE(&LIBE *TCAT +
+                          '/EXPFPOE.' *CAT &MBR)                  /* (TPCaA) */
+             ENDDO                                                /* (TPCaA) */
+             ELSE       CMD(DO)                                   /* (PAK A) */
+             RTVMBRD    FILE(&FILEH) MBR(&MBR) RTNLIB(&LIBH)
+             RTVMBRD    FILE(&FILED) MBR(&MBR) RTNLIB(&LIBD)
+             RTVMBRD    FILE(&FILEE) MBR(&MBR) RTNLIB(&LIBE)         /* (417) */
+             RTVMBRD    FILE(&FILEL) MBR(&MBR) RTNLIB(&LIBL)      /* (650aA) */
+             ENDDO                                                /* (PAK A) */
+
+/* Create FTP local and remote file names */
+
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+               CHGVAR     VAR(&LCLFILEH) VALUE(&LIBH *TCAT +
+                            '/SAPEXP.' *CAT &MBR)                 /* (PAK A) */
+             ENDDO                                                /* (PAK A) */
+             else cmd(DO)                                         /* (PAK A) */
+             CHGVAR     VAR(&LCLFILEH) VALUE(&LIBH *TCAT +
+                          '/EXPFPOH.' *CAT &MBR)
+             CHGVAR     VAR(&LCLFILED) VALUE(&LIBD *TCAT +
+                          '/EXPFPOD.' *CAT &MBR)
+             CHGVAR     VAR(&LCLFILEE) VALUE(&LIBE *TCAT +
+                          '/EXPFPOE.' *CAT &MBR)                     /* (417) */
+             CHGVAR     VAR(&LCLFILEL) VALUE(&LIBL *TCAT +
+                          '/EXPFPOL.' *CAT &MBR)                  /* (650aA) */
+             ENDDO                                                /* (PAK A) */
+
+  /*         CHGVAR     VAR(&RMTFILEH) VALUE(&MBR *TCAT 'H.PO')  */
+  /*         CHGVAR     VAR(&RMTFILED) VALUE(&MBR *TCAT 'D.PO')  */
+
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+               CHGVAR     VAR(&RMTFILEH) VALUE(&CURDTYYMD *CAT &CURTIME)
+                                                                  /* (PAK A) */
+             ENDDO                                                /* (PAK A) */
+
+/* Create Unique Remote Host file names.                             (CTY A) */
+
+             ELSE       CMD(IF COND(&CLIENT *EQ &CITYLINE +
+                            *OR &CLIENT *EQ &HALSEY +
+                            *OR &CLIENT *EQ &CRUMBLEY +
+                            *OR &CLIENT *EQ &EuroImport +
+                            *OR &CLIENT *EQ &Stern +
+                            *OR &CLIENT *EQ &Greenleaf +
+                            *OR &CLIENT *EQ &Cashwa +
+                            *OR &CLIENT *EQ &SBertram +
+                            *OR &CLIENT *EQ &FoodsGal +
+                            *OR &CLIENT *EQ &Getfresh +
+                            *OR &CLIENT *EQ &Capitolcty +
+                            *OR &CLIENT *EQ &SGC) THEN(DO))       /* (CCP M) */
+               CHGVAR     VAR(&SHORTNUMA) VALUE(%SST(&NXTNUMA 4 4)) +
+                                                                  /* (CTY A) */
+               CHGVAR     VAR(&RMTFILEH) VALUE('EXPFPOH' *CAT &SHORTNUMA +
+                                                 *Tcat '.TXT')    /* (CTY A) */
+               CHGVAR     VAR(&RMTFILED) VALUE('EXPFPOD' *CAT &SHORTNUMA +
+                                                 *Tcat '.TXT')    /* (CTY A) */
+
+               IF         COND(&client *eq &SGC) Then(DO)         /* (SGCaA) */
+                 CHGVAR     VAR(&TFRNEEDED) VALUE(3)              /* (SGCaA) */
+                 CHGVAR     VAR(&RMTFILEE) VALUE('EXPFPOE' *CAT &SHORTNUMA +
+                                                   *Tcat '.TXT')  /* (SGCaA) */
+               ENDDO                                              /* (SGCaA) */
+
+          /*   IF         COND(&client *eq &Greenleaf) Then(DO)   /* (GLP A) */
+               IF         COND(&client *eq &Greenleaf +
+                            *OR &CLIENT *EQ &SBertram) Then(DO)   /* (SBRaA) */
+                 CHGVAR     VAR(&TFRNEEDED) VALUE(3)              /* (GLP A) */
+                 CHGVAR     VAR(&RMTFILEL) VALUE('EXPFPOL' *CAT &SHORTNUMA +
+                                                   *Tcat '.TXT')  /* (GLP A) */
+               ENDDO                                              /* (SGCaA) */
+
+               IF         COND(&client *eq &CashWa) Then(DO)      /* (CWDaA) */
+                 CHGVAR     VAR(&TFRNEEDED) VALUE(3)              /* (CWDaA) */
+                 CHGVAR     VAR(&RMTFILEL) VALUE('EXPFPOL' *CAT &SHORTNUMA +
+                                                   *Tcat '.TXT')  /* (CWDaA) */
+               ENDDO                                              /* (CWDaA) */
+             ENDDO                                                /* (CTY A) */
+
+             ELSE       CMD(IF COND(&CLIENT *EQ &TPC) THEN(DO))   /* (TPC M) */
+               CALL       PGM(GETEXP#) PARM('*PO' &EXPFNBR)       /* (TPC A) */
+               CHGVAR     VAR(&RMTFILEH) VALUE('wmph' *CAT &expfnbr) +
+                                                                  /* (TPC A) */
+               CHGVAR     VAR(&RMTFILED) VALUE('wmpd' *CAT &expfnbr) +
+                                                                  /* (TPC A) */
+             ENDDO                                                /* (TPC A) */
+
+             else cmd(DO)                                         /* (PAK A) */
+
+             CHGVAR     VAR(&RMTFILEH) VALUE('EXPFPO' *CAT +
+                          %SST(&WHSE 2 2) *CAT 'H.Txt')
+             CHGVAR     VAR(&RMTFILED) VALUE('EXPFPO' *CAT +
+                          %SST(&WHSE 2 2) *CAT 'D.Txt')
+             CHGVAR     VAR(&RMTFILEE) VALUE('EXPFPO' *CAT +
+                          %SST(&WHSE 2 2) *CAT 'E.Txt')              /* (417) */
+             CHGVAR     VAR(&RMTFILEL) VALUE('EXPFPO' *CAT +
+                          %SST(&WHSE 2 2) *CAT 'L.Txt')           /* (650aA) */
+      ENDDO                                                       /* (PAK A) */
+
+/* Call program to create script */
+
+             CHGVAR     VAR(&EXPTYPE) VALUE('*PO')
+             OVRDBF     FILE(FTPEXPSCRP) MBR(&MBR)
+
+/*           CALL       PGM(FTPCRTSCRP) PARM(&EXPTYPE &LCLFILEH +            */
+/*                        &LCLFILED &LCLFILEC &LCLFILET &RMTFILEH +          */
+/*                        &RMTFILED &RMTFILEC &RMTFILET)             (510bD) */
+             SELECT                                               /* (GFSaA) */
+             WHEN       COND(&CLIENT = &GETFRESH) THEN(DO)        /* (GFSaA) */
+               CALL       PGM(FTPCRTSCRP) PARM(&EXPTYPE &LCLFILEH +
+                            &LCLFILED &LCLFILEC &LCLFILET &RMTFILEH +
+                            &RMTFILED &RMTFILEC &RMTFILET &LCLFILEB +
+                            &RMTFILEB &LCLFILEE &RMTFILEE &PATHH +
+                            &PATHD &PATHC &PATHT &PATHB &PATHE +
+                            &LCLFILEL &RMTFILEL &PATHL +
+                            &LCLFILEP &RMTFILEP &PATHP +
+                            &LCLFILEA &RMTFILEA &PATHA +
+                            &LCLFILEF &RMTFILEF &PATHF +
+                            &Cmpid &CmpNbr)                       /* (GFSaA) */
+             enddo                                                /* (GFSaA) */
+             OTHERWISE  CMD(DO)                                   /* (GFSaA) */
+/*           CALL       PGM(FTPCRTSCRP) PARM(&EXPTYPE &LCLFILEH +
+                          &LCLFILED &LCLFILEC &LCLFILET &RMTFILEH +
+                          &RMTFILED &RMTFILEC &RMTFILET &LCLFILEB +
+                          &RMTFILEB &LCLFILEE &RMTFILEE &PATHH +
+                          &PATHD &PATHC &PATHT &PATHB &PATHE)     /* (650 D) */
+               CALL       PGM(FTPCRTSCRP) PARM(&EXPTYPE &LCLFILEH +
+                            &LCLFILED &LCLFILEC &LCLFILET &RMTFILEH +
+                            &RMTFILED &RMTFILEC &RMTFILET &LCLFILEB +
+                            &RMTFILEB &LCLFILEE &RMTFILEE &PATHH +
+                            &PATHD &PATHC &PATHT &PATHB &PATHE +
+                            &LCLFILEL &RMTFILEL &PATHL +
+                            &LCLFILEP &RMTFILEP &PATHP +
+                            &LCLFILEA &RMTFILEA &PATHA +
+                            &LCLFILEF &RMTFILEF &PATHF)           /* (650AM) */
+             ENDDO                                                /* (GFSaA) */
+             ENDSELECT                                            /* (GFSaA) */
+
+             DLTOVR     FILE(FTPEXPSCRP)
+
+             RMVMSG     CLEAR(*ALL)
+
+/* Execute FTP */
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export files using FTP for +
+                          member' *BCAT &MBR) TOPGMQ(*EXT) +
+                          MSGTYPE(*STATUS)
+
+             IF         COND(&CLIENT *EQ &PACKERS) THEN(DO)       /* (PAKaA) */
+
+/*             Send file to IFS instead of using FTP.                (PAKaA) */
+               CPYTOIMPF  FROMFILE(*LIBL/SAPEXP &MBR) +
+                            TOSTMF(&PATHH) MBROPT(*REPLACE) +
+                            STMFCODPAG(*PCASCII) RCDDLM(*CRLF) +
+                            DTAFMT(*FIXED)                        /* (PAKaA) */
+               MONMSG     MSGID(CPF2817) EXEC(DO)                 /* (PAKaA) */
+                 CHGVAR     VAR(&RTN) VALUE('*PGMQ')              /* (PAKaA) */
+               ENDDO                                              /* (PAKaA) */
+
+             ENDDO                                                /* (PAKaA) */
+
+             ELSE       CMD(DO)                                   /* (PAKaA) */
+
+             OVRDBF     FILE(INPUT) TOFILE(*LIBL/FTPEXPSCRP) MBR(&MBR)
+             OVRDBF     FILE(OUTPUT) TOFILE(*LIBL/FTPEXPLOG) MBR(&MBR)
+
+             FTP        RMTSYS(DUMMYSYSTEM)
+
+             DLTOVR     FILE(INPUT OUTPUT)
+
+/* Now check FTP log file for errors */
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Checking FTP log for errors') +
+                          TOPGMQ(*EXT) MSGTYPE(*STATUS)
+
+             OVRDBF     FILE(FTPEXPLOG) MBR(&MBR)
+
+             CALL       PGM(FTPCHKLOG) PARM(&TFRNEEDED &MBR &PGM +
+                          &RTN &MSGKEY)
+
+             DLTOVR     FILE(FTPEXPLOG)
+
+             ENDDO                                                /* (PAKaA) */
+
+/* If there was an error, just return */
+
+             IF         COND(&RTN = '*PGMQ') THEN(GOTO GETOUT)
+
+/* This is the place to skip to if script had *NO EXPORT* */ /* 414A */
+
+             SELECT                                               /* (GFSaA) */
+             WHEN       COND(&CLIENT = &Getfresh) THEN(DO)        /* (GFSaA) */
+
+               CHGVAR     VAR(&LOOP) VALUE(&Loop + 1)             /* (GFSaA) */
+               Select                                             /* (GFSaA) */
+               When       COND(&LOOP = 2) THEN(DO)                /* (GFSaA) */
+                 CLOF       OPNID(POHDR)                          /* (GFSaA) */
+                 MONMSG     MSGID(CPF4519 CPF4520)                /* (GFSaA) */
+                 CLOF       OPNID(&FILEH)                         /* (GFSaA) */
+                 MONMSG     MSGID(CPF4519 CPF4520)                /* (GFSaA) */
+                 CLOF       OPNID(&FILED)                         /* (GFSaA) */
+                 MONMSG     MSGID(CPF4519 CPF4520)                /* (GFSaA) */
+                 CLOF       OPNID(&FILEE)                         /* (GFSaA) */
+                 MONMSG     MSGID(CPF4519 CPF4520)                /* (GFSaA) */
+
+                 CLRPFM     FILE(&FILEH) MBR(&MBR)                /* (GFSaA) */
+                 CLRPFM     FILE(&FILED) MBR(&MBR)                /* (GFSaA) */
+                 CLRPFM     FILE(&FILEE) MBR(&MBR)                /* (GFSaA) */
+
+                 CHGVAR     VAR(&CMPID) VALUE('F')                /* (GFSaA) */
+                 CHGVAR     VAR(&CMPNBR) VALUE('02')              /* (GFSaA) */
+                 GOTO       CMDLBL(SELECTRCDS)                    /* (GFSaA) */
+               ENDDO                                              /* (GFSaA) */
+               ENDSELECT                                          /* (GFSaA) */
+             ENDDO                                                /* (GFSaA) */
+             ENDSELECT                                            /* (GFSaA) */
+
+SKIPFTP:
+
+/* We finished without error */
+
+             CHGVAR     VAR(&FINISHED) VALUE('1')
+             CHGVAR     VAR(&RTN) VALUE('*OK')
+
+             SELECT                                               /* (DRY A) */
+             WHEN       COND(&CLIENT = &DAIRYLAND) THEN(DO)       /* (DRY A) */
+
+             RTVMBRD    FILE(&FILEH) MBR(&MBR) RTNLIB(&RUNTIMEENV) +
+                          NBRCURRCD(&NBRCURRCDS)                  /* (DRYcM) */
+             IF         COND(&NBRCURRCDS = 0) THEN(CHGVAR +
+                          VAR(&EXPFLAG) VALUE('*OK'))             /* (DRYcA) */
+
+/*           Call Dairyland Interface Pgm.                           (DRY A) */
+             IF         COND(&NBRCURRCDS > 0) THEN(DO)            /* (DRYcA) */
+               CHGVAR     VAR(&WHSEN) VALUE(&WHSE)                /* (DRY A) */
+               CALL       PGM(&HOSTLIB/BFCEPO01C) PARM(&WHSEN +
+                            &MBR &RUNTIMEENV &RTNH)               /* (DRY A) */
+               MONMSG     MSGID(CPF0001) EXEC(CHGVAR VAR(&FINISHED) +
+                            VALUE('0'))                           /* (DRY A) */
+               SELECT                                             /* (DRY A) */
+/*             Set flag for export mbr cleanup.                      (DRY A) */
+               When       COND(&RTNH *EQ '*OK') THEN(DO)          /* (DRY A) */
+                 CHGVAR     VAR(&EXPFLAG) VALUE(&RTNH)            /* (DRY A) */
+               ENDDO                                              /* (DRY A) */
+
+/*             Set flag for export failure, leave mbrs behind.       (DRY A) */
+               When       COND(&RTNH *NE '*OK') THEN(DO)          /* (DRY A) */
+                 CHGVAR     VAR(&FINISHED) VALUE('0')             /* (DRY A) */
+               ENDDO                                              /* (DRY A) */
+               ENDSELECT                                          /* (DRY A) */
+
+             ENDDO                                                /* (DRYcA) */
+
+             ENDDO                                                /* (DRY A) */
+             ENDSELECT                                            /* (DRY A) */
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+
+/* If we skipped FTP then don't delete members */  /* 414 A */
+
+             IF         COND(&EXPFLAG = '*NOEXP') THEN(GOTO SKIPFTP2)
+
+             RMVM       FILE(&FILEH) MBR(&MBR)
+             MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (510aA) */
+             RMVM       FILE(&FILED) MBR(&MBR)
+             MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (510aA) */
+             RMVM       FILE(&FILEE) MBR(&MBR)                       /* (417) */
+             MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (510aA) */
+             RMVM       FILE(&FILEL) MBR(&MBR)                    /* (650aA) */
+             MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (650aA) */
+             RMVM       FILE(FTPEXPSCRP) MBR(&MBR)
+             MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (510aA) */
+             RMVM       FILE(FTPEXPLOG) MBR(&MBR)
+             MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                          CPF3273 CPF7301 CPF7310)                /* (510aA) */
+             IF         COND(&client *eq &packers) THEN(DO)       /* (PAK A) */
+               rmvm     FILE(SAPEXP) mbr(&mbr)                    /* (PAK A) */
+               MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                            CPF3273 CPF7301 CPF7310)              /* (PAK A) */
+             enddo                                                /* (PAK A) */
+             IF         COND(&client *eq &TPC) THEN(DO)           /* (TPCaA) */
+               rmvm     FILE(EXPFPOHSPK) mbr(&mbr)                /* (TPCaA) */
+               MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                            CPF3273 CPF7301 CPF7310)              /* (TPCaA) */
+               rmvm     FILE(EXPFPODSPK) mbr(&mbr)                /* (TPCaA) */
+               MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                            CPF3273 CPF7301 CPF7310)              /* (TPCaA) */
+             enddo                                                /* (TPCaA) */
+
+SKIPFTP2:                                                /* 414A */
+
+             RMVMSG     CLEAR(*ALL)
+
+/*  Send Successful message */
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export successful for member' +
+                          *BCAT &MBR) TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export successful for member' +
+                          *BCAT &MBR) MSGTYPE(*INFO) KEYVAR(&MSGKEY)
+
+             RETURN
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+
+             CHGVAR     VAR(&ERRCNT) VALUE(&ERRCNT + 1)
+             IF COND(&ERRCNT = 3) THEN(GOTO CMDLBL(BOTTOM))
+
+             IF COND(&FINISHED = '0') THEN(DO)
+             CHGVAR     VAR(&RTN) VALUE('*PGMQ')
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          TOMSGQ(&FTPERRMSGQ) MSGTYPE(*INFO)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          MSGTYPE(*INFO) KEYVAR(&MSGKEY)
+
+             /* Get warehouse number */
+          /* CALL       PGM(GETOPTINT) PARM('Interface' 'General +
+                          Options' 'Warehouse Number' &OIVALT +
+                          &OIVALN &OIVALA &OIRETURN)             */
+          /* IF         COND(&OIRETURN *EQ '*OK') THEN( +
+               CHGVAR     VAR(&EMLADD) VALUE(&OIVALA)  )       */
+          /* ELSE       CMD(CHGVAR VAR(&WHSE) VALUE('001'))  */
+
+             OVRPRTF    FILE(QPJOBLOG) OUTQ(BFCEXCP)              /* (530 A) */
+             DSPJOBLOG  OUTPUT(*PRINT)                            /* (BFC A) */
+             ENDDO
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) TOMSGQ(&FTPMSGQ) MSGTYPE(*COMP)
+
+             IF COND(&FINISHED = '0') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) TOMSGQ(&FTPERRMSGQ) +
+                          MSGTYPE(*COMP)
+             ENDDO
+
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+ BOTTOM:
+
+             IF COND(&TYPE = '0') THEN(DO)
+
+               RCLRSC     LVL(*CALLER)
+
+        /*  Send '*Escape' message to caller */
+
+               IF COND(&FINISHED = '0') THEN(DO)
+                 SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Error Occured Processing Member' +
+                          *BCAT &MBR) MSGTYPE(*ESCAPE)
+               ENDDO
+
+             ENDDO
+
+             ENDPGM

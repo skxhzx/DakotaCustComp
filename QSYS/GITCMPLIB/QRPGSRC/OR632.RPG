@@ -1,0 +1,501 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1997 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR632     Truck build - Replenishment.
+     F*  24 June 1997
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    06/24/97 DAS  4.00
+     F*      -  Minor revisions for truck build process.  This program
+     F*         based on OR632.  Old revisions were removed to clean
+     F*         up program.
+     F*      - Initial revisions have not be marked with the version.
+     F*      - A new route id field is used to uniquely identify routes.
+     F*      - The pallet number of the label that triggered this letdown
+     F*        is written to the pallet number of the letdown record.
+     F*
+408  F*    01/22/98 RH   4.08
+408  F*      - Added return parameters entered date and expiration date.
+     F*
+413  F*    10/06/99 DAS  4.13
+     F*      - Revised to allow letdown when home slot doesn't have
+     F*        tie/high def.
+     F*
+415aAF*    03/28/01  MLB  4.15a
+     F*      - Revised program to include ITFLGD when testing for
+     F*        expiration dates.
+     F*      - Added file PIRITEM to program.
+     F*
+416 AF*    09/13/01  DAS  4.16
+     F*      - Revised to write record to LABEL instead of WORKLBL.
+     F*      - For readablity, just change LW to LB instead of
+     F*        duplicating all of those lines.
+416aAF*    09/19/02  MLB  4.16a
+     F*      - Enh: Revised program to check file SLTRPEX for slot
+     F*        selected for replenishment, if found in file, skip this
+     F*        slot and go the next one. If slot selected is only one
+     F*        available, allow it to be used. The SLTRPEX file is used
+     F*        to flag slot(s) that are unavailable due to being blocked
+     F*        by other product etc. This file is cleared daily via pgm
+     F*        SL405.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT3   UF  E           K        DISK
+     FSLOT1   IF  E           K        DISK
+     F            SLREC                             KRENAMESLREC1
+     FITEMDEF2IF  E           K        DISK
+415aAFPIRITEM IF  E           K        DISK
+416aAFSLTRPEX IF  E           K        DISK
+416 DF**RKLBL O   E           K        DISK                      A
+416 MFLABEL   O   E           K        DISK                      A
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'ADDSTDTRN'           C         @ADDTR
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse number.
+     C*      $PRTID  Route Id.
+     C*      $PITEM  Item number.
+     C*      $PUCOD  Normal unit of measure code.
+     C*      $PCUBE  Unit cube of item.
+     C*      $PSWGT  Unit weight of item.
+     C*      $PTRN#  Corresponding transaction number.
+     C*      $PPAL#  Corresponding pick pallet number.
+     C*      $PWHDP  Pick slot department.
+     C*      $PAISL  Pick slot aisle.
+     C*      $PLOC   Pick slot location.
+     C*      $PRLVL  Pick slot level.
+     C*      $PHAND  Pick slot handstack.
+     C*      $PDISP  Pick slot display.
+     C*
+     C*    Returned Parameters
+     C*      $PQTY   Replenishment quantity.
+408 AC*      $PENTD  From slot entered date.
+408 AC*      $PEXPD  From slot expiration date.
+     C*      $PRTN   *OK      - Replenishment completed.
+     C*              *ERROR   - Replenishment not done.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PBAT   70
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PRTID  5
+     C                     PARM           $PITEM 15
+     C                     PARM           $PUCOD  2
+     C                     PARM           $PCUBE  73
+     C                     PARM           $PSWGT  72
+     C                     PARM           $PTRN#  70
+     C                     PARM           $PPAL#  70
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PAISL  3
+     C                     PARM           $PLOC   30
+     C                     PARM           $PRLVL  20
+     C                     PARM           $PHAND  2
+     C                     PARM           $PDISP 12
+     C                     PARM           $PQTY   70
+408 AC                     PARM           $PENTD  80
+408 AC                     PARM           $PEXPD  80
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+416aAC           RETRY     TAG
+     C                     MOVE *ON       FOREVR  1
+     C                     MOVE '*ERROR  '$PRTN
+416aAC                     MOVE '*YES'    CHKFIL  4
+416aAC                     MOVE '*NO '    SLTFND  4
+     C*
+     C*  Get picking slot for item.
+     C*
+     C           KEYSL1    CHAINSLOT1                79
+     C           *IN79     CABEQ*ON       OUT
+     C*
+     C*  Ignore slot if no matching tie/high definition.
+     C*
+     C           KEYID2    CHAINITEMDEF2             79
+413 DC*          *IN79     CABEQ*ON       OUT
+413 AC           *IN79     IFEQ *ON
+413 AC                     Z-ADD9999      IDTIE
+413 AC                     Z-ADD0         IDHIGH
+413 AC                     Z-ADD1         SDPOS
+413 AC                     ENDIF
+     C                     Z-ADDIDTIE     SAVTIE
+     C                     Z-ADDIDHIGH    SAVHGH
+     C*
+     C*  Calculate total quantity that can fit in slot.
+     C*
+     C                     SELEC
+     C           IDTIE     WHEQ 0
+     C                     Z-ADDIDHIGH    DSPQTY  50
+     C           IDHIGH    WHEQ 0
+     C                     Z-ADDIDTIE     DSPQTY
+     C                     OTHER
+     C           IDTIE     MULT IDHIGH    DSPQTY
+     C                     ENDSL
+     C*
+     C           DSPQTY    MULT SDPOS     DSTQTY  70
+     C*
+     C*  Get stock quantity in pick slot.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           SLSTK1
+     C                     PARM           SLSTK2
+     C                     PARM           SLSTK3
+     C*
+     C                     PARM           SLALC1
+     C                     PARM           SLALC2
+     C                     PARM           SLALC3
+     C*
+     C                     PARM           SLTFR1
+     C                     PARM           SLTFR2
+     C                     PARM           SLTFR3
+     C*
+     C                     PARM           SLPCK1
+     C                     PARM           SLPCK2
+     C                     PARM           SLPCK3
+     C*
+     C                     PARM           SLRCV1
+     C                     PARM           SLRCV2
+     C                     PARM           SLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C*  Calculate empty quantity in pick slot.
+     C*
+     C           AVAIL1    IFGE 0
+     C           DSTQTY    SUB  AVAIL1    EMPTYQ  70
+     C                     ELSE
+     C                     Z-ADDDSTQTY    EMPTYQ
+     C                     ENDIF
+     C*
+     C*  Get out if there is no empty space in the pick slot.
+     C*
+     C           EMPTYQ    CABLE0         OUT
+415aAC*
+415aAC*  Get item master record for item.
+415aAC*
+415aAC           KEYIT     CHAINPIRITEM              7978
+415aAC           *IN79     IFEQ *ON
+415aAC                     MOVE 'N'       ITFLGD
+415aAC                     ENDIF
+     C*
+     C*  Loop through reserved slots for item.
+     C*
+     C                     MOVE 'A '      KYSTAT
+     C                     MOVE 'N'       KYPICK
+     C           KEYSL3    SETLLSLOT3                79
+     C           *IN79     CABEQ*ON       OUT
+     C           FOREVR    DOUNEFOREVR
+     C           KEYSL3    READESLOT3                  7879
+     C           *IN79     IFEQ *ON
+416aAC*
+416aAC*    First pass complete, checking slot replenishment
+416aAC*    exceptions and at least one slot found in exception file.
+416aAC*    Restart from the beginning and don't check slot
+416aAC*    exception file on second pass, allow all slots to be
+416aAC*    used.
+416aAC           CHKFIL    IFEQ '*YES'
+416aAC           SLTFND    ANDEQ'*YES'
+416aAC           $PRTN     ANDEQ'*ERROR  '
+416aAC                     MOVE '*NO '    CHKFIL
+416aAC           KEYSL3    SETLLSLOT3
+416aAC                     MOVE *OFF      *IN79
+416aAC                     ITER
+416aAC                     ENDIF
+416aAC*
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*     Ignore slot if no normal stock or past expiration date.
+     C*
+     C           SLSTK1    IFLE 0
+     C           SLEXPD    ORNE 0
+     C           SLEXPD    ANDLTTODAY
+415aAC           ITFLGD    ANDEQ'Y'
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*     Get tie/high definition if one is defined.
+     C*
+     C           KEYID2    CHAINITEMDEF2             78
+     C           *IN78     IFEQ *ON
+     C                     Z-ADD0         IDTIE
+     C                     Z-ADD0         IDHIGH
+     C                     ENDIF
+     C*
+     C*     If nothing available then go to next slot.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           SLSTK1
+     C                     PARM           SLSTK2
+     C                     PARM           SLSTK3
+     C*
+     C                     PARM           SLALC1
+     C                     PARM           SLALC2
+     C                     PARM           SLALC3
+     C*
+     C                     PARM           SLTFR1
+     C                     PARM           SLTFR2
+     C                     PARM           SLTFR3
+     C*
+     C                     PARM           SLPCK1
+     C                     PARM           SLPCK2
+     C                     PARM           SLPCK3
+     C*
+     C                     PARM           SLRCV1
+     C                     PARM           SLRCV2
+     C                     PARM           SLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C           AVAIL1    IFLE 0
+     C                     ITER
+     C                     ENDIF
+416aAC*
+416aAC*    If slot/item is found, skip this slot.
+416aAC*    Only check on first pass through.
+416aAC*
+416aAC           CHKFIL    IFEQ '*YES'
+416aAC           KEYSE     SETLLSLTRPEX                  75
+416aAC           *IN75     IFEQ *ON
+416aAC                     MOVE '*YES'    SLTFND
+416aAC                     ITER
+416aAC                     ENDIF
+416aAC                     ENDIF
+     C*
+     C*     Grab one pallet or less.
+     C*
+     C                     SELEC
+     C           IDTIE     WHEQ 0
+     C                     Z-ADDIDHIGH    PALLET  50
+     C           IDHIGH    WHEQ 0
+     C                     Z-ADDIDTIE     PALLET
+     C                     OTHER
+     C           IDTIE     MULT IDHIGH    PALLET
+     C                     ENDSL
+     C           PALLET    IFLE AVAIL1
+     C           PALLET    ANDGT0
+     C                     Z-ADDPALLET    TOPICK  50
+     C                     ELSE
+     C                     Z-ADDAVAIL1    TOPICK
+     C                     ENDIF
+     C*
+     C*  Make sure quantity will fit in slot.
+     C*
+     C           TOPICK    IFGT EMPTYQ
+     C                     Z-ADDEMPTYQ    TOPICK
+     C                     ENDIF
+     C*
+     C*  Create transaction record.
+     C*
+     C                     CALL 'PIRTRN#'
+     C                     PARM           PTTRN#  70
+     C*
+     C                     MOVE 'REPL  '  @PTASK
+     C           $PCUBE    MULT TOPICK    @PCUBE
+     C           $PSWGT    MULT TOPICK    @PSWGT
+     C                     CALL @ADDTR
+     C                     PARM '*CREATE '@PCMD   8
+     C                     PARM           #JOB
+     C                     PARM PTTRN#    @PTRN#  70
+     C                     PARM           @PTASK  6
+     C                     PARM SLWHSE    @PWHSE  30
+     C                     PARM SLWHDP    @PWHDP  5
+     C                     PARM SLSTYP    @PSTYP  1
+     C                     PARM           @PCUBE  93
+     C                     PARM           @PSWGT  92
+     C                     PARM TOPICK    @PPCS   50
+     C                     PARM 1         @PAISL  50
+     C                     PARM 0         @PQTY1  50
+     C                     PARM 0         @PQTY2  50
+     C                     PARM 0         @PQTY3  50
+     C                     PARM $PRTID    @PRTE   5
+     C                     PARM ' '       @PPO    9
+     C                     PARM 'L'       @PGRP1  1
+     C                     PARM ' '       @PGRP2  1
+     C                     PARM ' '       @PRTN   8
+     C                     PARM ' '       @PMSG   4
+     C*
+     C*  Create label record.
+     C*
+416 MC                     CLEARLBREC
+416 MC                     Z-ADD$PWHSE    LBWHSE
+416 MC                     MOVE SLWHDP    LBWHDP
+416 MC                     MOVE SLAISL    LBAISL
+416 MC                     Z-ADDSLLOC     LBLOC
+416 MC                     Z-ADDSLRLVL    LBRLVL
+416 MC                     MOVE SLHAND    LBHAND
+416 MC                     Z-ADDSLPSEQ    LBPSEQ
+416 MC                     MOVE SLSTYP    LBSTYP
+416 MC           LBSTYP    IFEQ 'P'
+416 MC                     Z-ADD1         LBQRYF
+     C                     ELSE
+416 MC                     Z-ADD0         LBQRYF
+     C                     ENDIF
+416 MC                     MOVE SLDISP    LBDISP
+416 MC                     Z-ADDAVAIL1    LBQAVL
+416 MC                     Z-ADD$PWHSE    LBWHS2
+416 MC                     MOVE $PWHDP    LBWHD2
+416 MC                     MOVE $PAISL    LBASL2
+416 MC                     Z-ADD$PLOC     LBLOC2
+416 MC                     Z-ADD$PRLVL    LBLVL2
+416 MC                     MOVE $PHAND    LBHND2
+416 MC                     MOVE $PDISP    LBDSP2
+416 MC                     MOVE $PRTID    LBRTE
+416 MC                     MOVE $PITEM    LBITEM
+416 MC                     Z-ADD$PBAT     LBPBAT
+416 MC                     MOVE 'N'       LBUTYP
+416 MC                     MOVE $PUCOD    LBUCOD
+416 MC                     Z-ADDTOPICK    LBQALC
+416 MC                     Z-ADDTOPICK    LBQPCK
+416 MC                     Z-ADD$PCUBE    LBUCUB
+416 MC           LBUCUB    MULT TOPICK    LBCUBE
+416 MC                     Z-ADD$PSWGT    LBUWGT
+416 MC           LBUWGT    MULT TOPICK    LBSWGT
+416 MC                     Z-ADDSAVTIE    LBTIE
+416 MC                     Z-ADDSAVHGH    LBHIGH
+416 MC                     Z-ADDPTTRN#    LBTRN#
+416 MC                     Z-ADD$PTRN#    LBCTR#
+416 MC                     Z-ADD$PPAL#    LBPAL#
+     C                     CALL 'PIRLBL#'
+416 MC                     PARM           LBLBL#
+416 MC                     MOVE 'L'       LBGRP1
+416 MC                     MOVE ' '       LBGRP2
+416 MC                     MOVE 'R'       LBTYPE
+416 MC                     MOVE 'P'       LBSTAT
+416 MC                     Z-ADDTODAY     LBSDTE
+416 MC                     TIME           LBSTIM
+416 MC                     Z-ADDTODAY     LBRDTE
+416 MC                     WRITELBREC
+     C*
+     C*     Update slot.
+     C*
+     C                     ADD  TOPICK    SLTFR1
+     C                     UPDATSLREC
+     C*
+     C                     Z-ADDTOPICK    $PQTY
+408 AC                     Z-ADDSLENTD    $PENTD
+408 AC                     Z-ADDSLEXPD    $PEXPD
+     C                     MOVE '*OK     '$PRTN
+     C                     LEAVE
+     C*
+     C                     ENDDO
+     C*
+     C           $PRTN     IFNE '*OK     '
+     C                     UNLCKSLOT3
+     C                     ENDIF
+     C*
+     C           OUT       TAG
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define key for SLOT1 file.
+     C*
+     CSR         KEYSL1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           $PAISL
+     CSR                   KFLD           $PLOC
+     CSR                   KFLD           $PRLVL
+     CSR                   KFLD           $PHAND
+     C*
+     C*  Define partial key for SLOT3 file.
+     C*
+     CSR         *LIKE     DEFN SLSTAT    KYSTAT
+     CSR         *LIKE     DEFN SLPICK    KYPICK
+     CSR         KEYSL3    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     CSR                   KFLD           KYSTAT
+     CSR                   KFLD           KYPICK
+     C*
+     C*  Define key for ITEMDEF2 file.
+     C*
+     CSR         KEYID2    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     CSR                   KFLD           SLSDEF
+415aAC*
+415aAC*  Define key for PIRITEM file.
+415aAC*
+415aACSR         KEYIT     KLIST
+415aACSR                   KFLD           $PWHSE
+415aACSR                   KFLD           $PITEM
+416aAC*
+416aAC*  Define key for SLTRPEX file.
+416aAC*
+416aACSR         KEYSE     KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           $PWHDP
+416aACSR                   KFLD           SLDISP
+416aACSR                   KFLD           $PITEM
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR         *LIKE     DEFN IDTIE     SAVTIE
+     CSR         *LIKE     DEFN IDHIGH    SAVHGH
+     CSR                   ENDSR

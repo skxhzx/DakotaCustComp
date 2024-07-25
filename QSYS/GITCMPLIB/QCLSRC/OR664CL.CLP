@@ -1,0 +1,194 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  OR664CL   Truck Pallet Detail report Comp X only, Custom CBI     */
+/*  19 August, 2004                                                  */
+/*  Roxanne Harrison                                                 */
+/*                                                                   */
+/*  Revisions                                                        */
+/*                                                                   */
+/*  Notes:                                                           */
+/*                                                                   */
+/*    The OPNQRYF statement is used to select the records needed     */
+/*    to print the pallet summary. It is also used to arrange the    */
+/*    records so the PIR records will print with there corresponding */
+/*    fixed pallet. The corresponding fixed pallet number is stored  */
+/*    in field LBCTR# in the PIR records. To get this field to       */
+/*    jump into the LBPAL# field so the records could be sorted      */
+/*    correctly a MAPFLD calculation was done using the special      */
+/*    numeric field LBQRYF which is 0 for fixed items and 1 for      */
+/*    PIR items. The calculation assumes that LBCTR# is 0 for fixed  */
+/*    records.                                                       */
+/*                                                                   */
+/*    08/19/04  RH                                                   */
+/*      -  Created using OR660CL                                     */
+/*    09/24/97  DAS  4.06                                            */
+/*      -  Added PSPLID to Qryslt key.                               */
+/*                                                                   */
+/*    09/19/02  HNK/MLB 4.16                                         */
+/*      -  Select type 'O' and 'B' records from PLTSUM file and      */
+/*         ignore label records with tran # = 0                      */
+/*                                                                   */
+/*    09/26/02  HNK 4.16A                                            */
+/*      -  Select LBTYPE<>'M'                                        */
+/*                                                                   */
+/*    08/20/03  DAS 4.17                                             */
+/*      -  Reversed 4.16a change. Now including 'M' records.         */
+/*                                                                   */
+/*    08/21/03  RH  4.17a                                            */
+/*      - FIX: Changed to call OR660 with DEV & FORM                 */
+/*                                                                   */
+/*    CUSTOM REVISIONS                                               */
+/*    11/03/03  RH  CBIa                                             */
+/*      - CST: Change to sort by display before item.                */
+/*                                                                   */
+/*    07/12/06  JGD-CBI1                                             */
+/*      - Change number of report copies from 2 to 1.                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ OR664CL:    PGM        PARM(&CMD &RTYPE &WHSEA &RTID &RETURN)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR664CL)
+
+
+  /* Report program and printer file name. */
+
+             DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) VALUE(PLTSUM)
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) VALUE(OR664PR)
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Pallet Detail Report (Comp X)')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing pallet detail report (Comp X)')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&BATCH)      TYPE(*DEC)  LEN(7 0)
+             DCL        VAR(&BATCHA)     TYPE(*CHAR) LEN(7)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&Q)          TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTID)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTYPE)      TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&UNQKEY)     TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHDP)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&WHSEA)      TYPE(*CHAR) LEN(3)
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+   /* Create selection criteria string. */
+
+
+   /* Select warehouse  */
+             CHGVAR     VAR(&QRYSLT) VALUE('PSWHSE *EQ ' *CAT &WHSEA)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select route ID   */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSRTID +
+                          *EQ ' *CAT &Q *CAT &RTID *CAT &Q)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select type  4.16 Change */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '(PSTYPE +
+                          *EQ ' *CAT &Q *CAT 'O' *CAT &Q)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*OR')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSTYPE +
+                          *EQ ' *CAT &Q *CAT 'B' *CAT &Q *BCAT ')')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select generation  */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSGEN=1')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select compartment */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSCOMP +
+                          *EQ ' *CAT &Q *CAT 'X' *CAT &Q)
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+   /* Select label type  */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTYPE +
+                          *NE ' *CAT &Q *CAT 'R' *CAT &Q)
+  /* 4.16 Change */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTRN# +
+                          *NE ' *CAT '0')
+  /* 4.16A Change */  /* 4.17 Delete */
+        /*   CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')    */
+        /*   CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTYPE +  */
+        /*                *NE ' *CAT &Q *CAT 'M' *CAT &Q)           */
+
+   /* Use OPNQRYF to select and order the records we need */
+
+             OVRDBF     FILE(OR664) TOFILE(&FILE) SHARE(*YES)
+             OPNQRYF    FILE((&FILE) (LABEL) (ORDH) (PIRITEM)) +
+                        FORMAT(OR664) QRYSLT(&QRYSLT) +
+                        KEYFLD((&FILE/PSWHSE) (&FILE/PSRTID) +
+                          (&FILE/PSCOMP) (&FILE/PSUNLD) +
+                          (&FILE/PSPLID) +
+                          (LABEL/LBSTOP) (LABEL/LBDISP) (LABEL/LBSEQ) +
+                          (LABEL/LBITEM) (LABEL/LBUCOD)) +
+                        JFLD((&FILE/PSWHSE LABEL/LBWHSE) +
+                          (&FILE/PSRTID LABEL/LBRTE) (&FILE/PSPLID +
+                          LABEL/LBPAL#) (LABEL/LBWHSE ORDH/OHWHSE) +
+                          (LABEL/LBORD ORDH/OHORD) (LABEL/LBWHSE +
+                          PIRITEM/ITWHSE) (LABEL/LBITEM +
+                          PIRITEM/ITITEM)) JDFTVAL(*YES) +
+                        OPTIMIZE(*FIRSTIO)
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+             OVRPRTF    FILE(OR664PR) DEV(LP10) PAGRTT(90) OUTQ(*DEV) +
+/* CBI1 M */            COPIES(1)
+             CALL       PGM(OR664) PARM(&CMD &RTYPE)
+
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+   /* Clean up before leaving */
+
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

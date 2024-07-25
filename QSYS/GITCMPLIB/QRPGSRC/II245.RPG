@@ -1,0 +1,333 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2000 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (630) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  II245     Import Total Quantity Ordered by Item - Post
+     F*  12 January 2000
+     F*  Max Blacknik
+     F*
+     F*  Revisions
+414aAF*    07/06/00  MLB  4.14a
+     F*      - Re-compiled. Fields added to ITEMORD.
+     F*      - Revised ZZUPD to update ITEMORD with host qty onhand.
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  79        - EOF for IMPITEM
+     F*  91        - Overflow indicator
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     FIMPITMO UF  E           K        DISK
+     FITEMORD UF  E           K        DISK                      A
+     FPIRITEM IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FII245PR O   E             91     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    DESC    1   2 30
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse to process.
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS   3
+     C*----------------------------------------------------------------
+     C* Main line
+     C*
+     C                     MOVE $PWHS     $PWHSE  30
+     C                     EXSR ZZINZ2
+     C*
+     C* Whip through all the download Total qty ordered records.
+     C*
+     C                     MOVE *ON       PFLAG   1
+     C                     MOVE *OFF      EOFI    1
+     C                     Z-ADD55        LINPPG  30       MAX LINES PER PAGE
+     C                     Z-ADD0         COUNT   30       LINE COUNTER
+     C           KEYIJ     SETLLIMPITMO
+     C           EOFI      DOUEQ*ON
+     C*
+     C           KEYIJ     READEIMPITMO                  79
+     C                     MOVE *OFF      ERROR   1
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       EOFI
+     C                     GOTO ENDDIJ
+     C                     ENDIF
+     C*
+     C*    Error check for update/add.
+     C*
+     C                     EXSR ZZCHKI
+     C*
+     C           ERROR     IFEQ *OFF
+     C                     EXSR ZZUPD
+     C                     ENDIF
+     C*
+     C           ERROR     IFEQ *ON
+     C*
+     C*  Print report heading if necessary.
+     C*
+     C           PFLAG     IFEQ *ON
+     C           COUNT     ORGE LINPPG
+     C                     Z-ADD0         COUNT
+     C                     WRITEHEAD1
+     C                     ADD  3         COUNT
+     C                     MOVE *OFF      PFLAG
+     C                     ENDIF
+     C*
+     C                     WRITEDETAIL
+     C                     ADD  1         COUNT
+     C                     ENDIF
+     C*
+     C*       Delete detail record from download file
+     C*
+     C                     DELETIJREC
+     C*
+     C           ENDDIJ    TAG
+     C                     ENDDO
+     C*
+     C*  Print record error grand totals.
+     C*
+     C           NOITEM    IFGT *ZEROS
+     C           COUNT     IFGE LINPPG
+     C                     WRITEHEAD1
+     C                     ENDIF
+     C                     WRITEGRNDTTL
+     C                     ENDIF
+     C*
+     C*  We are finished so get out.
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C* Key definitions
+     C*
+     C* Import Total Quantity Ordered by Item - Partial key
+     C*
+     CSR         KEYIJ     KLIST
+     CSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for PIRITEM file.
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           IJWHSE
+     CSR                   KFLD           IJITEM
+     C*
+     C*  Variables and constants.
+     C*
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR                   MOVE #PROG     $LPRG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHKI   Item update error checking.
+     C*
+     CSR         ZZCHKI    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  Verify full case item.
+     C*
+     CSR         IJITEM    IFEQ *BLANKS
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE DESC,2    DETMSG
+     CSR                   ADD  1         NOITEM
+     CSR                   GOTO ENDCKI
+     CSR                   END
+     C*
+     CSR         IJITEM    IFNE *BLANKS
+     CSR         KEYIT     CHAINPIRITEM              78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *BLANKS   ITWHDP
+     CSR                   MOVE *BLANKS   ITPDSC
+     CSR                   MOVE *BLANKS   ITDESC
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE DESC,1    DETMSG
+     CSR                   ADD  1         NOITEM
+     CSR                   GOTO ENDCKI
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ENDCKI    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Program initialization. Called from main line.
+     C*
+     CSR         ZZINZ2    BEGSR
+     C*
+     C* Get import date/time.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    IMPDTE  80
+     CSR                   TIME           IMPTIM  60
+     C*
+     C* Get report heading.
+     C*
+     CSR                   MOVE *BLANKS   W1HEAD
+     CSR                   MOVEL'II245PR' RPPRTF
+     CSR         RPPRTF    CHAINREPORTS              79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVELRPDESC    $PSTR
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR                   ENDIF
+     CSR                   Z-ADD50        $PLEN
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR  60
+     CSR                   PARM           $PLEN   30
+     CSR                   MOVEL$PSTR     W1HEAD
+     C*
+     C*   Get warehouse description.
+     C*
+     CSR         $PWHSE    CHAINWAREHS               77
+     CSR         *IN77     IFEQ *ON
+     CSR                   MOVE *BLANKS   WHDESC
+     CSR                   END
+     C*
+     C*   Create warehouse heading.
+     C*
+     CSR                   MOVE $PWHSE    WORK3A  3
+     CSR         ' 0'      CHECKWORK3A    POS     10
+     CSR         4         SUB  POS       LEN     10
+     CSR         LEN       SUBSTWORK3A:POSWHHEAD
+     CSR         WHHEAD    CAT  '-':1     WHHEAD
+     CSR         WHHEAD    CAT  WHDESC:1  WHHEAD
+     CSR                   CALL 'CENTER'
+     CSR                   PARM WHHEAD    $CSTR  60
+     CSR                   PARM 40        $CLEN   30
+     CSR                   MOVEL$CSTR     WHHEAD
+     C*
+     C* Initialize grand total fields
+     C*
+     CSR                   MOVE *ZEROS    GRDLIN
+     CSR                   MOVE *ZEROS    NOITEM
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD    Update Total Quantity Ordered for Item.
+     C*
+     CSR         ZZUPD     BEGSR
+     C*
+     CSR         KEYIT     CHAINITEMORD              76
+     CSR                   SELEC
+     CSR         *IN76     WHEQ *ON
+     CSR                   Z-ADDIJWHSE    IIWHSE
+     CSR                   MOVE IJITEM    IIITEM
+     CSR                   MOVE ITWHDP    IIWHDP
+     CSR                   Z-ADDIJTQO     IITQO
+     CSR                   Z-ADDIMPDTE    IIIDTE
+     CSR                   Z-ADDIMPTIM    IIITIM
+414aACSR                   Z-ADDIJQYOH    IIQYOH
+     CSR                   WRITEIIREC
+     C*
+     CSR                   OTHER
+     CSR                   MOVE ITWHDP    IIWHDP
+     CSR                   Z-ADDIJTQO     IITQO
+     CSR                   Z-ADDIMPDTE    IIIDTE
+     CSR                   Z-ADDIMPTIM    IIITIM
+414aACSR                   Z-ADDIJQYOH    IIQYOH
+     CSR                   UPDATIIREC
+     CSR                   ENDSL
+     C*
+     C*    Accumulate total number of records processed.
+     C*
+     C                     ADD  1         GRDLIN
+     C           ENDUPD    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZRHEAD   Print report headings.
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         COUNT     IFGE LINPPG
+     CSR                   SETON                     81
+     CSR                   Z-ADD0         COUNT
+     CSR                   WRITEHEAD1
+     CSR                   ADD  3         COUNT
+     CSR                   SETOF                     81
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+* Invalid item
+* Item number cannot be blank

@@ -1,0 +1,676 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1997 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+407 MF*  UT822     Recalculate item quantity from slots - Recalc
+     F*  11/07/97  4.07
+     F*  DAS/RH
+     F*  Created using UT812
+     F*
+     F*  Revisions
+     F*
+412 AF*    09/16/99  DAS  4.12
+     F*      - Revised to include SLTFR quantities in UPDQTY routine.
+416aAF*    09/18/01  RH   4.16a
+     F*      - Revised to use UT82201 message.
+416bAF*    12/28/01  RH   4.16b
+     F*      - Convert to lowest UOM for compare.
+416cAF*    02/27/02  RH   4.16c
+     F*      - FIX - was not getting quantities for non-breakdown item.
+610aAF*    10/19/10  RH   6.10a
+     F*      - Fix: Change to include cross dock slots in stock and
+     F*        inactive hold for warehouse quantity.
+     F*        Do not include XDK qty in allocated, only status A slots
+     F*
+     F*----------------------------------------------------------------
+     F*
+     F*  Notes
+     F*
+     F*    - The screen for this program must be compiled with
+     F*      defer write equal to *NO.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  21 - 30   Field input error (reverse display)
+     F*  90        View mode (protect all fields)
+     F*  91        Change mode (protect key fields)
+     F*  97        Alawys on (used for SFLEND keyword)
+     F*  98        Error on screen (sound alarm)
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+407 MFUT822FM CF  E                    WORKSTN                        UC
+     F                                              KINFDS INFDS
+     F                                        MSGK  KSFILE MSGREC
+     FPIRITEM IF  E           K        DISK
+     FSLOT3   IF  E           K        DISK
+407 DF*TEMQTY UF  E           K        DISK                      A
+407 MFITEMQTY IF  E           K        DISK
+407 AFWAREHS  IF  E           K        DISK
+407 AFUT822PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  15 ERITEM
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHS   Warehouse
+     C*      $PITEM  Item number or *ALL.
+     C*      $PJTYP  0 - Batch
+     C*              1 - Interactive
+     C*      $PPRG   Program to send messages back to.
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PMSG   Error message id.
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS  155
+     C                     PARM           $PITEM 15
+     C                     PARM           $PJTYP  1
+     C                     PARM           $PPRG  10
+     C                     PARM           $PRTN   8
+     C                     PARM           $PMSG   4
+     C*
+     C                     Z-ADD$PWHS     $PWHSE  30
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *OFF      ERROR
+     C                     MOVE *BLANKS   $PRTN
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C* Recalculate.
+     C*
+     C           $PITEM    IFEQ '*ALL'
+     C                     EXSR ALLITM
+     C                     ELSE
+     C                     EXSR ONEITM
+     C                     ENDIF
+     C*
+     C                     MOVE *ON       *INLR
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize variables
+     C*
+     CSR                   MOVE *ON       FOREVR  1
+     CSR                   MOVE *OFF      ERROR   1
+407 ACSR                   MOVE '1'       FIRST   1
+     C*
+     C*   Define keys
+     C*
+     CSR         KEYWH     KLIST
+     CSR                   KFLD           $PWHSE
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           ITITEM
+     C*
+     C*   Open display file if this program is being run interactively.
+     C*
+     CSR         $PJTYP    IFEQ *ON
+407 MCSR                   OPEN UT822FM
+     CSR                   ENDIF
+     C*
+     C*   Initialize message handling
+     C*
+     CSR         $PJTYP    IFEQ *ON
+     CSR                   EXSR ZMIMSG
+     CSR                   ENDIF
+     C*
+     C*   Fool the compiler.
+     C*
+     CSR                   MOVE *BLANKS   DUMMY   1
+     CSR         DUMMY     IFNE *BLANKS
+407 MCSR                   READ UT822FM                  50
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ALLITM  Recalculate all items.
+     C*
+     CSR         ALLITM    BEGSR
+     C*
+     CSR         KEYWH     SETLLPIRITEM
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYWH     READEPIRITEM                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR         $PJTYP    IFEQ *ON
+     CSR                   MOVE ITITEM    W1ITEM
+     CSR                   WRITESCREEN1
+     CSR                   ENDIF
+     C*
+     C*      Get item quantity record.
+     C*
+     CSR                   EXSR GETQTY
+     CSR         ERROR     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*      Recalculate quantity.
+     C*
+     CSR                   EXSR UPDQTY
+     CSR         ERROR     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR         ERROR     IFNE *ON
+     CSR                   MOVEL'*ALL'    ERITEM    P
+     CSR                   EXSR ZM01
+     CSR                   MOVE '*OK     '$PRTN
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETQTY  Get quantity record.
+     C*
+     CSR         GETQTY    BEGSR
+     C*
+     CSR         KEYIT     CHAINITEMQTY              78
+     C*
+407 DC*     If record doesn't exist try and create it.
+     C*
+     CSR         *IN78     IFEQ *ON
+407 DC*R                   CLEARIQREC
+407 DC*R                   Z-ADD$PWHSE    IQWHSE
+407 DC*R                   MOVE ITITEM    IQITEM
+407 ACSR                   EXSR ZERO
+407 DC*R                   WRITEIQREC                  77
+407 DC*R         *IN77     IFEQ *ON
+407 DC*R                   MOVE *ON       ERROR
+407 DC*R                   MOVE ITITEM    ERITEM
+407 DC*R                   EXSR ZM21
+407 DC*R                   MOVE '*PGMQ   '$PRTN
+407 DC*R                   GOTO ENDGET
+407 DC*R                   ENDIF
+407 DC*R         KEYIT     CHAINITEMQTY              78
+407 DC*R         *IN78     IFEQ *ON
+407 DC*R                   MOVE *ON       ERROR
+407 DC*R                   MOVE ITITEM    ERITEM
+407 DC*R                   EXSR ZM21
+407 DC*R                   MOVE '*PGMQ   '$PRTN
+407 DC*R                   GOTO ENDGET
+407 DC*R                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Record found - Zero quantities.
+     C*
+407 DC*R                   EXSR ZERO
+     C*
+     CSR         ENDGET    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ONEITM  Recalculate quantity for one item.
+     C*
+     CSR         ONEITM    BEGSR
+     CSR         $PJTYP    IFEQ *ON
+     CSR                   MOVE $PITEM    W1ITEM
+     CSR                   WRITESCREEN1
+     CSR                   ENDIF
+     C*
+     C*     Verify item number.
+     C*
+     CSR                   MOVE $PITEM    ITITEM
+     CSR         KEYIT     CHAINPIRITEM              78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE $PITEM    ERITEM
+     CSR                   EXSR ZM22
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   GOTO ENDONE
+     CSR                   ENDIF
+     C*
+     C*     Get item quantity record.
+     C*
+     CSR                   EXSR GETQTY
+     CSR         ERROR     CABEQ*ON       ENDONE
+     C*
+     C*     Recalculate quantities.
+     C*
+     CSR                   EXSR UPDQTY
+     CSR         ERROR     IFNE *ON
+     CSR                   MOVE ITITEM    ERITEM
+     CSR                   MOVE '*OK     '$PRTN
+     CSR                   EXSR ZM01
+     CSR                   ENDIF
+     C*
+     CSR         ENDONE    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UPDQTY  Update item quantities from slot quantities.
+     C*
+     CSR         UPDQTY    BEGSR
+407 AC*
+407 AC*    Zero Re-calculated quantities.
+407 AC*
+407 ACSR                   Z-ADD0         RQSTK1  70
+407 ACSR                   Z-ADD0         RQSTK2  50
+407 ACSR                   Z-ADD0         RQSTK3  50
+407 ACSR                   Z-ADD0         RQALC1  70
+407 ACSR                   Z-ADD0         RQALC2  50
+407 ACSR                   Z-ADD0         RQALC3  50
+407 ACSR                   Z-ADD0         RQHLD1  70
+407 ACSR                   Z-ADD0         RQHLD2  50
+407 ACSR                   Z-ADD0         RQHLD3  50
+416bACSR                   Z-ADD0         RQSTK   70
+416bACSR                   Z-ADD0         RQALC   70
+416bACSR                   Z-ADD0         RQHLD   70
+416bACSR                   Z-ADD0         IQSTK   70
+416bACSR                   Z-ADD0         IQALC   70
+416bACSR                   Z-ADD0         IQHLD   70
+     C*
+     C*
+     C*  Loop through slots for item and update quantities.
+     C*
+     CSR         KEYIT     SETLLSLOT3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYIT     READESLOT3                    78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*    Skip verified and zeroed slots.
+     C*
+     CSR         SLSTAT    IFEQ 'V'
+     CSR         SLSTAT    OREQ 'Z'
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*    Update stock quantities.
+     C*
+407 DC*R                   ADD  SLSTK1    IQSTK1
+407 DC*R                   ADD  SLRCV1    IQSTK1
+407 DC*R                   ADD  SLSTK2    IQSTK2
+407 DC*R                   ADD  SLRCV2    IQSTK2
+407 DC*R                   ADD  SLSTK3    IQSTK3
+407 DC*R                   ADD  SLRCV3    IQSTK3
+407 MCSR                   ADD  SLSTK1    RQSTK1
+407 MCSR                   ADD  SLRCV1    RQSTK1
+412 ACSR                   SUB  SLTFR1    RQSTK1
+407 MCSR                   ADD  SLSTK2    RQSTK2
+407 MCSR                   ADD  SLRCV2    RQSTK2
+412 ACSR                   SUB  SLTFR2    RQSTK2
+407 MCSR                   ADD  SLSTK3    RQSTK3
+407 MCSR                   ADD  SLRCV3    RQSTK3
+412 ACSR                   SUB  SLTFR3    RQSTK3
+     C*
+     C*    Update allocated quantities.
+     C*
+610aACSR         SLSTAT    IFEQ 'A'
+407 DC*R                   ADD  SLALC1    IQALC1
+407 DC*R                   ADD  SLPCK1    IQALC1
+407 DC*R                   ADD  SLALC2    IQALC2
+407 DC*R                   ADD  SLPCK2    IQALC2
+407 DC*R                   ADD  SLALC3    IQALC3
+407 DC*R                   ADD  SLPCK3    IQALC3
+407 MCSR                   ADD  SLALC1    RQALC1
+407 MCSR                   ADD  SLPCK1    RQALC1
+407 MCSR                   ADD  SLALC2    RQALC2
+407 MCSR                   ADD  SLPCK2    RQALC2
+407 MCSR                   ADD  SLALC3    RQALC3
+407 MCSR                   ADD  SLPCK3    RQALC3
+610aACSR                   ENDIF
+     C*
+     C*    Update hold quantities.
+     C*
+     CSR         SLSTAT    IFNE 'A'
+407 DC*R                   ADD  SLSTK1    IQHLD1
+407 DC*R                   ADD  SLRCV1    IQHLD1
+407 DC*R                   ADD  SLSTK2    IQHLD2
+407 DC*R                   ADD  SLRCV2    IQHLD2
+407 DC*R                   ADD  SLSTK3    IQHLD3
+407 DC*R                   ADD  SLRCV3    IQHLD3
+407 MCSR                   ADD  SLSTK1    RQHLD1
+407 MCSR                   ADD  SLRCV1    RQHLD1
+407 MCSR                   ADD  SLSTK2    RQHLD2
+407 MCSR                   ADD  SLRCV2    RQHLD2
+407 MCSR                   ADD  SLSTK3    RQHLD3
+407 MCSR                   ADD  SLRCV3    RQHLD3
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+407 DC*  Update item quantity record.
+407 DC*
+407 DC*R                   UPDATIQREC                  77
+407 DC*R         *IN77     IFEQ *ON
+407 DC*R                   MOVE IQITEM    ERITEM
+407 DC*R                   MOVE '*PGMQ   '$PRTN
+407 DC*R                   MOVE *ON       ERROR
+407 DC*R                   EXSR ZM23
+407 DC*R                   ENDIF
+416bAC*  Convert quantity to lowest UOM.
+416bACSR         ITUMQ2    IFNE 0
+416bACSR         RQSTK1    MULT ITUMQ2    RQSTK
+416bACSR         RQALC1    MULT ITUMQ2    RQALC
+416bACSR         RQHLD1    MULT ITUMQ2    RQHLD
+416bACSR         IQSTK1    MULT ITUMQ2    IQSTK
+416bACSR         IQALC1    MULT ITUMQ2    IQALC
+416bACSR         IQHLD1    MULT ITUMQ2    IQHLD
+416cACSR                   ELSE
+416cACSR                   Z-ADDRQSTK1    RQSTK
+416cACSR                   Z-ADDRQALC1    RQALC
+416cACSR                   Z-ADDRQHLD1    RQHLD
+416cACSR                   Z-ADDIQSTK1    IQSTK
+416cACSR                   Z-ADDIQALC1    IQALC
+416cACSR                   Z-ADDIQHLD1    IQHLD
+416bACSR                   ENDIF
+416bACSR                   ADD  RQSTK2    RQSTK
+416bACSR                   ADD  RQALC2    RQALC
+416bACSR                   ADD  RQHLD2    RQHLD
+416bACSR                   ADD  IQSTK2    IQSTK
+416bACSR                   ADD  IQALC2    IQALC
+416bACSR                   ADD  IQHLD2    IQHLD
+416bACSR         ITUMQ3    IFNE 0
+416bACSR         RQSTK     MULT ITUMQ3    RQSTK
+416bACSR         RQALC     MULT ITUMQ3    RQALC
+416bACSR         RQHLD     MULT ITUMQ3    RQHLD
+416bACSR         IQSTK     MULT ITUMQ3    IQSTK
+416bACSR         IQALC     MULT ITUMQ3    IQALC
+416bACSR         IQHLD     MULT ITUMQ3    IQHLD
+416bACSR                   ENDIF
+416bACSR                   ADD  RQSTK3    RQSTK
+416bACSR                   ADD  RQALC3    RQALC
+416bACSR                   ADD  RQHLD3    RQHLD
+416bACSR                   ADD  IQSTK3    IQSTK
+416bACSR                   ADD  IQALC3    IQALC
+416bACSR                   ADD  IQHLD3    IQHLD
+     C*
+407 AC*  Compare quantities, print if discrepency exists.
+407 AC*
+416bDC*R         RQSTK1    IFNE IQSTK1
+416bDC*R         RQSTK2    ORNE IQSTK2
+416bDC*R         RQSTK3    ORNE IQSTK3
+416bDC*R         RQALC1    ORNE IQALC1
+416bDC*R         RQALC2    ORNE IQALC2
+416bDC*R         RQALC3    ORNE IQALC3
+416bDC*R         RQHLD1    ORNE IQHLD1
+416bDC*R         RQHLD2    ORNE IQHLD2
+416bDC*R         RQHLD3    ORNE IQHLD3
+416bACSR         RQSTK     IFNE IQSTK
+416bACSR         RQALC     ORNE IQALC
+416bACSR         RQHLD     ORNE IQHLD
+407 ACSR                   WRITEDETAIL1
+407 ACSR                   WRITESKIP1
+407 ACSR                   MOVE '0'       FIRST
+407 ACSR         *IN90     IFEQ *ON
+407 ACSR                   EXSR ZRHEAD
+407 ACSR                   ENDIF
+407 ACSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZERO    Zero item quantities.
+     C*
+     CSR         ZERO      BEGSR
+     C*
+     CSR                   Z-ADD0         IQSTK1
+     CSR                   Z-ADD0         IQSTK2
+     CSR                   Z-ADD0         IQSTK3
+     CSR                   Z-ADD0         IQALC1
+     CSR                   Z-ADD0         IQALC2
+     CSR                   Z-ADD0         IQALC3
+     CSR                   Z-ADD0         IQHLD1
+     CSR                   Z-ADD0         IQHLD2
+     CSR                   Z-ADD0         IQHLD3
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+407 AC*
+407 AC           ZRFRMT    BEGSR
+407 AC*
+407 AC*   Get warehouse description.
+407 AC*
+407 AC                     MOVE *BLANKS   WOWHSE
+407 AC           KEYWH     CHAINWAREHS               79
+407 AC           *IN79     IFEQ *OFF
+407 AC                     MOVELWHDESC    WOWHSE
+407 AC                     ELSE
+407 AC                     MOVE *BLANKS   WOWHSE
+407 AC                     ENDIF
+407 AC*
+407 AC                     MOVE *BLANKS   $PSTR
+407 AC*
+407 AC                     MOVELWOWHSE    $PSTR  60
+407 AC                     Z-ADD60        $PLEN   30
+407 AC*
+407 AC*   Center warehouse description.
+407 AC*
+407 AC                     CALL 'CENTER'
+407 AC                     PARM           $PSTR
+407 AC                     PARM           $PLEN
+407 AC                     MOVEL$PSTR     WOWHSE
+407 AC*
+407 AC                     ENDSR
+407 AC*****************************************************************
+407 AC*
+407 ACSR         ZRHEAD    BEGSR
+407 AC*
+407 ACSR                   MOVE '0'       *IN90
+407 ACSR                   WRITEHEAD1
+407 ACSR                   WRITECOLUMNS
+407 AC*
+407 ACSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMCPMQ  Clear program message queue.
+     C*
+     CSR         ZMCPMQ    BEGSR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMCSBF  Clear message subfile.
+     C*
+     CSR         ZMCSBF    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE *ON       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     CSR                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*   UT81201  Item recalculated successfully.
+     C*
+     CSR         ZM01      BEGSR
+416aDC**                   MOVE 'UT81201' #MSGID
+416aMCSR                   MOVE 'UT82201' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   UT81221  Item not recalculated - No ITEMQTY record.
+     C*
+     CSR         ZM21      BEGSR
+     CSR                   MOVE 'UT81221' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   UT81222  Item not recalculated - Item does not exist.
+     C*
+     CSR         ZM22      BEGSR
+     CSR                   MOVE 'UT81222' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   UT81223  Item not recalculated - Error updating ITEMQTY.
+     C*
+     CSR         ZM23      BEGSR
+     CSR                   MOVE 'UT81223' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR

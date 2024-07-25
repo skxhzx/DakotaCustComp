@@ -1,0 +1,413 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT473     Possible slot consolidation - Print
+     F*  29 September, 1999
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+415aAF*    03/26/01  RH   4.15a
+     F*      - Change DETAIL1 to DETAIL2, Print item description in
+     F*        DETAIL1.
+500 AF*    05/06/05  RLP  5.00
+     F*      - Change logic so that we don't print a page with just
+     F*        headings, in this case on level breaks.
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT470   IP  E           K        DISK
+     FIT471   IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FIT473PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        3  7 0
+     E*
+     I*----------------------------------------------------------------
+     IOQREC
+     I                                              SLWHDPL1
+     I                                              SLSTYPL1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  General Data structure.
+     I*
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Level break occurred.
+     C*     - Filled page.
+     C*
+500 DC*          *INL1     IFEQ *ON
+500 DC*          COUNT     OREQ RECPAG
+500 MC           COUNT     IFEQ RECPAG
+500 MC           FIRST     OREQ *ON
+     C                     MOVE '1'       *IN92
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - Slot type
+     C*
+     C           *INL1     IFEQ *ON
+500 AC                     EXSR ZRFRMT
+     C                     Z-ADD1         L
+     C                     MOVE '1'       *IN92
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C           WKKEY     CHAINIT471                79
+     C           *IN79     CABEQ*ON       ENDIT
+     C           WKSQTY    CABEQ0         ENDIT
+500 AC* Moved some of the following section of code to just before
+500 AC* writing the DETAIL1 record
+500 MC           WKITEM    IFNE SVITEM
+500 MC*                    WRITESKIP1
+500 MC                     MOVE '1'       *IN92
+500 MC*                    ADD  1         COUNT
+500 MC                     ENDIF
+     C                     MOVE WKDISP    SVDISP
+     C                     MOVE WKITEM    SVITEM
+     C                     Z-ADDWKTIHI    SVTIHI
+     C                     Z-ADDWKSQTY    SVSQTY
+     C                     Z-ADDWKEQTY    SVEQTY
+     C                     Z-ADDWKENTD    SVENTD
+     C                     Z-ADDWKEXPD    SVEXPD
+     C           WKENTD    IFNE 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE WKENTD    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    SVENDT  60
+     C                     ELSE
+     C                     Z-ADD0         SVENDT
+     C                     ENDIF
+     C           WKEXPD    IFNE 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE WKEXPD    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    SVEXDT  60
+     C                     ELSE
+     C                     Z-ADD0         SVEXDT
+     C                     ENDIF
+     C*
+     C*
+     C           PRTKY     SETLLIT471                79
+     C           FOREVR    DOUNEFOREVR
+     C           PRTKY     READEIT471                    78
+     C           *IN78     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C           SVDISP    IFEQ WKDISP
+     C                     ITER
+     C                     ENDIF
+     C*
+     C           WKENTD    IFNE 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE WKENTD    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    WKENDT  60
+     C                     ELSE
+     C                     Z-ADD0         WKENDT
+     C                     ENDIF
+     C           WKEXPD    IFNE 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE WKEXPD    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    WKEXDT  60
+     C                     ELSE
+     C                     Z-ADD0         WKEXDT
+     C                     ENDIF
+     C*
+     C           SVSQTY    IFLE WKEQTY
+500 AC           WKITEM    IFNE SVITEM
+500 AC                     WRITESKIP1
+500 AC                     MOVE '1'       *IN92
+500 AC                     ADD  1         COUNT
+500 AC                     ENDIF
+     C* CHECK FOR OVERFLOW BEFORE WRITING DETAIL
+     C           COUNT     IFEQ RECPAG
+415aAC                     EXSR ZZNPAG
+415aDC*                    MOVE '1'       *IN92
+415aDC*                    EXSR ZRFRMT
+415aDC*                    EXSR ZRHEAD
+     C                     ENDIF
+     C* PRINT ITEM DESCRIPTION
+415aAC           *IN92     IFEQ '1'
+415aAC                     Z-ADD0         LEFT    30
+415aAC           RECPAG    SUB  COUNT     LEFT
+415aAC           LEFT      IFLT 2
+415aAC                     EXSR ZZNPAG
+415aAC                     ENDIF
+     C                     WRITEDETAIL1
+     C                     MOVE '0'       *IN92
+     C                     ADD  1         COUNT
+415aAC                     ENDIF
+     C*
+415aAC                     WRITEDETAIL2
+415aAC                     ADD  1         COUNT
+     C                     ENDIF
+     C                     ITER
+     C*
+     C                     ENDDO
+     C*
+     C           ENDIT     TAG
+     C*
+     C*
+     C*  Accumulate totals
+     C*                    ADD  1         CLS,1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+     C*----------------------------------------------------------------
+     C*
+     C* Slot type totals
+     C*
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     C*
+     CL1         RECK,L    IFGT 0
+     C**                   WRITESKIP1
+     CL1                   EXSR ZRTOTL
+     CL1                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD2         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   EXSR ZRDETL
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     MOVE *ON       FOREVR  1
+     C                     Z-ADD0         COUNT   30
+     C                     Z-ADD3         L       10
+     C                     Z-ADD1         X       30
+     C                     Z-ADD1         C1      30
+     C                     Z-ADD1         C2      30
+     C                     Z-ADD1         C3      30
+     C                     Z-ADD50        RECCOL  30
+415aDC*                    Z-ADD60        RECPAG  30
+415aMC                     Z-ADD59        RECPAG  30
+412 DC*                    Z-ADD150       RECPAG  30
+     C*  Define full key for detail file.
+     C*
+     CSR         WKKEY     KLIST
+     CSR                   KFLD           SLWHSE
+     CSR                   KFLD           SLWHDP
+     CSR                   KFLD           SLSTYP
+     CSR                   KFLD           SLITEM
+     CSR                   KFLD           SLDISP
+     C*  Define part key for detail file.
+     C*
+     CSR         PRTKY     KLIST
+     CSR                   KFLD           SLWHSE
+     CSR                   KFLD           SLWHDP
+     CSR                   KFLD           SLSTYP
+     CSR                   KFLD           SLITEM
+     C*
+     CSR         *LIKE     DEFN WKITEM    SVITEM
+    DC*R         *LIKE     DEFN WKTIHI    SVTIHI
+    DC*R         *LIKE     DEFN WKSQTY    SVSQTY
+     CSR         *LIKE     DEFN WKEQTY    SVEQTY
+     CSR         *LIKE     DEFN WKENTD    SVENTD
+     CSR         *LIKE     DEFN WKEXPD    SVEXPD
+     C                     EXSR ZRCLER
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           SLWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*  Format department/section.
+     C*
+     C                     MOVE *BLANKS   TYPE
+     C           SLWHDP    CAT  '/':0     TYPE
+     C           SLSTYP    IFEQ 'P'
+     C           TYPE      CAT  'PIR':0   TYPE
+     C                     ELSE
+     C           TYPE      CAT  'FIXED':0 TYPE
+     C                     ENDIF
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*  Print previous page detail lines.
+     C*
+     C           RECK,L    IFGT 0
+     C*                    EXSR ZRDETL
+     C*                    Z-ADD0         COUNT
+     C                     ENDIF
+     C*
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C*  Print headings for the next page.
+     C*
+     C                     WRITEHEAD1
+     C                     WRITEHEAD2
+     C                     WRITECOLUMNS
+     C           COUNT     IFEQ RECPAG
+     C                     WRITESKIP1
+     C                     ENDIF
+500 AC                     MOVE '0'       FIRST
+     C                     Z-ADD0         COUNT
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRCLER    BEGSR
+     C*
+     C*   Initialize all data structures.
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRDETL    BEGSR
+     C*  Print detail line.
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C*                    ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C*                    ADD  CLS,L     CLS,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C*                    Z-ADDCLS,L     T#CLS
+     C*                    MOVE TYPE      T#DESC
+     C*
+     C*                    MOVE RPD,L     $RPD
+     C*          L         IFEQ 1
+     C*                    WRITETOTAL1
+     C*                    END
+     C*
+     C*          L         IFEQ 2
+     C*                    WRITETOTAL2
+     C*                    END
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C*                    Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C*                    Z-ADD0         CLS,L
+     C*
+     C                     ENDSR
+415a C*----------------------------------------------------------------
+415a C*
+415a C           ZZNPAG    BEGSR
+415a C*
+415aAC                     MOVE '1'       *IN92
+415aAC                     EXSR ZRFRMT
+415aAC                     EXSR ZRHEAD
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*

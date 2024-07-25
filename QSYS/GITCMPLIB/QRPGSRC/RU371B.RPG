@@ -1,0 +1,212 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 Roosevelt Rd.  Bldg 8, Suite 51
+     F*   WEST CHICAGO, IL 60158
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  RU371B    Cleared flags - Calc time taken from an item
+     F*                            start and end flag process, it
+     F*                            borrows a field (RHSHPT) to hold
+     F*                            the diff between flag start and
+     F*                            close times.
+     F*  March 29, 2005
+     F*  Jose Duque
+     F*
+     F*  Revisions:
+     F*
+520 AF*    06/17/09  RBD  5.20
+     F*      - Enh: Added client custom code support to program.
+     F*
+     F*----------------------------------------------------------------
+     A*  Client Custom Revisions
+     A*
+CBI AA*    01/27/06  CBI-JGD
+     A*      - Identify Produce items within CLR and DRY depts.
+CBIaAA*    06/17/09  CBIa
+     F*      - Coded special produce items logic as specific to Cheney.
+     A*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRU371   UF  E           K        DISK
+     F*
+     I*----------------------------------------------------------------
+520 AI*  Client ID's
+     I*
+CBIaA /COPY QCOPYSRC,IL#CHENEY
+     I*
+520 AI              'GETCLIENT'           C         @GETCL
+     I*----------------------------------------------------------------
+     I*
+     I*  Data structures for time calculation
+     I*
+     I            DS
+     I                                        1   60CLSTIM
+     I                                        1   20PHH
+     I                                        3   40PMM
+     I                                        5   60PSS
+     I            DS
+     I                                        1   60STRTIM
+     I                                        1   20IHH
+     I                                        3   40IMM
+     I                                        5   60ISS
+     I            DS
+     I                                        1   60TDIFF
+     I                                        1   20TDHR
+     I                                        3   40TDMIN
+     I                                        5   60TDSEC
+     I            DS
+     I                                        1   52HLDMM2
+     I                                        1   30MM
+     I                                        4   50MINPER
+     I*
+     I            DS
+     I                                        1   6 SAVTIM
+     I                                        1   2 SAVHR
+     I                                        3   4 SAVMM
+     I                                        5   6 SAVSS
+     C*
+     E*----------------------------------------------------------------
+     C*
+     C*  CALC the time difference between 'Start Time' and
+     C*  'Close Time' of flag process  for a given item and
+     C*   store the result in the borrowed field 'RHSHPT'.
+     C*
+     C*
+     C                     READ RUREC                    LR
+     C*
+     C           *INLR     DOWNE*ON
+     C*
+     C*
+      *  The code below compare to time values (start and close
+      *  times) and calculate the time difference between the two.
+      *
+      *  *IN89 drives part of the code based on which date is greater.
+      *  If 'close time' is greater then both time are converted to
+      *  seconds, 'start time' is subtracted from 'close time' and
+      *  the result in seconds is converted back to HR:MM:SS to be
+      *  displayed as the time difference between the two.
+      *
+      *  If in the other hand 'close time' is lower then 'start time'
+      *  is converted to seconds along with 24:00:00 to calc the
+      *  elapsed time from 'start time' to the end of the day.
+      *  The result in seconds is converted back to HH:MM:NN and
+      *  added to 'close date'
+      *
+     C*
+     C                     MOVE RUODTT    STRTIM
+     C*
+     C           2         SUBSTRUCDTS:12 SAVHR
+     C           2         SUBSTRUCDTS:15 SAVMM
+     C           2         SUBSTRUCDTS:18 SAVSS
+     C                     MOVE SAVTIM    CLSTIM
+     C*
+     C           CLSTIM    COMP STRTIM               89
+      *
+      *  Convert 'import time' to seconds
+      *
+     C           IHH       MULT 60        HLDMM   60       ConvHrtoMin
+     C           HLDMM     MULT 60        HLDSS1  60       ConvMintoSec
+     C           IMM       MULT 60        HLDSS2  60       CnovMintoSec
+     C           HLDSS2    ADD  ISS       HLDSS2           AddupAllSecs
+     C           HLDSS1    ADD  HLDSS2    TOTIMS  60       TotalImpSecs
+      *
+      *
+      *  Print time is greater, convert to seconds
+      *
+     C           *IN89     IFEQ *ON
+     C           PHH       MULT 60        HLDMM   60       ConvHrtoMin
+     C           HLDMM     MULT 60        HLDSS1  60       ConvMintoSec
+     C           PMM       MULT 60        HLDSS2  60       CnovMintoSec
+     C           HLDSS2    ADD  PSS       HLDSS2           AddupAllSecs
+     C           HLDSS1    ADD  HLDSS2    TOTPRS  60       TotalPrtSecs
+     C                     ENDIF
+      *
+      *  Close time is lower, subtract the calc time between start
+      *  time and the end of the day from 24:00:00 represented in
+      *  seconds.
+     C  N89      86400     SUB  TOTIMS    SECDIF  60
+      *
+      *  Close time is greater, subtract start time from it
+     C   89      TOTPRS    SUB  TOTIMS    SECDIF  60
+      *
+     C           SECDIF    DIV  60        HLDMM2           ConvSectoMin
+     C           MINPER    DIV  100       HLDPER  32       SetSecPercent
+     C           HLDPER    MULT 60        HLDSS1    H      CalcSeconds
+     C                     Z-ADDHLDSS1    TDSEC
+      *
+      *
+      *  Take care of minutes overflow
+     C           MM        IFGT 59
+     C           MM        DIV  60        HLDHR   20
+     C                     MVR            TDMIN            TDIFF
+     C                     Z-ADDHLDHR     TDHR
+     C                     ELSE
+     C                     Z-ADD*ZEROS    TDHR
+     C                     Z-ADDMM        TDMIN
+     C                     ENDIF
+      *
+      *  Move result to borowed field 'RHSHPT' to hold time diff.
+     C           *IN89     IFEQ *ON
+     C                     GOTO UPDFIL
+     C                     ENDIF
+      *
+      *
+      *
+      *  Close time is lower, add calc result of start time
+      *  to end of day to close time
+     C           TDIFF     ADD  CLSTIM    TDIFF
+      *
+      *
+      *  Take care of seconds overflow
+     C           TDSEC     IFGT 59
+     C           TDSEC     DIV  60        HLDMM
+     C                     MVR            HLDSS1
+     C                     ADD  HLDMM     TDMIN
+     C                     Z-ADDHLDSS1    TDSEC
+     C                     ENDIF
+      *
+      *  Take care of minutes overflow
+      *
+     C           TDMIN     IFGT 59
+     C           TDMIN     DIV  60        HLDHR   20
+     C                     MVR            TDMIN
+     C                     ADD  HLDHR     TDHR
+     C*----------------->  Z-ADDHLDHR     TDHR
+     C                     ENDIF
+      *
+      *
+     C           UPDFIL    TAG
+     C                     Z-ADDTDIFF     RHSHPT
+CBI A *
+CBI A *  Identify Produce item within CLR and DRY depts.
+CBI A *
+CBIaAC           CLIENT    IFEQ CHENEY
+CBIaMC           ITITEM    ANDGE'405000'
+CBI AC           ITITEM    ANDLE'492999'
+CBI AC                     MOVEL'PRD  '   RUWHDP
+CBI AC                     ENDIF
+      *
+     C                     UPDATRUREC
+     C*
+     C*
+     C           BYPASS    TAG
+     C                     READ RUREC                    LR
+     C                     ENDDO
+     C*
+     C*----------------------------------------------------------------
+     C*
+520 AC*  *INZSR  Initialization subrotine
+     C*
+520 AC           *INZSR    BEGSR
+     *
+520 A*  Get Client ID
+     *
+520 AC                     CALL @GETCL
+520 AC                     PARM           CLIENT 10
+     C*
+520 AC                     ENDSR
+     C*
+     C*----------------------------------------------------------------

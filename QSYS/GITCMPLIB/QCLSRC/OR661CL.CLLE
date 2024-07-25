@@ -1,0 +1,222 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  OR661CL  Catchweight report by pallet                            */
+/*  28 July, 2007                                                   */
+/*  Jeffrey Jahnke                                                   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    09/07/07  RBD  5.10                                            */
+/*      - Use &PTRN# for printing a single transaction if it         */
+/*        is passed in.                                              */
+/*    10/08/07  MLB  5.10a                                           */
+/*      - Fix: Correct join file errors and change file used for     */
+/*        UCI info retrieval to UCICW10 from UCICW.                  */
+/*    08/20/20  DAS  7.40a                                           */
+/*      - Revised to work with TruckBuilder Prime                    */
+/*                                                                   */
+/*  Notes:                                                           */
+/*                                                                   */
+/*    The OPNQRYF statement is used to select the records needed     */
+/*    to print the pallet summary. It is also used to arrange the    */
+/*    records so the PIR records will print with their corresponding */
+/*    fixed pallet. The corresponding fixed pallet number is stored  */
+/*    in field LBCTR# in the PIR records. To get this field to       */
+/*    jump into the LBPAL# field so the records could be sorted      */
+/*    correctly a MAPFLD calculation was done using the special      */
+/*    numeric field LBQRYF which is 0 for fixed items and 1 for      */
+/*    PIR items. The calculation assumes that LBCTR# is 0 for fixed  */
+/*    records.                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ OR661CL:    PGM        PARM(&CMD &RTYPE &WHSEA &RTID &RETURN &DEV &FORM +
+                             &PTRN#)                              /* 510 A */
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR661CL)
+
+
+  /* Report program and printer file name. */
+
+             DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) VALUE(PLTSUM)
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) VALUE(OR661PR)
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Pallet Summary/Detail Report')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing pallet summary/detail report')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&BATCH)      TYPE(*DEC)  LEN(7 0)
+             DCL        VAR(&BATCHA)     TYPE(*CHAR) LEN(7)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&Q)          TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTID)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&RTYPE)      TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&UNQKEY)     TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHDP)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&WHSEA)      TYPE(*CHAR) LEN(3)
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&PTRN#)      TYPE(*CHAR) LEN(7)       /* 510 A */
+/* 740a */   DCL        VAR(&PSTYPE) TYPE(*CHAR) LEN(1) VALUE('O')
+/* 740a */   DCL        VAR(&TBTYPE) TYPE(*CHAR) LEN(1)
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* 740aA */  CHGVAR     VAR(&WHSE) VALUE(&WHSEA)
+
+/* 740aA */  CALL       PGM(GETTBTYPE) PARM(&WHSE &RTID &TBTYPE)
+/* 740aA */  IF (&TBTYPE = 'E') THEN(DO)
+/* 740aA */    CHGVAR     VAR(&PSTYPE) VALUE('P')
+/* 740aA */  ENDDO
+
+
+   /* Create selection criteria string. */
+
+
+   /* Select warehouse  */
+             CHGVAR     VAR(&QRYSLT) VALUE('PSWHSE *EQ ' *CAT &WHSEA)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select route ID   */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSRTID +
+                          *EQ ' *CAT &Q *CAT &RTID *CAT &Q)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select type       */
+   /* 740aD  CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '(PSTYPE +
+                          *EQ ' *CAT &Q *CAT 'O' *CAT &Q)            */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '(PSTYPE +
+                          *EQ ' *CAT &Q *CAT &PSTYPE *CAT &Q)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*OR')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSTYPE +
+                          *EQ ' *CAT &Q *CAT 'B' *CAT &Q *BCAT ')')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select generation  */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSGEN=1')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+   /* Select label type  */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTYPE +
+                          *NE ' *CAT &Q *CAT 'R' *CAT &Q)
+
+  /* 5.00a Change */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTYPE +
+                          *NE ' *CAT &Q *CAT 'A' *CAT &Q)
+
+   /* Select catch weight items only */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'ITCWGT +
+                          *EQ ' *CAT &Q *CAT 'Y' *CAT &Q)
+
+   /* 510 A *  Select single transaction if parm passed in */
+             IF (&PTRN# *GT '0000000') THEN(DO)
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTRN# +
+                          *EQ ' *CAT &PTRN#)
+             GOTO SKIP
+             ENDDO
+
+  /* 4.16 Change */
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'LBTRN# +
+                          *NE ' *CAT '0')
+
+SKIP:                                                             /* 510 A */
+
+   /* Use OPNQRYF to select and order the records we need */
+
+             OVRDBF     FILE(OR661) TOFILE(&FILE) SHARE(*YES)
+/*           OPNQRYF    FILE((&FILE) (LABEL) (ORDH) (UCICW) +
+                          (PIRITEM)) FORMAT(OR661) QRYSLT(&QRYSLT) +
+                          KEYFLD((&FILE/PSWHSE) (&FILE/PSRTID) +
+                          (&FILE/PSCOMP) (&FILE/PSUNLD) +
+                          (&FILE/PSPLID) (LABEL/LBITEM) +
+                          (ORDH/OHCORD)) JFLD((&FILE/PSWHSE +
+                          LABEL/LBWHSE) (&FILE/PSRTID LABEL/LBRTE) +
+                          (&FILE/PSPLID LABEL/LBPAL#) (LABEL/LBWHSE +
+                          ORDH/OHWHSE) (LABEL/LBLBL# UCICW/UCILBL) +
+                          (LABEL/LBORD ORDH/OHORD) (LABEL/LBWHSE +
+                          PIRITEM/ITWHSE) (LABEL/LBITEM +
+                          PIRITEM/ITITEM)) JDFTVAL(*YES) +
+                          OPTIMIZE(*FIRSTIO)                          (510aD) */
+             OPNQRYF    FILE((&FILE) (LABEL) (ORDH) (UCICW10) +
+                          (PIRITEM)) FORMAT(OR661) QRYSLT(&QRYSLT) +
+                          KEYFLD((&FILE/PSWHSE) (&FILE/PSRTID) +
+                          (&FILE/PSCOMP) (&FILE/PSUNLD) +
+                          (&FILE/PSPLID) (LABEL/LBITEM) +
+                          (ORDH/OHCORD)) +
+                          JFLD((&FILE/PSWHSE LABEL/LBWHSE) +
+                          (&FILE/PSRTID LABEL/LBRTE) +
+                          (&FILE/PSPLID LABEL/LBPAL#) +
+                          (label/lbwhse ORDH/OHWHSE) +
+                          (label/lbord ordh/ohord) +
+                          (LABEL/LBwhse UCICW10/UCIwhs) +
+                          (LABEL/LBLBL# UCICW10/UCILBL) +
+                          (LABEL/LBWHSE PIRITEM/ITWHSE) +
+                          (LABEL/LBITEM PIRITEM/ITITEM)) +
+                          JDFTVAL(*YES) +
+                          OPTIMIZE(*FIRSTIO)                        /* 510aM) */
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+             OVRPRTF    FILE(&PRTF) OVRFLW(48) PAGRTT(90)         /* 510 A */
+
+             CALL       PGM(OR661) PARM(&CMD &RTYPE &DEV &FORM)
+
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+   /* Clean up before leaving */
+
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

@@ -1,0 +1,167 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  IT530CL   Recommended Transfer From Outside Storage              */
+/*  26 May 2009                                                      */
+/*  Max Blacknik                                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    05/10/12  RTR  6.40                                            */
+/*      - Enh: Added sort option                                     */
+/*    05/14/12  RTR  6.40b                                           */
+/*      - Enh: Added selection option                                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+/* IT530CL:    PGM        PARM(&WHSE &WHDP &DAYSPLY &OSSLOC &DEV &FORM) 6.40b */
+ IT530CL:    PGM        PARM(&WHSE &WHDP &DAYSPLY &OSSLOC &DEV &FORM +
+                          &SORT &SEL)                           /* 6.40b */
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(IT530CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(IT530)
+
+  /* Main program. */
+
+             DCL        VAR(&MAINPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(IT534)
+
+  /* Report program.                                                  6.40 */
+
+             DCL        VAR(&RPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(IT535)                             /* 6.40 */
+
+  /* Informational messages */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Recommended Transfers from Outside +
+                          Storage')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Recommended Transfers from Outside +
+                          Storage')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&DAYSPLY)    TYPE(*CHAR) LEN(3)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&OSSLOC)     TYPE(*CHAR) LEN(12)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&SEL)        TYPE(*CHAR) LEN(4)        /* 6.40b */
+             DCL        VAR(&SORT)       TYPE(*CHAR) LEN(5)        /* 6.40 */
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&WHDP)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Don't get options if being run from JOBQ. */
+
+             RTVJOBA    TYPE(&TYPE)
+             IF (&TYPE = '0') THEN(GOTO MAIN)
+
+/*  Get report options. */
+
+      /*     CALL       PGM(&OPTPGM) PARM(&WHSE &WHDP &DAYSPLY +
+                          &OSSLOC &DEV &FORM &RETURN &JOBQ)           6.40 */
+             CALL       PGM(&OPTPGM) PARM(&WHSE &WHDP &DAYSPLY +
+                          &OSSLOC &DEV &FORM &RETURN &SORT &SEL)  /* 6.40b */
+
+/*  See if user wants to proceed. */
+
+             IF         COND((&RETURN *EQ '*CANCEL') *OR (&RETURN +
+                          *EQ '*EXIT')) THEN(DO)
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) MSGTYPE(*INFO)
+               RETURN
+             ENDDO
+
+/*  See if user wants to put report on JOBQ. */
+
+             IF (&RETURN *EQ '*JOBQ') THEN(DO)
+     /*        SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&WHSE &WHDP +
+                            &DAYSPLY &OSSLOC &DEV &FORM)) JOB(&SBMPGM)  6.40 */
+               SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&WHSE &WHDP &DAYSPLY +
+                        &OSSLOC &DEV &FORM &SORT &SEL)) JOB(&SBMPGM) /* 6.40 */
+               GOTO    CMDLBL(GETOUT)
+             ENDDO
+
+ MAIN:
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+/*  Build work file for report. */
+
+             CRTDUPOBJ  OBJ(IT535) FROMLIB(*LIBL) OBJTYPE(*FILE) +
+                          TOLIB(QTEMP)                               /* 6.40 */
+             OVRDBF     FILE(IT535) TOFILE(QTEMP/IT535) SHARE(*YES) +
+                          /* 6.40 */
+         /*  CALL       PGM(&MAINPGM) PARM(&WHSE &WHDP &DAYSPLY &OSSLOC) 6.40*/
+             CALL       PGM(&MAINPGM) PARM(&WHSE &WHDP &DAYSPLY &OSSLOC &SEL)
+                                                                     /* 6.40 */
+
+/*  Print report from work file. */
+
+             IF         COND(&SORT *EQ '*ITEM') THEN(OPNQRYF +
+                          FILE((QTEMP/IT535 *FIRST *ONLY)) +
+                          KEYFLD((ITWHDP *ASCEND *N) (ITITEM +
+                          *ASCEND *N)))                              /* 6.40 */
+             IF         COND(&SORT *EQ '*SLOT') THEN(OPNQRYF +
+                          FILE((QTEMP/IT535 *FIRST *ONLY)) +
+                          KEYFLD((ITWHDP *ASCEND *N) (R1OSS *ASCEND +
+                          *N)))                                      /* 6.40 */
+             OVRPRTF    FILE(IT535PR) OUTQ(&DEV) FORMTYPE(&FORM)     /* 6.40 */
+
+             CALL       PGM(&RPTPGM) PARM(&WHSE &WHDP &DAYSPLY &OSSLOC +
+                                          &SORT &SEL)                /* 6.40 */
+
+             CLOF       OPNID(IT535)                                 /* 6.40 */
+             MONMSG     MSGID(CPF0000)                               /* 6.40 */
+             DLTF       FILE(QTEMP/IT535)                            /* 6.40 */
+             MONMSG     MSGID(CPF0000)                               /* 6.40 */
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+        /*   IF         COND(&SEV *LT 09) THEN(GOTO CMDLBL(NEXTMSG)) */
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

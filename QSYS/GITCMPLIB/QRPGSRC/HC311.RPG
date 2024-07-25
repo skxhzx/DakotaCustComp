@@ -1,0 +1,236 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 Roosevelt Rd.  Bldg 8, Suite 51
+     F*   WEST CHICAGO, IL 60158
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  HC311     HACCP Report.
+     F*  01 November, 2002
+     F*  Hemant Kapadia
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions:
+     F*  11/01/02  HNK  4.16
+     F*   - Created
+     F*
+520 AF*  10/06/08  MLB  5.20
+     F*   - Enh: Revised program to retrieve vendor name from POHDR
+     F*     or POHHDR file when processing PO Header HACCP entry.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+520 AF*  76        NRF on chain to POHDR / POHHDR file
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FHC311   IP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+520 AFPOHDR   IF  E           K        DISK
+520 AFPOHHDR  IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FLOADCND IF  E           K        DISK
+     FHC311PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        3  7 0
+     E*
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Page overflow.
+     C*
+     C*  PAGE OVERFLOW
+     C*
+     C           FIRST     IFEQ *ON
+     C           *IN90     OREQ *ON
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+520 AC*    Retrieve Vendor Name for PO Hdr HACCP entry.
+520 AC           KEYPH     CHAINPOHDR                76
+520 AC           *IN76     IFEQ *ON
+520 AC           KEYPH     CHAINPOHHDR               76
+520 AC           *IN76     IFEQ *ON
+520 AC                     MOVE *BLANKS   W1DESC
+520 AC                     MOVE *ZEROS    W1VEN
+520 AC                     ELSE
+520 AC                     Z-ADDPHHVEN    W1VEN
+520 AC           HASEQ     IFEQ 0
+520 AC           HAITEM    ANDEQ' '
+520 AC                     MOVELPHHVNA    W1DESC
+520 AC                     ENDIF
+520 AC                     ENDIF
+520 AC*
+520 AC                     ELSE
+520 AC                     Z-ADDPHVEN     W1VEN
+520 AC           HASEQ     IFEQ 0
+520 AC           HAITEM    ANDEQ' '
+520 AC                     MOVELPHVNAM    W1DESC
+520 AC                     ENDIF
+520 AC                     ENDIF
+     C*
+     C*  Get item description.
+     C*
+520 AC           HASEQ     IFGT 0
+520 AC           HAITEM    ANDGT' '
+520 AC*
+520 AC*    Retrieve Item Desc. for PO Detail HACCP entry.
+     C           KEYIT     CHAINPIRITEM              79
+     C           *IN79     IFEQ *ON
+     C                     MOVEL*BLANKS   W1DESC
+     C                     ENDIF
+520 AC*
+520 AC                     ENDIF
+     C*
+     C*  Get load condition description.
+     C*
+     C           KEYLD     CHAINLOADCND              79
+     C           *IN79     IFEQ *ON
+     C                     MOVEL*BLANKS   W1LDCN
+     C                     ELSE
+     C                     MOVELLCDESC    W1LDCN
+     C                     ENDIF
+     C*
+     C*  Write detail line.
+     C*
+     C                     MOVELHAITEM    W1ITEM
+     C                     MOVELHAINSP    W1RCBY
+     C                     WRITEDETAIL1
+520 AC*
+520 AC*  Check for page overflow
+520 AC*
+520 AC           *IN90     IFEQ *ON
+520 AC                     EXSR ZRHEAD
+520 AC                     ENDIF
+520 AC                     WRITEDETAIL2
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+520 AC                     ADD  1         RECK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      FIRST
+     C                     MOVE *OFF      *IN91
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD1         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C*  Define key for PIRITEM file.
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           HAWHSE
+     CSR                   KFLD           HAITEM
+520 AC*
+520 AC*  Define key for POHDR / POHHDR file.
+520 AC*
+520 AC           KEYPH     KLIST
+520 AC                     KFLD           HAWHSE
+520 AC                     KFLD           HAPO
+     C*
+     C*  Define key for LOADCND file.
+     C*
+     CSR         KEYLD     KLIST
+     CSR                   KFLD           HALDCN
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD1         L       10
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           HAWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C                     EXSR ZRFRMT
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*

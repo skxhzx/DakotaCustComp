@@ -1,0 +1,336 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  UC211     Multiple UPC code list - Print
+     F*  13 May, 2003
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+417aAF*    02/24/04  RH   4.17a
+     F*      - ENH:Add Vendor #, Dept and pick slot or 1st overflow slo
+     F*      - ENH:Change to not print UPC if same as previous line.
+417bAF*    03/03/04  RH   4.17b
+     F*      - ENH:Add greater than # of multiples.
+     F*
+700aAF*    11/03/16  LMC  7.00a
+     F*      - UPC file has a database change. Recompile only.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FUC210   IP  E           K        DISK
+     F            WKREC                             KRENAMERECORD
+     FUPC     IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+417a FPIRITEM IF  E           K        DISK
+417a FSLOT3   IF  E           K        DISK
+     FUC212PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    RPD     1   3 25
+     E                    RECK        3  7 0
+     E                    LVLK        3  7 0
+     E*
+     E                    A22        22  1
+     E*
+     E*
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I            DS
+     I                                        1   60T#DATE
+     I                                        1   20MONTH
+     I                                        3   40DAY
+     I                                        5   60YEAR
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse #
+417b C*      $PMCNT  # of Multiples
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS   3
+417b C                     PARM           $PMCT   3
+     C                     MOVE $PWHS     $PWHSE  30
+417b C                     MOVE $PMCT     $PMCNT  30
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+     C                     EXSR ZRZERO
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break -
+     C*
+     C*          *INL1     IFEQ *ON
+     C*                    Z-ADD1         L
+     C*                    EXSR ZRZERO
+     C*                    ENDIF
+     C*
+     C*  Print headings if level break.
+     C*
+     C***        *IN94     IFEQ *ON
+     C***                  WRITESBHEAD
+     C***                  WRITECOLUMNS
+     C***                  ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C                     MOVE *OFF      *IN81
+     C           PARTKY    SETLLUPC
+     C           FOREVR    DOWEQFOREVR
+     C           PARTKY    READEUPC                      79
+     C*
+     C           *IN79     IFEQ *ON
+     C                     WRITESKIP1
+     C                     LEAVE
+     C                     ELSE
+417a C           UPUPC     IFEQ SVUPC
+417a C                     MOVE *BLANKS   WOUPC  20
+417a C                     ELSE
+417a C                     MOVE UPUPC     WOUPC
+417a C                     ENDIF
+417a C* Get item department
+417a C           ITKEY1    CHAINPIRITEM              78
+417a C           *IN78     IFEQ *OFF
+417a C                     MOVE ITWHDP    WODEPT  5
+417a C                     ELSE
+417a C                     MOVE *BLANKS   WODEPT
+417a C                     ENDIF
+417a C* Get pick slot or 1st overflow slot
+417a C           SLKEY1    SETLLSLOT3
+417a C           FOREVR    DOWEQFOREVR
+417a C           SLKEY1    READESLOT3                    77
+417a C           *IN77     IFEQ *ON
+417a C                     MOVE *BLANKS   WODISP 12
+417a C                     LEAVE
+417a C                     ENDIF
+417a C           SLSTAT    IFEQ 'A'
+417a C                     MOVE SLDISP    WODISP
+417a C                     LEAVE
+417a C                     ELSE
+417a C                     ITER
+417a C                     ENDIF
+417a C                     ENDDO
+417a C*
+     C                     WRITEDETAIL1
+417a C                     MOVE UPUPC     SVUPC  20
+     C*     - Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C                     EXSR ZRZERO
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C                     ENDIF
+     C                     ENDDO
+     C*
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      *IN92
+     C                     MOVE *OFF      *IN93
+     C                     MOVE *OFF      *IN94
+     C                     MOVE *OFF      FIRST
+     C*----------------------------------------------------------------
+     C*
+     C* Level 1 break
+     C*
+     C*1                   Z-ADD1         L
+     C*1                   EXSR ZRROLL
+     C*
+     C*1         RECK,L    IFGT 0
+     C*1                   EXSR ZRTOTL
+     C*1                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Grand totals
+     C*
+     C*R                   Z-ADD3         L
+     C*
+     CLR         RECK,L    IFGT 0
+     C*R                   EXSR ZRTOTL
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     CLR                   RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C           PARTKY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           WKSUPC
+     C*
+     C*
+     C           RPKEY     KLIST
+     C                     KFLD           WKPRTF 10
+     C*
+417a C           ITKEY1    KLIST
+417a C                     KFLD           $PWHSE
+417a C                     KFLD           UPITEM
+     C*
+417a C           SLKEY1    KLIST
+417a C                     KFLD           $PWHSE
+417a C                     KFLD           UPITEM
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD1         L       10
+     C                     Z-ADD0         N       30
+     C                     MOVE #PROG     $CVPRG
+417b C                     Z-ADD$PMCNT    WPSMCT  30
+     CSR                   MOVE *ON       FOREVR  1
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     C*  Get report title.
+     C*
+     C                     MOVEL'UC212PR 'WKPRTF
+     C                     MOVE *BLANKS   RPTTTL
+     C           RPKEY     CHAINREPORTS              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELRPDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     RPTTTL
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*
+     C*          *INL1     IFEQ *OFF
+     C*                    MOVE *ON       *IN91
+     C*                    END
+     C*
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITESKIP1
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C*
+     C                     MOVE RPD,L     $RPD   25
+     C*
+     C*                    WRITETOTAL1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**      RPD   Report level descriptions
+ * Not used *
+ Average for week:
+ *** Grand totals ***

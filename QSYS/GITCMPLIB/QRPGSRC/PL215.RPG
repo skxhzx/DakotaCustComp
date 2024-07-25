@@ -1,0 +1,497 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  PL215     Create pallet pattern - Create
+     F*  11 April 1996
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes
+     F*
+     F*   - Package orientation is the side of the package that goes
+     F*     across the width of the pallet.
+     F*
+     F*         W - The width of the package goes across.
+     F*         L - The length of the package goes across.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPACKAGE UF  E           K        DISK                      A
+     FPATTERN UF  E           K        DISK                      A
+     I*----------------------------------------------------------------
+     I*  Pattern data structures
+     I*
+     I*    A pattern consists of groups of packages. Each group consists
+     I*    of a starting x/y position, the number of packages across/down
+     I*    and the orientation of the package (W/L). Each group is stored
+     I*    in an occurance.
+     I*
+     I              50                    C         MAXGRP
+     I*
+     I*   Best fit group.
+     I*
+     IBSTPAT      DS                         50
+     I                                    P   1   32DBXPOS
+     I                                    P   4   62DBYPOS
+     I                                    P   7   80DBACRS
+     I                                    P   9  100DBDOWN
+     I                                       11  11 DBPALO
+     I                                       12  12 DBPKGO
+     I                                    P  13  140DBGRP
+     I*
+     I*   Current group being created.
+     I*
+     ICURPAT      DS                         50
+     I                                    P   1   32DCXPOS
+     I                                    P   4   62DCYPOS
+     I                                    P   7   80DCACRS
+     I                                    P   9  100DCDOWN
+     I                                       11  11 DCPALO
+     I                                       12  12 DCPKGO
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PPAL   Pallet code
+     C*      $PPALL  Pallet length
+     C*      $PPALW  Pallet width
+     C*      $PHANG  Overhang
+     C*      $PPKGL  Package length
+     C*      $PPKGW  Package width
+     C*
+     C*    Returned Parameters
+     C*      $PQTY   Best fit quantity
+     C*      $PRTN   Return code
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PPAL   6
+     C                     PARM           $PPALL  30
+     C                     PARM           $PPALW  30
+     C                     PARM           $PHANG  32
+     C                     PARM           $PPKGL  52
+     C                     PARM           $PPKGW  52
+     C                     PARM           $PQTY   30
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     Z-ADD0         BSTGRP
+     C                     Z-ADD0         BSTQTY
+     C*
+     C* **** TEST ****  Clear files for this pallet and package.
+     C*
+     C                     EXSR ZZINIT
+     C*
+     C* Calculate area to fill (Pallet dimensions plus overhang).
+     C*
+     C           $PHANG    MULT 2         TTLHNG  20
+     C           $PPALL    ADD  TTLHNG    PALLEN  30
+     C           $PPALW    ADD  TTLHNG    PALWDT  30
+     C*
+     C* Calculate package and pallet areas.
+     C*
+     C           $PPKGL    MULT $PPKGW    PKGARA  72
+     C           PALLEN    MULT PALWDT    PALARA  72
+     C*
+     C* First, fill pallet with simple pattern of all the same rows.
+     C*
+     C*    Pallet orientation:  W  (Across=Width, Down=Length)
+     C*
+     C                     MOVE 'W'       PALORT  1
+     C                     EXSR FILLB
+     C*
+     C*    Pallet orientation:  L  (Across=Length, Down=Width)
+     C*
+     C                     MOVE 'L'       PALORT
+     C                     EXSR FILLB
+     C*
+     C* Next, fill pallet with mixed row patterns.
+     C*
+     C*    Pallet orientation:  W  (Across=Width, Down=Length)
+     C*
+     C                     MOVE 'W'       PALORT  1
+     C                     EXSR FILLC
+     C*
+     C*    Pallet orientation:  L  (Across=Length, Down=Width)
+     C*
+     C                     MOVE 'L'       PALORT
+     C                     EXSR FILLC
+     C*
+     C* Write best group to files.
+     C*
+     C           BSTQTY    IFGT 0
+     C                     EXSR WRTBST
+     C                     ENDIF
+     C                     Z-ADDBSTGRP    GROUP
+     C                     Z-ADDBSTQTY    CURQTY
+     C                     EXSR WRTPKG
+     C*
+     C* Close up shop and return home.
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*   Define partial key for file PATTERN
+     C*
+     CSR         KEYPP     KLIST
+     CSR                   KFLD           $PPAL
+     CSR                   KFLD           $PHANG
+     CSR                   KFLD           $PPKGL
+     CSR                   KFLD           $PPKGW
+     C*
+     C*   Define partial key for file PACKAGE
+     C*
+     CSR         KEYPK     KLIST
+     CSR                   KFLD           $PPAL
+     CSR                   KFLD           $PHANG
+     CSR                   KFLD           $PPKGL
+     CSR                   KFLD           $PPKGW
+     C*
+     CSR                   Z-ADD0         GROUP   30
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CHKBST  Check to see if current group should become best group.
+     C*
+     CSR         CHKBST    BEGSR
+     C*
+     CSR         CURQTY    IFGT BSTQTY
+     CSR                   Z-ADD0         X
+     CSR         1         DO   LSTCUR    X       30
+     CSR         X         OCUR CURPAT
+     CSR         X         OCUR BSTPAT
+     CSR                   Z-ADDDCXPOS    DBXPOS
+     CSR                   Z-ADDDCYPOS    DBYPOS
+     CSR                   Z-ADDDCACRS    DBACRS
+     CSR                   Z-ADDDCDOWN    DBDOWN
+     CSR                   MOVE DCPALO    DBPALO
+     CSR                   MOVE DCPKGO    DBPKGO
+     CSR                   Z-ADDGROUP     DBGRP
+     CSR                   ENDDO
+     CSR                   Z-ADDCURQTY    BSTQTY  30
+     CSR                   Z-ADDGROUP     BSTGRP  30
+     CSR                   Z-ADDLSTCUR    LSTBST  30
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLA   Simple single row pattern.
+     C*
+     C*    This pattern just tries to fill the area with rows of packages
+     C*    that all have the same orientation (face the same way).
+     C*
+     C*         xxxx xxxx xxxx xxxx
+     C*         xxxx xxxx xxxx xxxx
+     C*         xxxx xxxx xxxx xxxx
+     C*
+     C*
+     CSR         FILLA     BEGSR
+     C*
+     C*  Calculate packages across/down the pallet width/length.
+     C*
+     CSR                   SELEC
+     C*
+     C*     'W' oriented package.
+     C*
+     CSR         PKGORT    WHEQ 'W'
+     CSR         BOXWDT    DIV  $PPKGW    PKGACR  30
+     CSR         BOXLEN    DIV  $PPKGL    PKGDWN  30
+     C*
+     C*     'L' oriented package.
+     C*
+     CSR                   OTHER
+     CSR         BOXWDT    DIV  $PPKGL    PKGACR
+     CSR         BOXLEN    DIV  $PPKGW    PKGDWN
+     CSR                   ENDSL
+     C*
+     C*  Calculate total number of packages.
+     C*
+     CSR         PKGACR    MULT PKGDWN    PKGQTY  30
+     C*
+     C*  Add pattern to current pattern group.
+     C*
+     CSR         PKGQTY    IFGT 0
+     CSR                   ADD  1         LSTCUR
+     CSR         LSTCUR    OCUR CURPAT
+     CSR         PALORT    IFEQ 'W'
+     CSR                   Z-ADDXPOS      DCXPOS
+     CSR                   Z-ADDYPOS      DCYPOS
+     CSR                   ELSE
+     CSR                   Z-ADDXPOS      DCYPOS
+     CSR                   Z-ADDYPOS      DCXPOS
+     CSR                   ENDIF
+     CSR                   Z-ADDPKGACR    DCACRS
+     CSR                   Z-ADDPKGDWN    DCDOWN
+     CSR                   MOVE PALORT    DCPALO
+     CSR                   MOVE PKGORT    DCPKGO
+     CSR                   ADD  PKGQTY    CURQTY
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLB   Fill pallet with one row type.
+     C*
+     C*    This pattern just tries to fill the entire pallet with rows of
+     C*    packages that all have the same orientation (face the same way).
+     C*
+     C*         xxxx xxxx xxxx xxxx
+     C*         xxxx xxxx xxxx xxxx
+     C*         xxxx xxxx xxxx xxxx
+     C*
+     C*
+     CSR         FILLB     BEGSR
+     C*
+     C*   Determine box length/width based on pallet orientation.
+     C*
+     CSR         PALORT    IFEQ 'W'
+     CSR                   Z-ADDPALLEN    BOXLEN  52
+     CSR                   Z-ADDPALWDT    BOXWDT  52
+     CSR                   ELSE
+     CSR                   Z-ADDPALLEN    BOXWDT
+     CSR                   Z-ADDPALWDT    BOXLEN
+     CSR                   ENDIF
+     C*
+     C*   Fill pallet with one orientation.
+     C*        Package orientation: W  (Across=Width, Down=Length)
+     C*
+     CSR                   Z-ADD0         LSTCUR  30
+     CSR                   Z-ADD0         CURQTY  30
+     CSR                   MOVE 'W'       PKGORT  1
+     CSR                   Z-ADD0         XPOS    52
+     CSR                   Z-ADD0         YPOS    52
+     CSR                   EXSR FILLA
+     C*
+     C*     Write group to file.
+     C*
+     C*       Writing every group to the file is for testing purposes.
+     C*       If the final version only the best should be written to the file.
+     C*
+     CSR                   EXSR WRTCUR
+     C**                   EXSR WRTPKG
+     C*
+     C*     See if this group should become the best.
+     C*
+     CSR                   EXSR CHKBST
+     C*
+     C*   Fill pallet with other orientation.
+     C*        Package orientation: L  (Across=Length, Down=Width)
+     C*
+     CSR                   Z-ADD0         LSTCUR
+     CSR                   Z-ADD0         CURQTY
+     CSR                   MOVE 'L'       PKGORT
+     CSR                   Z-ADD0         XPOS
+     CSR                   Z-ADD0         YPOS
+     CSR                   EXSR FILLA
+     C*
+     C*     Write group to file.
+     C*
+     C*       Writing every group to the file is for testing purposes.
+     C*       If the final version only the best should be written to the file.
+     C*
+     CSR                   EXSR WRTCUR
+     C**                   EXSR WRTPKG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLC   Fill pallet with mixed rows.
+     C*
+     C*    This pattern is a combination of 2 box areas.  The first (top)
+     C*    box is filled with 'W' oriented packages.  The second (bottom)
+     C*    box is filled with 'L' oriented packages.
+     C*
+     C*        xxxx xxxx xxxx xxxx
+     C*        xxxx xxxx xxxx xxxx
+     C*        x  x  x  x  x  x  x
+     C*        x  x  x  x  x  x  x
+     C*        x  x  x  x  x  x  x
+     C*        x  x  x  x  x  x  x
+     C*
+     C*
+     CSR         FILLC     BEGSR
+     C*
+     C*   Determine box length/width based on pallet orientation.
+     C*
+     CSR         PALORT    IFEQ 'W'
+     CSR                   Z-ADDPALLEN    BOXLEN  52
+     CSR                   Z-ADDPALWDT    BOXWDT  52
+     CSR                   ELSE
+     CSR                   Z-ADDPALLEN    BOXWDT
+     CSR                   Z-ADDPALWDT    BOXLEN
+     CSR                   ENDIF
+     C*
+     C*   Save area to fill and starting package orientation.
+     C*
+     CSR                   Z-ADDBOXLEN    SAVLEN  52
+     CSR                   Z-ADDBOXWDT    SAVWDT  52
+     C*
+     CSR                   Z-ADD0         YPOS1   52
+     CSR                   Z-ADD0         YPOS2   52
+     C*
+     C*   Loop until area has been filled will all 'W' oriented packages.
+     C*
+     CSR         YPOS2     DOUGTSAVLEN
+     C*
+     C*     Start a new group.
+     C*
+     CSR                   Z-ADD0         LSTCUR  30
+     CSR                   Z-ADD0         CURQTY  30
+     C*
+     C*     Fill first box.
+     C*        Package orientation: W  (Across=Width, Down=Length)
+     C*
+     CSR                   Z-ADDYPOS2     BOXLEN
+     CSR                   Z-ADDSAVWDT    BOXWDT
+     CSR                   MOVE 'W'       PKGORT  1
+     CSR                   Z-ADD0         XPOS    52
+     CSR                   Z-ADD0         YPOS    52
+     CSR                   EXSR FILLA
+     C*
+     C*     Fill second box.
+     C*        Package orientation: L  (Across=Length, Down=Width)
+     C*
+     CSR         SAVLEN    SUB  YPOS2     BOXLEN
+     CSR                   Z-ADDSAVWDT    BOXWDT
+     CSR                   MOVE 'L'       PKGORT
+     CSR                   Z-ADD0         XPOS
+     CSR                   Z-ADDYPOS2     YPOS
+     CSR                   EXSR FILLA
+     C*
+     C*     Write group to file.
+     C*
+     C*       Writing every group to the file is for testing purposes.
+     C*       If the final version only the best should be written to the file.
+     C*
+     CSR                   EXSR WRTCUR
+     C**                   EXSR WRTPKG
+     C*
+     C*     See if this group should become the best.
+     C*
+     CSR                   EXSR CHKBST
+     C*
+     C*     Calculate new starting Y position for second box and loop.
+     C*
+     CSR                   ADD  $PPKGL    YPOS2
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  WRTBST  Write best group to pattern file.
+     C*
+     CSR         WRTBST    BEGSR
+     CSR         1         DO   LSTBST    X
+     CSR         X         OCUR BSTPAT
+     CSR                   MOVE $PPAL     PPPAL
+     CSR                   Z-ADD$PHANG    PPHANG
+     CSR                   Z-ADD$PPKGL    PPPKGL
+     CSR                   Z-ADD$PPKGW    PPPKGW
+     CSR                   Z-ADDDBGRP     PPGRP
+     CSR                   Z-ADDDBXPOS    PPXPOS
+     CSR                   Z-ADDDBYPOS    PPYPOS
+     CSR                   Z-ADDDBACRS    PPACRS
+     CSR                   Z-ADDDBDOWN    PPDOWN
+     CSR                   MOVE DBPALO    PPPALO
+     CSR                   MOVE DBPKGO    PPPKGO
+     CSR                   WRITEPPREC
+     CSR                   ENDDO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  WRTCUR  Write current group to pattern file.
+     C*
+     CSR         WRTCUR    BEGSR
+     CSR                   ADD  1         GROUP
+     CSR                   GOTO ENDCUR
+     C*
+     CSR         1         DO   LSTCUR    X
+     CSR         X         OCUR CURPAT
+     CSR                   MOVE $PPAL     PPPAL
+     CSR                   Z-ADD$PHANG    PPHANG
+     CSR                   Z-ADD$PPKGL    PPPKGL
+     CSR                   Z-ADD$PPKGW    PPPKGW
+     CSR                   Z-ADDGROUP     PPGRP
+     CSR                   Z-ADDDCXPOS    PPXPOS
+     CSR                   Z-ADDDCYPOS    PPYPOS
+     CSR                   Z-ADDDCACRS    PPACRS
+     CSR                   Z-ADDDCDOWN    PPDOWN
+     CSR                   MOVE DCPALO    PPPALO
+     CSR                   MOVE DCPKGO    PPPKGO
+     CSR                   WRITEPPREC
+     CSR                   ENDDO
+     CSR         ENDCUR    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  WRTPKG  Write package record.
+     C*
+     CSR         WRTPKG    BEGSR
+     CSR                   MOVE $PPAL     PKPAL
+     CSR                   Z-ADD$PHANG    PKHANG
+     CSR                   Z-ADD$PPKGL    PKLEN
+     CSR                   Z-ADD$PPKGW    PKWDTH
+     CSR                   Z-ADDGROUP     PKGRP
+     CSR                   Z-ADDCURQTY    PKTIE
+     CSR         PKGARA    MULT PKTIE     TTLPKG  50
+     CSR         TTLPKG    DIV  PALARA    USGPCT  96H
+     CSR         USGPCT    MULT 100       PKUPCT
+     CSR                   WRITEPKREC
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINIT  Testing initialization.
+     C*
+     CSR         ZZINIT    BEGSR
+     C*
+     C* **** TEST ****  Clear pattern file for this pallet and package.
+     C*
+     CSR         KEYPP     SETLLPATTERN              7979
+     CSR         *IN79     DOWEQ*OFF
+     CSR         KEYPP     READEPATTERN                  79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   DELETPPREC
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C* **** TEST ****  Clear package file for this pallet and package.
+     C*
+     CSR         KEYPK     SETLLPACKAGE              7979
+     CSR         *IN79     DOWEQ*OFF
+     CSR         KEYPK     READEPACKAGE                  79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   DELETPKREC
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR

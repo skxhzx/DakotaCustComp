@@ -1,0 +1,303 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2005 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  PR312     Pending priority replenishments before import - Print
+     F*  18 September, 2000
+     F*  Hemant Kapadia
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions:
+     F*
+417 AF*    07/22/03  MLB  4.17
+     F*      - Enh: Recompiled. New fields added to PRPLFIL.
+     F*
+500 AF*    12/09/05  MLB  5.00
+     F*      - Enh: Revised program to add support for retrieving
+     F*        default printer / formtype before printing report.
+     F*
+520 AF*    10/28/08  MLB  5.20
+     F*      - Fix: Revised program to change value used to retrieve
+     F*        printer overrides for program.
+520aAF*    10/31/08  MLB  5.20a
+     F*      - Enh: Revised program to use OUTQ instead of DEV when
+     F*        processing OVRPRTF cmd.
+640aAF*    05/04/12  RH   6.40a
+     F*      - Enh: Add Replenishment detail to report.
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPRPLFIL IP  E           K        DISK
+500 DF*PR312PR O   E             90     PRINTER
+500 MFPR312PR O   E             90     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    RPD     1   3 25
+500 AE                    OVRPRT  1   1 80
+500 AE                    A80        80  1
+     E                    RECK        4  7 0
+     E                    CNT         4  5 0
+     E*
+     I*----------------------------------------------------------------
+     IPRREC
+     I                                              PRWHDPL2
+     I                                              PRTAILL1
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+500 AC*
+500 AC* Open printer
+500 AC*
+500 AC           PRWHSE    IFNE LSTWHS
+500 AC                     EXSR OPNPRT
+500 AC                     ENDIF
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Page overflow.
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - Aisle
+     C*
+     C           *INL1     IFEQ *ON
+     C                     Z-ADD1         L
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*  Level 2 break - Department
+     C*
+     C           *INL2     IFEQ *ON
+     C                     Z-ADD2         L
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*
+640aAC                     Z-ADDPRQTY     W1QTY
+640aAC                     Z-ADDPRAQS     W1AQS
+640aAC                     WRITEDETAIL2
+     C*  Accumulate replenishment counts
+     C*
+     C                     ADD  1         CNT,1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      FIRST
+     C*----------------------------------------------------------------
+     C*
+     C* Aisle
+     C*
+500 ACL1         FIRST     IFEQ *OFF
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     CL1                   Z-ADDCNT,L     W1CNT
+     CL1                   WRITEDETAIL1
+500 ACL1                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Department
+     C*
+500 ACL2         FIRST     IFEQ *OFF
+     CL2                   Z-ADD2         L
+     CL2                   EXSR ZRROLL
+     C*
+     CL2         RECK,L    IFGT 0
+     CL2                   EXSR ZRTOTL
+     CL2                   ENDIF
+500 ACL2                   ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Report totals
+     C*
+500 ACLR         FIRST     IFEQ *OFF
+     CLR                   Z-ADD3         L
+     CLR                   EXSR ZRROLL
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   EXSR ZRTOTL
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+500 ACLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+500 AC           *LIKE     DEFN $WHSE     LSTWHS
+500 AC           *LIKE     DEFN $DEV      LSTDEV
+500 AC           *LIKE     DEFN $FORM     LSTFRM
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD3         L       10
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C           *INL1     IFEQ *ON
+     C                     EXSR ZRFRMT
+     C                     ELSE
+     C                     MOVE *ON       *IN91
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C*                    ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ADD  CNT,L     CNT,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C                     Z-ADDCNT,L     T#CNT
+     C*
+     C                     MOVE RPD,L     $RPD
+     C*
+     C                     WRITESKIP1
+     C                     WRITETOTAL1
+     C                     WRITESKIP1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C*                    Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     Z-ADD0         CNT,L
+     C*
+     C                     ENDSR
+500 AC*
+500 AC*----------------------------------------------------------------
+500 AC*
+500 AC*  OPNPRT  Open printer file.
+500 AC*
+500 AC           OPNPRT    BEGSR
+ |   C*
+ |   C*   Get device and form type for department.
+ |   C*
+ |   C           PRWHSE    IFNE LSTWHS
+ |   C                     CALL 'GETRPT'
+ |   C                     PARM '*DEVFORM'$CMD    8
+520 DC*                    PARM 'OR610PR' $LRPT  10
+520 MC                     PARM 'PR312PR' $LRPT  10
+ |   C                     PARM PRWHSE    $WHSE   30
+ |   C                     PARM ' '       $STYP   1
+ |   C                     PARM ' '       $WHDP   5
+ |   C                     PARM           $DESC  50
+ |   C                     PARM           $DEV   10
+ |   C                     PARM           $FORM  10
+ |   C                     Z-ADD$WHSE     LSTWHS
+ |   C                     ENDIF
+ |   C*
+ |   C*   Open printer file for department.
+ |   C*
+ |   C           OPENED    IFNE *ON
+ |   C           $DEV      ORNE LSTDEV
+ |   C           $FORM     ORNE LSTFRM
+ |   C*
+ |   C*      If printer already open then close it.
+ |   C*
+ |   C           OPENED    IFEQ *ON
+ |   C                     CLOSEPR312PR
+ |   C                     ENDIF
+ |   C*
+ |   C*      Override printer file.
+ |   C*
+ |   C*          OVRPRTF FILE(PR312PR) OUTQ(*DEV) DEV($dev)
+ |   C*                  FORMTYPE($form)
+ |   C*
+ |   C                     MOVEAOVRPRT,1  A80
+ |   C                     MOVEA$DEV      A80,38
+ |   C                     MOVEA$FORM     A80,59
+ |   C                     MOVEAA80       QCMD
+ |   C*
+ |   C                     CALL 'QCMDEXC'
+ |   C                     PARM           QCMD   80
+ |   C                     PARM 80        QLEN   155
+ |   C*
+ |   C*      Open printer file.
+ |   C*
+ |   C                     OPEN PR312PR
+ |   C                     MOVE *ON       OPENED  1
+ |   C                     MOVE $DEV      LSTDEV
+ |   C                     MOVE $FORM     LSTFRM
+ |   C*
+ |   C                     ENDIF
+500 AC*
+500 AC                     ENDSR
+500 AC*
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*
+**      RPD   Report level descriptions
+ * Aisle total *
+ ** Department totals **
+ *** Grand total ***
+**   OVRPRTF statment
+OVRPRTF FILE(PR312PR)           OUTQ(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)

@@ -1,0 +1,266 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2010 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   24 North Washington Ave, Suite 203
+     F*   Batavia, IL  60510
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  SL715     Export slot quantities - Post
+     F*  03 February 2004
+     F*  Dave Sommerville
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+417 AF*   02/03/04  DAS  4.17
+     F*     - Created.
+530 AF*    01/14/10  MLB  5.30
+     F*      - Enh: Added client custom code support to program.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Packer's Provision
+     F*
+PAK AF*   01/14/10  MLB  PAK
+     F*     - Revised program to retrieve build code from PIRITEM
+     F*       and load first position of build code into fld SEFLAG.
+     F*       Build code will be blank for Packers items and contain
+     F*       VS for Vsuarez owned items.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+PAK AF*  75        NRF on chain to PIRITEM
+PAK AF*  76        Error opening PIRITEM
+     F*  79        CHAIN INDICATOR
+     F*  90        OVERFLOW INDICATOR FOR EXCEPTION REPORT
+     F*  91        OVERFLOW INDICATOR FOR CATCH WEIGHT REPORT
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT2   IF  E           K        DISK
+PAK  FPIRITEM IF  E           K        DISK                           UC
+     FEXPFSQTYO   E           K        DISK                      A
+530 A*----------------------------------------------------------------
+530 A*  Customer id
+530 A*
+530 AI              'GETCLIENT'           C         @GETCL
+530 A*
+PCK AI/COPY QCOPYSRC,IL#PACKERS
+530 A*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $WHSE   Warehouse
+     C*      $WHDP   Warehouse department or *ALL
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS   3
+     C                     PARM           $PWHDP  5
+     C                     MOVE $PWHS     $PWHSE  30
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*  Set beginning limits on appropriate file.
+     C*
+     C           $PWHDP    IFEQ '*ALL'
+     C           KEYSLW    SETLLSLOT2
+     C                     ELSE
+     C           KEYSLD    SETLLSLOT2
+     C                     ENDIF
+     C*
+     C*  Loop through slot records.
+     C*
+     C           FOREVR    DOUNEFOREVR
+     C           $PWHDP    IFEQ '*ALL'
+     C           KEYSLW    READESLOT2                    77
+     C                     ELSE
+     C           KEYSLD    READESLOT2                    77
+     C                     ENDIF
+     C*
+     C*    Get out if EOF or Department doesn't match.
+     C*
+     C           *IN77     IFEQ *ON
+     C           $PWHDP    ORNE '*ALL'
+     C           SLWHDP    ANDNE$PWHDP
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*    Record accepted for Export.
+     C*
+     C                     CLEARSEREC
+     C                     Z-ADDSLWHSE    SEWHSE
+     C                     MOVE SLWHDP    SEWHDP
+     C                     MOVE SLDISP    SEFSL1
+     C                     MOVE SLITEM    SEFIT1
+PAK AC*
+PAK AC           CLIENT    IFEQ PACKER
+PAK AC*
+PAK AC*     Retrieve build code to determine who item belongs to.
+PAK AC           SLITEM    IFNE SVITEM
+PAK AC           KEYIT     CHAINPIRITEM              75
+PAK AC           *IN75     IFEQ '1'
+PAK AC                     MOVE *BLANKS   ITBLD
+PAK AC                     ENDIF
+PAK AC                     MOVE SLITEM    SVITEM 15
+PAK AC                     ENDIF
+PAK AC*
+PAK AC                     MOVELITBLD     SEFLAG
+PAK AC*
+PAK AC                     ENDIF
+     C*
+     C*  Get item stock quantity.
+     C*
+     C           'SLSTAT'  IFNE 'Z'
+     C           'SLSTAT'  ANDNE'V'
+     C                     EXSR GETQTY
+     C           AVAIL1    IFLT 0
+     C                     Z-SUBAVAIL1    SEQTY1
+     C                     MOVE '-'       SEQFL1
+     C                     ELSE
+     C                     Z-ADDAVAIL1    SEQTY1
+     C                     ENDIF
+     C           AVAIL2    IFLT 0
+     C                     Z-SUBAVAIL2    SEQTY2
+     C                     MOVE '-'       SEQFL2
+     C                     ELSE
+     C                     Z-ADDAVAIL2    SEQTY2
+     C                     ENDIF
+     C           AVAIL3    IFLT 0
+     C                     Z-SUBAVAIL3    SEQTY3
+     C                     MOVE '-'       SEQFL3
+     C                     ELSE
+     C                     Z-ADDAVAIL3    SEQTY3
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C*  Add export record
+     C*
+     C                     WRITESEREC                  79
+     C*
+     C                     ENDDO
+     C*
+     C                     MOVE *ON       *INLR
+     C                     RETRN
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subroutine
+     C*
+     CSR         *INZSR    BEGSR
+530 A*
+530 A* Get client id.
+530 A*
+530 AC                     CALL @GETCL
+530 AC                     PARM           CLIENT 10
+530 AC                     PARM           CLILOC 10
+PAK AC*
+PAK AC*  Define key for PIRITEM file.
+PAK AC*
+PAK AC           KEYIT     KLIST
+PAK AC                     KFLD           $PWHSE
+PAK AC                     KFLD           SLITEM
+     C*
+     C*  Define key for SLOT2 file.
+     C*
+     CSR         KEYSLW    KLIST
+     CSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for SLOT2 file.
+     C*
+     CSR         KEYSLD    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+PAK AC*
+PAK AC*
+PAK AC           CLIENT    IFEQ PACKER
+PAK AC*
+PAK AC           ITOPEN    IFNE '1'
+PAK AC                     OPEN PIRITEM                76
+PAK AC                     MOVE '1'       ITOPEN  1
+PAK AC                     ENDIF
+PAK AC*
+PAK AC                     ENDIF
+     C*
+     C*  Variables and constants.
+     C*
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETQTY  Get quantity for item
+     C*
+     CSR         GETQTY    BEGSR
+     C*
+     CSR                   CALL 'SLOTQTY'
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     C*
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     C*
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     C*
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     C*
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     C*
+     CSR                   PARM           STOCK1  50
+     CSR                   PARM           STOCK2  30
+     CSR                   PARM           STOCK3  30
+     C*
+     CSR                   PARM           AVAIL1  50
+     CSR                   PARM           AVAIL2  30
+     CSR                   PARM           AVAIL3  30
+     C*
+     CSR         ENDQTY    ENDSR

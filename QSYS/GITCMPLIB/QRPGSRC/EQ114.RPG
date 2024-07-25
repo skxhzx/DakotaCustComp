@@ -1,0 +1,264 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2004 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  EQ114     Equipment table maint - Delete
+     F*  02 November, 1995
+     F*  Dave Sommerville
+     F*  Hemant Kapadia
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+417 AF*  11.11.03  HNK  4.17
+     F*    - Recompiled.
+417aAF*  01/27/04  MLB  4.17a
+     F*    - Enh: Added file EQUIPYS. When equipment entry is deleted,
+     F*      remove all entries from equipment yard status file.
+417b F*    04/28/04  RH   4.17b
+     F*      - Increase EQCODE length from 6 to 8
+     F*
+500 AF*    06/06/06  JCJ  5.00
+     F*      - Added Multilingual logic.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        CHAIN INDICATOR
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FEQUIP   UF  E           K        DISK
+     F            EQREC                             KRENAMERECORD
+417aAFEQUIPYS UF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     E                    MSG     1   1 50
+500 AE                    MSGSP   1   1 50
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+417b I                                       22  29 $PCODE
+417bDI*                                      22  27 $PCODE
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+500 AI              'PIRMSGFSP '          C         #MSGSP
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Not used
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains unique key for delete.
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*              *OK      - Record deleted successfully.
+     C*                         Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C           FILEKY    CHAINRECORD               79
+     C           *IN79     IFEQ '0'
+     C                     EXSR ZZDEL
+417aAC*    Delete equipment yard status record.
+417aAC                     EXSR ZZDLYS
+     C           ERROR     IFEQ '0'
+     C                     DELETRECORD
+     C                     EXSR ZZOK
+     C                     END
+     C                     ELSE
+     C                     EXSR ZM75
+     C                     MOVE '*PGMQ   '$PRTN
+     C                     END
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+500 ACSR                   SELEC
+500 ACSR         E$LNG     WHEQ 'SP'
+500 ACSR                   MOVE #MSGSP    $MSGF
+500 ACSR                   OTHER
+     CSR                   MOVE #MSGF     $MSGF  10
+500 ACSR                   ENDSL
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7975  Error while deleting record.
+     C*
+     CSR         ZM75      BEGSR
+     CSR                   MOVE 'PIR7975' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR9803  Deleted record successfully.
+     C*
+     CSR         ZM9803    BEGSR
+     CSR                   MOVE 'PIR9803' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDEL    Delete corresponding records.
+     C*
+     CSR         ZZDEL     BEGSR
+     CSR                   MOVE '0'       ERROR   1
+     CSR                   ENDSR
+417aAC*----------------------------------------------------------------
+417aAC*
+417aAC*  ZZDLYS   Delete equipment yard status record.
+417aAC*
+417aACSR         ZZDLYS    BEGSR
+417aAC*
+417aACSR         FILEKY    CHAINEQUIPYS              76
+417aACSR         *IN76     IFEQ *OFF
+417aACSR                   DELETESREC                  78
+417aACSR         *IN78     IFEQ *OFF
+417aACSR                   MOVE *ON       ERROR
+417aACSR                   ENDIF
+417aACSR                   ENDIF
+417aAC*
+417aACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+500 AC*
+500 AC*   Get employee options.
+500 AC*
+500 ACSR                   CALL 'GETUSER'
+500 ACSR                   PARM #USER     E$CODE 10
+500 ACSR                   PARM           E$WHSE  30
+500 ACSR                   PARM           E$EMP#  50
+500 ACSR                   PARM           E$FNAM 15
+500 ACSR                   PARM           E$INIT  1
+500 ACSR                   PARM           E$LNAM 20
+500 ACSR                   PARM           E$WHDP  5
+500 ACSR                   PARM           E$STYP  1
+500 ACSR                   PARM           E$SHFT  6
+500 ACSR                   PARM           E$CREW  6
+500 ACSR                   PARM           E$NHRS  31
+500 ACSR                   PARM           E$RTN   8
+500 ACSR                   PARM           E$BPU   1
+500 ACSR                   PARM           E$LNG   2
+500 ACSR         E$RTN     IFNE '*OK'
+500 ACSR                   MOVE 'EN'      E$LNG
+500 ACSR                   ENDIF
+     C*
+     C*  Define key for main file.
+     C*
+     CSR         FILEKY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PCODE
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZOK     Send back "successful" message.
+     C*
+     CSR         ZZOK      BEGSR
+     CSR                   MOVE *BLANKS   $MD
+500 ACSR                   SELEC
+500 ACSR         E$LNG     WHEQ 'SP'
+500 ACSR                   MOVEAMSGSP,1   $MD,1
+500 ACSR                   OTHER
+     CSR                   MOVEAMSG,1     $MD,1
+500 ACSR                   ENDSL
+     CSR                   MOVEA$PCODE    $MD,12
+     CSR                   EXSR ZM9803
+     CSR                   MOVE '*OK     '$PRTN
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**
+Equipment
+**
+Equipaje

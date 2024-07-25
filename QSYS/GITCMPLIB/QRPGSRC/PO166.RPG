@@ -1,0 +1,380 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  PO166     Print PORCV entries (Receiving log)
+     F*  Roxanne Harrison
+     F*  08 August, 2002  Created - V4.16
+     F*
+     F*  Revisions
+     F*
+416aAF*    08/14/02  MLB  4.16a
+     F*      - Fix: Added check for page overflow.
+500aAF*    08/03/05  RH   5.00a
+     F*      - Fix: 416a code missed in previous version.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPODTL   IP  E           K        DISK
+     FPORCV   IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FLABEL7  IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FPO166PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        3  7 0
+     E                    LVLK        3  7 0
+     E*
+     I*----------------------------------------------------------------
+     I*DREC
+     I*                                             PDWHSEL1
+     I*                                             PDPO  L1
+     I*                                             PDSEQ L1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Other data structures
+     I*
+     I            DS
+     I                                        1   60DSHMS
+     I                                        1   20DSHH
+     I                                        3   40DSMM
+     I                                        5   60DSSS
+     C*----------------------------------------------------------------
+     C*
+     C*  Key fields
+     C*
+     C*
+     C*
+     C* P.O. Detail file - Partial key
+     C*
+     C*          PODKEY    KLIST
+     C*                    KFLD           PHWHSE
+     C*                    KFLD           PHPO
+     C*
+     C* P.O. Receive file - Partial key
+     C*
+     C           PORKEY    KLIST
+     C                     KFLD           PDWHSE
+     C                     KFLD           PDPO
+     C                     KFLD           PDSEQ
+     C*
+     C*  Define key for file LABEL7.
+     C*
+     C           KEYLB7    KLIST
+     C                     KFLD           PORTRN
+     C                     KFLD           PDITEM
+     C                     KFLD           PDSEQ
+     C*
+     C*  Key for PIRITEM file
+     C           ITMKEY    KLIST
+     C                     KFLD           PDWHSE
+     C                     KFLD           PDITEM
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C           *IN90     IFEQ '1'
+     C           FIRST     OREQ *ON
+     C                     EXSR ZRZERO
+     C                     MOVE *BLANKS   P#DESC
+     C                     MOVE PDPO      P#DESC
+     C*          TYPE      CAT  '/':0     P#DESC
+     C*          P#DESC    CAT  ITWHDP:0  P#DESC
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - Warehouse/PO/Item
+     C*
+     C*          *INL1     IFEQ '1'
+     C*                    Z-ADD1         L
+     C*                    END
+     C*
+     C*  Output Headings
+     C*
+     C*          *IN91     IFEQ '1'
+     C*          *INL1     OREQ '1'
+     C           *IN91     IFEQ '1'
+     C           FIRST     OREQ *ON
+     C                     WRITERPHEAD
+     C                     WRITECOLUMNS
+     C                     MOVE *OFF      FIRST
+     C                     END
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C* Skip item if nothing was received.
+     C           PDQRC1    IFEQ 0
+     C           PDQRC2    ANDEQ0
+     C           PDQRC3    ANDEQ0
+     C                     GOTO SKIP
+     C                     ENDIF
+     C*
+     C           ITMKEY    CHAINPIRITEM              78
+     C           *IN78     IFEQ *ON
+     C                     MOVE *BLANKS   ITDESC
+     C                     ENDIF
+     C*
+     C*  Write detail line
+     C*
+     C           PORKEY    SETLLPORCV                79
+416aAC                     MOVE *BLANKS   W1ITEM
+     C                     Z-ADD0         COUNT
+     C                     SETON                     61
+     C                     MOVE *IN79     EOF     1
+     C*
+     C           EOF       DOWEQ*OFF
+     C           PORKEY    READEPORCV                    79
+     C                     MOVE *IN79     EOF
+     C           *IN79     IFEQ *OFF
+     C                     ADD  1         COUNT
+     C                     EXSR ZZFILL
+     C*
+416aAC           *IN90     IFEQ *ON
+416aAC                     WRITEHEAD1                  90
+416aAC                     WRITEHEAD2                  90
+416aAC                     WRITERPHEAD                 90
+416aAC                     WRITECOLUMNS                90
+416aAC                     MOVE SVITEM    W1ITEM
+416aAC                     MOVE SVDESC    W1DESC
+416aAC                     ENDIF
+416aDC*                    WRITEDETAIL1
+416aMC                     WRITEDETAIL1                90
+     C                     MOVE PDITEM    SVITEM
+416aAC                     MOVE ITDESC    SVDESC
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         COUNT
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C*
+     C                     ENDIF
+     C                     ENDDO
+     C*
+     C*  Increment record counters
+     C*
+     C**                   ADD  1         RECK,1
+     C**                   ADD  1         LVLK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE '0'       *IN91
+     C           SKIP      TAG
+     C*----------------------------------------------------------------
+     C*
+     C* Warehouse/PO
+     C*
+     C*1                   Z-ADD1         L
+     C*1                   EXSR ZRROLL
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     C*R                   Z-ADD2         L
+     C*
+     C*R         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     C*R                   END
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR         RPKEY     KLIST
+     CSR                   KFLD           WKPRTF 10
+     C*
+     C*   Get report title.
+     C*
+     CSR                   MOVEL'PO166PR 'WKPRTF
+     CSR                   MOVE *BLANKS   RPTTTL
+     C                     MOVE *BLANKS   $PSTR
+     CSR         RPKEY     CHAINREPORTS              79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVELRPDESC    $PSTR  60
+     CSR                   ELSE
+     CSR                   MOVE 'PO Qtys' $PSTR
+     CSR                   ENDIF
+     CSR                   Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR
+     CSR                   PARM           $PLEN
+     CSR                   MOVEL$PSTR     RPTTTL
+     C*
+     CSR                   MOVE *BLANKS   SVITEM 15
+416aACSR                   MOVE *BLANKS   SVDESC 30
+     CSR                   MOVE *ON       FIRST   1
+     CSR                   TIME           TIME
+     CSR                   Z-ADD0         COUNT   30
+     CSR                   Z-ADD2         L       10
+     CSR                   EXSR ZRZERO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C           FIRST     IFEQ *OFF
+     C                     MOVE '1'       *IN91
+     C                     ENDIF
+     C*
+     C                     MOVE '0'       *IN90
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           PDWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C                     WRITEHEAD1
+     C                     WRITEHEAD2
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C           L         IFEQ 1
+     C*                    WRITETOTAL1
+     C                     END
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFILL   Fill display line with values that need
+     C*           to be converted.
+     C*
+     CSR         ZZFILL    BEGSR
+     C*
+     C*   Item
+     CSR         SVITEM    IFNE PDITEM
+     CSR                   WRITESKIP1
+     CSR                   MOVE PDITEM    W1ITEM
+     CSR                   MOVE ITDESC    W1DESC
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   W1ITEM
+     CSR                   MOVE *BLANKS   W1DESC
+     CSR                   ENDIF
+     C*
+     C*
+     C*   Date
+     C*
+     CSR         PORDTE    IFEQ 0
+     CSR                   Z-ADD0         W1DATE
+     CSR                   ELSE
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE PORDTE    $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1DATE
+     CSR                   ENDIF
+     C*
+     C*   Action
+     C*
+     CSR                   SELEC
+     CSR         PORACT    WHEQ 'R'
+     CSR                   MOVEL'Received'W1ACT
+     CSR         PORACT    WHEQ 'D'
+     CSR                   MOVEL'Deleted 'W1ACT
+     CSR         PORACT    WHEQ 'X'
+     CSR                   MOVEL'Checked 'W1ACT
+     CSR                   OTHER
+     CSR                   MOVE *BLANKS   W1ACT
+     CSR                   MOVELPORACT    W1ACT
+     CSR                   ENDSL
+     C*
+     C*   Quantitiy
+     C*
+     CSR         KEYLB7    CHAINLABEL7               78
+     CSR         *IN78     IFEQ *ON
+     CSR                   Z-ADD0         W1QTY
+     CSR                   MOVE *BLANKS   W1UOM
+     CSR                   ELSE
+     CSR                   Z-ADDLBQALC    W1QTY
+     CSR                   MOVE LBUCOD    W1UOM
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*

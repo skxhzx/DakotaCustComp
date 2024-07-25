@@ -1,0 +1,592 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1996 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IV505     Post inventory counts - Traffic cop
+     F*  04 March 1996
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+213 AF*    06/17/96  RH   2.13
+     F*      - Add call to IV751 to clear inventory work files.
+408 AF*    01/09/98 RH   4.08
+     F*      - ADD $PPEXP exporting aisle partial inventory.
+     F*
+413 AF*    03/03/00  DAS  4.13
+     F*      - Added Step 3 to move records to history files.
+     F*      - Added Step 4 to create FTP export file if necessary.
+     F*      - Added Step 5 to export via FTP if necessary.
+     F*      - Removed call to IT751 which deleted count records.
+     F*        Step 4 will clear the files.
+     F*
+414 AF*    04/27/00  DAS  4.14
+     F*      - Added file OPTIONS.
+     F*      - Added data structure for *FTP options
+     F*      - Revised ZZINZ routine to get *FTP options.
+     F*      - Added logic to get FTP option and only perform FTP
+     F*        steps when option is 'Y'.
+414 AF*    05/11/00  RH   4.14
+     F*      - Added logic to send $PADJ for aisle cycle count.
+     F*      - Added Step 6 to recalculate the item.
+416 AF*  09/25/01  RH   4.16
+     F*    - Recompile - INVSLOT file changed.
+416aAF*  09/17/02  RH   4.16a
+     F*    - Add department as parm.
+     F*
+500 AF*  05/06/05  DAS  5.00
+     F*    - Added phase 6 to update lichist.
+500aAF*  08/31/05  MLB  5.00a
+     F*    - Enh: Revised program to pass $PCMD to IV540 to allow
+     F*      better recovery processing.
+500aAF*  12/14/05  RH   5.00a
+     F*    - Fix: ENH 500a was applied to wrong version of program.
+520aAF*  02/05/09  RH   5.20a
+     F*    - Fix: Add 520a add client, condition phase 6 for Jordanos
+     F*
+600aAF*  05/11/09  DAS  6.00a  P#00045
+     F*    - License tracking.
+     F*    - Removed call to IV515.
+     F*
+     F*----------------------------------------------------------------
+     F*
+     F*  Notes
+     F*
+     F*    - The screen for this program must be compiled with
+     F*      defer write equal to *NO and share equal to *YES.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  21 - 30   Field input error (reverse display)
+     F*  90        View mode (protect all fields)
+     F*  91        Change mode (protect key fields)
+     F*  97        Alawys on (used for SFLEND keyword)
+     F*  98        Error on screen (sound alarm)
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIV505FM CF  E                    WORKSTN                        UC
+     FBATCTL  UF  E           K        DISK                      A
+408 AFINVSLOT IF  E           K        DISK
+414 AFOPTIONS IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+520aAI*
+500aAI              'GETCLIENT'           C         @GETCL
+JOR A /COPY QCOPYSRC,IL#JORDANO
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+414 AI*----------------------------------------------------------------
+414 AI*  *FTP      -  FTP options
+414 AI*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPFTP   -  Use FTP for exporting (Y,N)
+     I*    OPSRVR  -  FTP Server name
+     I*    OPUSER  -  FTP User id
+     I*    OPPWD   -  FTP Password
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPFTP
+     I                                        2  33 OPSRVR
+     I                                       34  48 OPUSER
+     I                                       49  63 OPPWD
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  15 ERITEM
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *PICK    - Pick new orders.
+     C*              *RESTART - Restart abnormally ended batch.
+     C*      $PWHSE  Warehouse
+416  C*      $PWHDP  Department
+     C*      $PBAT   Batch number for *RESTART.
+     C*      $PSTAT  Status for *RESTART.
+     C*      $PJOBQ  Placed on jobq (Y,N).
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PWHSE  30
+416a C                     PARM           $PWHDP  5
+     C                     PARM           $PBAT   70
+     C                     PARM           $PSTAT  1
+     C                     PARM           $PJOBQ  1
+     C                     PARM           $PRTN   8
+414 AC                     PARM           $PADJ   2
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *OFF      ERROR
+     C                     MOVE *BLANKS   $PRTN
+     C*
+     C* Get out if a valid command wasn't sent to us.
+     C*
+     C           $PCMD     IFNE '*POSTINV'
+     C           $PCMD     ANDNE'*RESTART'
+     C                     MOVE '*ERROR  '$PRTN
+     C                     GOTO ENDPGM
+     C                     END
+     C*
+     C* Go and pick the orders.
+     C*
+     C                     EXSR POST
+     C                     MOVE $RETRN    $PRTN
+     C*
+     C* If error occured during picking display error screen.
+     C*
+     C           $RETRN    IFEQ '*ERROR  '
+     C******               MOVE $MSGID    #MSGK
+     C                     EXSR ZMQMSG
+     C                     EXSR ZMDMSG
+     C                     MOVE *ON       *IN98
+     C           $PJOBQ    IFNE 'Y'
+     C                     EXFMTSCREEN2
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C* End of the picking process.
+     C*
+     C           ENDPGM    TAG
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+520aAC*
+520aAC* Get client id.
+520aAC*
+520aAC                     CALL @GETCL
+520aAC                     PARM           CLIENT 10
+520aAC*
+     C*
+     C*  Initialize variables
+     C*
+     CSR                   MOVE *BLANKS   $RETRN  8
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+408 AC*  Define keys.
+408 AC*
+408 AC*    INVSLOT file (Partial key)
+     C*
+408 ACSR         KEYIVS    KLIST
+408 ACSR                   KFLD           $PWHSE
+414 AC*
+414 AC*  Define key for options file.
+414 AC*
+414 ACSR         KEYOP     KLIST
+414 ACSR                   KFLD           OPWHSE
+414 ACSR                   KFLD           OPCODE
+414 AC*
+414 AC*   Get FTP options from options file.
+414 AC*
+414 ACSR                   Z-ADD0         OPWHSE
+414 ACSR                   MOVE '*FTP    'OPCODE
+414 ACSR         KEYOP     CHAINOPTIONS              79
+414 ACSR         *IN79     IFEQ *ON
+414 ACSR                   MOVE 'N'       OPFTP
+414 ACSR                   ENDIF
+     C*
+     C*
+     C*  Open workstation file if not on JOBQ.
+     C*
+     CSR         $PJOBQ    IFNE 'Y'
+     CSR                   OPEN IV505FM
+     CSR                   EXSR ZMCPMQ
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  POST    Post inventory counts.
+     C*
+     CSR         POST      BEGSR
+     C*
+     CSR                   MOVE *OFF      BFLAG   1
+     CSR                   MOVE *BLANKS   $RETRN
+     C*
+     C*      Display informational screen.
+     C*
+     CSR         $PJOBQ    IFNE 'Y'
+     CSR                   WRITESCREEN1
+     CSR                   ENDIF
+     C*
+     C*      Create summary of records in INVSLOT file.
+     C*
+408 AC*      Get Partial export, aisle items only option in INVSLOT.
+408 AC*
+408 AC           KEYIVS    SETLLINVSLOT
+408  C*          FOREVR    DOUNEFOREVR
+     C*
+408 AC           KEYIVS    READEINVSLOT                  79
+408 AC           *IN79     IFEQ *OFF
+408 AC                     MOVE IVSPEX    $PPEXP
+414aAC                     MOVE IVSADJ    $PADJ
+408 AC                     ELSE
+408 AC                     MOVE 'N'       $PPEXP
+414aAC                     MOVE 'N'       $PADJ
+408 AC                     ENDIF
+     C*
+     C*
+     C*
+     C*      If this is not a restart then start at phase 1.
+     C*
+     C           $PCMD     CABNE'*RESTART'PHASE1
+     C*
+     C*      Otherwise, skip to the phase where the restarted batch
+     C*      left off.
+     C*
+     CSR         $PSTAT    CABEQ'1'       PHASE1
+600aDC**         $PSTAT    CABEQ'6'       PHASE6
+     CSR         $PSTAT    CABEQ'2'       PHASE2
+413 ACSR         $PSTAT    CABEQ'3'       PHASE3
+413 ACSR         $PSTAT    CABEQ'4'       PHASE4
+413 ACSR         $PSTAT    CABEQ'5'       PHASE5
+     C*
+     C*     Phase 1 - Update slot records
+     C*
+     CSR         PHASE1    TAG
+     CSR                   MOVE '1'       STAT    1
+     CSR                   EXSR UPDCTL
+     C**                   EXSR ZM21
+     CSR                   CALL 'IV510'
+     CSR                   PARM           $PCMD
+     CSR                   PARM           $PBAT
+     CSR                   PARM           $PWHSE
+416  CSR                   PARM           $PWHDP
+     CSR                   PARM           $PJOBQ
+     CSR                   PARM           $RETRN  8
+408 ACSR                   PARM           $PPEXP  1
+     CSR         $RETRN    CABEQ'*ERROR  'SKIP1
+600aDC**
+600aDC**    Phase 6 - Update lichist records
+600aDC**
+600aDC**         PHASE6    TAG
+600aDC**                   MOVE '6'       STAT    1
+600aDC**                   EXSR UPDCTL
+500 AC**                   EXSR ZM21
+600aDC**         CLIENT    IFEQ 'JORDANOS'
+600aDC**                   CALL 'IV515'
+600aDC**                   PARM           $PCMD
+600aDC**                   PARM           $PBAT
+600aDC**                   PARM           $PWHSE
+600aDC**                   PARM           $PWHDP
+600aDC**                   PARM           $PJOBQ
+600aDC**                   PARM           $RETRN  8
+600aDC**                   PARM           $PPEXP  1
+600aDC**         $RETRN    CABEQ'*ERROR  'SKIP1
+600aDC**                   ENDIF
+     C*
+     C*     Phase 2 - Updating warehouse totals.
+     C*
+     CSR         PHASE2    TAG
+     CSR                   MOVE '2'       STAT
+     CSR                   EXSR UPDCTL
+     C**                   EXSR ZM22
+414aACSR         $PADJ     IFEQ ' '
+     CSR                   CALL 'IV520'
+     CSR                   PARM           $PCMD
+     CSR                   PARM           $PBAT
+     CSR                   PARM           $PWHSE
+     CSR                   PARM           $PJOBQ
+     CSR                   PARM           $RETRN  8
+408 ACSR                   PARM           $PPEXP  1
+     CSR         $RETRN    CABEQ'*ERROR  'SKIP1
+414aACSR                   ENDIF
+     C*
+413 AC*     Phase 3 - Move records to history files
+     C*
+     CSR         PHASE3    TAG
+     CSR                   MOVE '3'       STAT
+     CSR                   EXSR UPDCTL
+     CSR                   EXSR ZM04
+     CSR                   CALL 'IV540'
+500 AC                     PARM           $PCMD
+     CSR                   PARM           $PWHSE
+416a CSR                   PARM           $PWHDP
+414 AC*
+414 AC*     Skip FTP phases if not using FTP import/export
+414 AC*
+414 ACSR         OPFTP     CABNE'Y'       SKIP1
+414aAC*     Skip FTP phases if doing aisle cycle count.
+414aACSR         $PADJ     CABNE' '       SKIP1
+     C*
+413 AC*     Phase 4 - Create FTP export file (optional)
+     C*
+     CSR         PHASE4    TAG
+     CSR                   MOVE '4'       STAT
+     CSR                   EXSR UPDCTL
+     CSR                   EXSR ZM04
+     CSR                   MOVE $PWHSE    $PWHSA  3
+     CSR                   CALL 'IV530CL'
+     CSR                   PARM           $PWHSA
+     CSR                   PARM           $RETRN
+     CSR         $RETRN    CABEQ'*ERROR  'SKIP1
+     C*
+413 AC*     Phase 5 - Export via FTP (optional)
+     C*
+     CSR         PHASE5    TAG
+     CSR                   MOVE '5'       STAT
+     CSR                   EXSR UPDCTL
+     CSR                   EXSR ZM05
+     CSR                   MOVE $PWHSE    $PWHSA  3
+     CSR                   CALL 'IV531CL'
+     CSR                   PARM           $PWHSA
+     CSR                   PARM           $RETRN
+     CSR         $RETRN    CABEQ'*ERROR  'SKIP1
+     C*
+     CSR         SKIP1     TAG
+     C*
+     C*  Mark batch as finished if no error occured.
+213 AC*  Clear inventory work files if no error occured.
+     C*
+     CSR         $RETRN    IFNE '*ERROR  '
+     CSR         BFLAG     ANDEQ*ON
+     CSR                   MOVE '9'       STAT
+     CSR                   EXSR UPDCTL
+213 ACSR                   EXSR ZZUPD
+     CSR                   ENDIF
+     C*
+     CSR         ENDPST    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UPDCTL  Update batch control record. Lock it if necessary.
+     C*
+     CSR         UPDCTL    BEGSR
+     C*
+     C*   If this is for phase1 and a new batch ...
+     C*
+     CSR         STAT      IFEQ '1'
+     CSR         $PCMD     ANDEQ'*POSTINV'
+     CSR         BFLAG     ANDEQ*OFF
+     C*
+     C*     - Get new batch number.
+     C*
+     CSR                   CALL 'PIRBAT#'
+     CSR                   PARM           $PBAT
+     C*
+     C*     - Create batch control record.
+     C*
+     CSR                   Z-ADD$PBAT     BTBAT#
+     CSR                   Z-ADD$PWHSE    BTWHSE
+     CSR                   MOVE '*POSTINV'BTTYPE
+     CSR                   MOVE STAT      BTSTAT
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    BTSTRD
+     CSR                   TIME           BTSTRT
+     CSR                   MOVE #USER     BTSTRB
+     CSR                   WRITEBTREC
+     CSR                   ELSE
+     C*
+     C*   Otherwise, update control record with current phase.
+     C*     - If finished then mark with time stamp.
+     C*
+     CSR         $PBAT     CHAINBTREC                79
+     CSR                   MOVE STAT      BTSTAT
+     CSR         STAT      IFEQ '9'
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    BTENDD
+     CSR                   TIME           BTENDT
+     CSR                   END
+     CSR                   UPDATBTREC
+     CSR                   END
+     C*
+     C*   Grab control record to let others know a batch is being
+     C*   processed unless, of course, we are finished.
+     C*
+     CSR         STAT      IFNE '9'
+     CSR         $PBAT     CHAINBTREC                79
+     CSR                   END
+     CSR                   MOVE *ON       BFLAG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+213 AC*
+213 AC*  ZZUPD    Clear inventory work files.
+213 AC*
+213 ACSR         ZZUPD     BEGSR
+213 AC*
+413 DC**                   CALL 'IV751'
+413 DC**                   PARM           $PWHSE
+213 AC*
+213 ACSR         ENDUPD    ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCPMQ  Clear program message queue.
+     C*
+     CSR         ZMCPMQ    BEGSR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR         $PJOBQ    IFNE 'Y'
+     CSR                   MOVE *ON       *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK    40
+413 DC**                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+413 DC**                   WRITEMSGREC
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*   IV50021  Updating slot quantities and item numbers
+     C*
+     CSR         ZM21      BEGSR
+     CSR                   MOVE 'IV50021' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEA*BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   EXSR ZMDMSG
+     CSR                   EXSR ZMCPMQ
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   IV50022  Updating slot status codes.
+     C*
+     CSR         ZM22      BEGSR
+     CSR                   MOVE 'IV50022' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEA*BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   EXSR ZMDMSG
+     CSR                   EXSR ZMCPMQ
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+413 AC*   IV50003  Export via FTP
+     C*
+     CSR         ZM03      BEGSR
+     CSR                   MOVE 'IV50003' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEA*BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   EXSR ZMDMSG
+     CSR                   EXSR ZMCPMQ
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+413 AC*   IV50004  Moving records to history
+     C*
+     CSR         ZM04      BEGSR
+     CSR                   MOVE 'IV50004' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEA*BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   EXSR ZMDMSG
+     CSR                   EXSR ZMCPMQ
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+413 AC*   IV50005  Moving records to history
+     C*
+     CSR         ZM05      BEGSR
+     CSR                   MOVE 'IV50005' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEA*BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   EXSR ZMDMSG
+     CSR                   EXSR ZMCPMQ
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  COMPILE TIME TABLES
+     O*

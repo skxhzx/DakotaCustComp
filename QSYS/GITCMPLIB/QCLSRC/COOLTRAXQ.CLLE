@@ -1,0 +1,138 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  COOLTRAX     Start Cooltrax program                              */
+/*  05 November 2013                                                 */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*  Revisions:                                                       */
+/*                                                                   */
+/*  11/05/13  DAS  6.50                                              */
+/*    - Created.                                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes                                                            */
+/*                                                                   */
+/*  Q&D program to start Cooltrax download program.                  */
+/*                                                                   */
+/*  Only way to stop program is to manually end it.                  */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ COOLTRAX:   PGM        PARM(&TYPE &MINA &OPT1 &OPT2 &OPT3 &OPT4 +
+                          &OPT5 &OPT6)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CHARSTAT)   TYPE(*CHAR)  LEN(10)
+             DCL        VAR(&CHARSIG)    TYPE(*CHAR)  LEN(10)
+             DCL        VAR(&CURDTMDY)   TYPE(*CHAR)  LEN(6)
+             DCL        VAR(&CURDTYYMD)  TYPE(*CHAR)  LEN(8)
+             DCL        VAR(&MINA)       TYPE(*CHAR)  LEN(4)
+             DCL        VAR(&MSGID)      TYPE(*CHAR)  LEN(7)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR)  LEN(256)
+             DCL        VAR(&OPT1)       TYPE(*CHAR)  LEN(1)
+             DCL        VAR(&OPT2)       TYPE(*CHAR)  LEN(1)
+             DCL        VAR(&OPT3)       TYPE(*CHAR)  LEN(1)
+             DCL        VAR(&OPT4)       TYPE(*CHAR)  LEN(1)
+             DCL        VAR(&OPT5)       TYPE(*CHAR)  LEN(1)
+             DCL        VAR(&OPT6)       TYPE(*CHAR)  LEN(1)
+             DCL        VAR(&QSHCMD)     TYPE(*CHAR)  LEN(256)
+             DCL        VAR(&RESULT)     TYPE(*CHAR)  LEN(4)
+             DCL        VAR(&SIGNAL)     TYPE(*DEC)   LEN(10 0)
+             DCL        VAR(&STATUS)     TYPE(*DEC)   LEN(10 0)
+             DCL        VAR(&STDOUT)     TYPE(*CHAR)  LEN(128)
+             DCL        VAR(&TOUCH)      TYPE(*CHAR)  LEN(256)
+             DCL        VAR(&TYPE)       TYPE(*CHAR)  LEN(4)
+
+/*-------------------------------------------------------------------*/
+/*  Mainline                                                         */
+/*-------------------------------------------------------------------*/
+
+  /* Get date to be used for file name */
+
+             RTVSYSVAL  SYSVAL(QDATE) RTNVAR(&CURDTMDY)
+             CVTDAT     DATE(&CURDTMDY) TOVAR(&CURDTYYMD) +
+                          FROMFMT(*MDY) TOFMT(*YYMD) TOSEP(*NONE)
+
+  /* Define QShell command */
+
+             CHGVAR     VAR(&QSHCMD) +
+                          VALUE('/CoolTrax/RunCoolTraxExtract' *CAT +
+                          &TYPE *TCAT '.sh ' *CAT &MINA *BCAT &OPT1 +
+                          *TCAT &OPT2 *TCAT &OPT3 *TCAT &OPT4 *TCAT +
+                          &OPT5 *TCAT &OPT6)
+
+  /* Create path / file name for QShell STDOUT */
+
+             CHGVAR     VAR(&STDOUT) VALUE('/CoolTrax/logs/' *CAT +
+                          &TYPE *TCAT '/qshell_stdout_' *CAT +
+                          &CURDTYYMD *TCAT '.log')
+
+  /* Physically create file with ASCII CCSID */
+
+             CHGVAR     VAR(&TOUCH) VALUE('touch -C 819 ' *CAT +
+                          &STDOUT)
+             QSH CMD(&TOUCH)
+
+  /* Set environment variable to receive back escape message */
+
+             ADDENVVAR  ENVVAR(QIBM_QSH_CMD_ESCAPE_MSG) VALUE(Y) +
+                          REPLACE(*YES)
+             MONMSG     MSGID(CPFA980) EXEC(DO)
+               RCVMSG     MSGTYPE(*EXCP) RMV(*YES)
+             ENDDO
+
+  /* Run script */
+
+             CHGVAR     VAR(&QSHCMD) VALUE(&QSHCMD *TCAT ' >> ' *CAT +
+                          &STDOUT)
+
+             QSH        CMD(&QSHCMD)
+
+  /* Catch errors */
+
+     /* From "Handling QShell Errors in a CL Program" +
+        By Scott Klement                              +
+     */
+     MONMSG MSGID(QSH0005 QSH0006 QSH0007) EXEC(DO)
+      RCVMSG  MSGTYPE(*LAST) RMV(*YES) MSGDTA(&MSGDTA) +
+                MSGID(&MSGID)
+
+      /* CPF0005 - QSHELL COMMAND ENDED "NORMALLY."  */
+      IF (&MSGID *EQ 'QSH0005') DO
+          CHGVAR VAR(&RESULT) VALUE(%SST(&MSGDTA 1 4))
+          CHGVAR VAR(&STATUS) VALUE(%BIN(&RESULT))
+          CHGVAR VAR(&SIGNAL) VALUE(0)
+      ENDDO
+
+     /* QSH0006 - QSHELL COMMAND ENDED WHEN IT RECEIVED A  +
+           SIGNAL.                                         */
+        IF (&MSGID *EQ 'QSH0006') DO
+           CHGVAR VAR(&RESULT) VALUE(%SST(&MSGDTA 1 4))
+           CHGVAR VAR(&SIGNAL) VALUE(%BIN(&RESULT))
+           CHGVAR VAR(&STATUS) VALUE(-1)
+        ENDDO
+
+     /* QSH0007 - QSHELL COMMAND ENDED DUE TO AN EXCEPTION,+
+          FOR EXAMPLE THE PROGRAM CRASHED WITH A CPF MSG.+
+     */
+        IF (&MSGID *EQ 'QSH0007') DO
+           CHGVAR VAR(&STATUS) VALUE(-1)
+           CHGVAR VAR(&SIGNAL) VALUE(-1)
+        ENDDO
+     ENDDO
+
+     IF (&STATUS *NE 0) THEN(DO)
+       CHGVAR VAR(&CHARSTAT) VALUE(&STATUS)
+       CHGVAR VAR(&CHARSIG) VALUE(&SIGNAL)
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) +
+                          MSGDTA('CoolTrax QShell command failed +
+                          with status ' *CAT &CHARSTAT *CAT ' and +
+                          signal ' *CAT &CHARSIG) TOUSR(*REQUESTER) +
+                          MSGTYPE(*ESCAPE)
+     ENDDO
+     /* End "Handling QShell Errors in a CL Program" excerpt */
+
+ ENDPGM:

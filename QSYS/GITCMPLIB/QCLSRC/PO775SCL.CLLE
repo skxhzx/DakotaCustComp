@@ -1,0 +1,147 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2014 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PO775SCL   Stage Export - P.O. Smartdock Appointments            */
+/*  27 June 2014                                                     */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*                                                                   */
+/*    06/27/14  RTR  6.50                                            */
+/*      - Created from PO726SCL.                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions:                                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &WHSE   -  Warehouse                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*   This program will call a program to process the completed       */
+/*   Smartdock PO Appointments.  The appt's will be written into     */
+/*   EXPSPOSD. Next, the exported appt's will be extracted and       */
+/*   placed into a shared folder for pickup and processing by the    */
+/*   folder in the IFS for pickup and processing by the Host.        */
+/*   The EXPFPOSD file will be uniquely named so that they will      */
+/*   not be overwritten by subsequent export processes.              */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ PO775SCL:    PGM        PARM(&WHSE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Export program. */
+
+             DCL        VAR(&EXPPGM) TYPE(*CHAR) LEN(8) +
+                          VALUE(PO755S)
+
+  /* Message queues */
+
+             DCL        VAR(&FTPMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPPO')
+             DCL        VAR(&FTPERRMSGQ) TYPE(*CHAR) LEN(10) +
+                          VALUE('EXPPOERR')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&ERRCNT)     TYPE(*DEC)  LEN(1 0)
+             DCL        VAR(&EXIST)      TYPE(*LGL)
+             DCL        VAR(&EXPTYPE)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&EXPFLAG)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&FINISHED)   TYPE(*LGL)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&MSGKEY)     TYPE(*CHAR) LEN(4)
+             DCL        VAR(&PGM)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&QUOTE)      TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&RECS)       TYPE(*DEC)  LEN(10 0)
+             DCL        VAR(&RTN)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+             CHGVAR     VAR(&FINISHED) VALUE('0')
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+             CHGVAR     VAR(&PGM) VALUE('PO775SCL')
+
+/* Get job information */
+
+             RTVJOBA    JOB(&JOB) USER(&USER) TYPE(&TYPE)
+
+             RMVMSG     CLEAR(*ALL)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Exporting smartdock appts into +
+                          staging file. ') TOPGMQ(*EXT) +
+                          MSGTYPE(*STATUS)
+
+/*  Call program to move adjustments to staging file. */
+
+             OVRDBF     FILE(STGBATCH) TOFILE(STGBATCH) FRCRATIO(1)
+             OVRDBF     FILE(EXPSPOSD) TOFILE(EXPSPOSD) FRCRATIO(1)
+             CALL       PGM(PO775S) PARM(&WHSE)
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+
+             RMVMSG     CLEAR(*ALL)
+
+             RETURN
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+             OVRPRTF    FILE(QPJOBLOG) OUTQ(BFCEXCP)
+             DSPJOBLOG  OUTPUT(*PRINT)
+
+ BOTTOM:
+
+             IF COND(&TYPE = '0') THEN(DO)
+
+               RCLRSC     LVL(*CALLER)
+
+        /*  Send '*Escape' message to caller */
+
+               IF COND(&FINISHED = '0') THEN(DO)
+                 SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Error Occured Processing Member' +
+                          *BCAT &MBR) MSGTYPE(*ESCAPE)
+               ENDDO
+
+             ENDDO
+
+             ENDPGM

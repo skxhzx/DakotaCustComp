@@ -1,0 +1,386 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  RL342     Print Letdown/Replenishment transactions by slot
+     F*  Roxanne Harrison
+     F*  22 April, 2004
+     F*
+     F*  02/22/04  RH  4.17
+     F*  - Created using ER341
+     F*
+     F*  Revisions
+520 A*    10/20/08  RH  5.20A
+     *      - Re-compile, added item # to RL342PR
+     F*
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRL342   IP  E           K        DISK
+     FRL341   IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FPIRUSER1IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FRL342PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        3  7 0
+     E                    LVLK        3  7 0
+     E                    A22        22  1
+     E                    DTE     1   4 22
+     E*
+     I*----------------------------------------------------------------
+     IWKREC
+     I                                              WKWHDPL2
+     I                                              WKDSP2L1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Date redefinition data structure
+     I*
+     I$PFMDT      DS
+     I                                        1   2 $PFMCC
+     I                                        3   4 $PFMYY
+     I                                        5   6 $PFMMM
+     I                                        7   8 $PFMDD
+     I$PTODT      DS
+     I                                        1   2 $PTOCC
+     I                                        3   4 $PTOYY
+     I                                        5   6 $PTOMM
+     I                                        7   8 $PTODD
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE  3
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PREPL  3
+     C                     PARM           $PFMDT  8
+     C                     PARM           $PTODT  8
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C           *IN90     IFEQ '1'
+     C           FIRST     OREQ *ON
+     C**         *INL1     OREQ '1'
+     C**                   EXSR ZRZERO
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  L2 break - DEPT change.
+     C*
+     C           *INL2     IFEQ '1'
+     C                     Z-ADD2         L
+     C                     EXSR ZRZERO
+     C           FIRST     IFEQ *OFF
+     C                     MOVE '1'       *IN92
+     C                     ENDIF
+     C                     END
+     C*
+     C*  L1 break - SLOT change.
+     C*
+     C           *INL1     IFEQ '1'
+     C                     MOVE '1'       *IN91
+     C                     Z-ADD1         L
+     C                     EXSR ZRZERO
+     C                     END
+     C*
+     C*
+     C*  Output Headings
+     C*
+     C           *IN92     IFEQ *ON
+     C           *INL2     OREQ *ON
+     C*
+     C*          FIRST     IFEQ *ON
+     C*          DETKEY    SETLLRL341
+     C*          DETKEY    READERL341                    78
+     C*          *IN78     IFEQ *ON
+     C*                    MOVE *BLANKS   PTWHDP
+     C*                    ENDIF
+     C*                    ENDIF
+     C*
+     C                     WRITEDPHEAD
+     C*
+     C                     WRITECOLUMNS
+     C                     ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*
+     C           DETKEY    SETLLRL341
+     C           STOP      DOUEQ*ON
+     C           DETKEY    READERL341                    78
+     C           *IN78     IFEQ *ON
+     C                     MOVE *ON       STOP
+     C                     ELSE
+     C*  Write detail line
+     C           PTEMP#    CHAINPIRUSER1             79
+     C           *IN79     IFEQ *OFF
+     C                     MOVE '*LFM    '$CMD    8
+     C                     MOVE *BLANKS   $NAME  40
+     C                     CALL 'FRMTNM'
+     C                     PARM           $CMD
+     C                     PARM           USFNAM
+     C                     PARM           USINIT
+     C                     PARM           USLNAM
+     C                     PARM           $NAME
+     C                     MOVEL$NAME     WKNAME 40
+     C                     ELSE
+     C                     MOVE *BLANKS   WKNAME
+     C                     ENDIF
+     C*
+     C           PTSDTE    IFGT 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE PTSDTE    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    W1SDTE
+     C                     ELSE
+     C                     Z-ADD0         W1SDTE
+     C                     ENDIF
+     C                     Z-ADDPTSTIM    W1STIM
+     C*
+     C           PTEDTE    IFGT 0
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE PTEDTE    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    W1EDTE
+     C                     ELSE
+     C                     Z-ADD0         W1EDTE
+     C                     ENDIF
+     C                     Z-ADDPTETIM    W1ETIM
+     C*
+     C                     WRITEDETAIL1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         SLCNT
+     C                     ADD  1         COUNT
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE '0'       *IN91
+     C                     MOVE '0'       *IN92
+     C                     MOVE *OFF      FIRST
+     C                     MOVE *OFF      STOP    1
+     C                     ENDIF
+     C                     ENDDO
+     C*----------------------------------------------------------------
+     C*
+     C* Slot totals
+     C*
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     CL1                   Z-ADDSLCNT     TRNCNT
+     CL1                   WRITETOTAL1
+     CL1                   Z-ADD0         SLCNT
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Department totals
+     C*
+     CL2                   Z-ADD2         L
+     CL2                   EXSR ZRROLL
+     CL2                   Z-ADDCOUNT     TRNCNT
+     CL2                   WRITETOTAL1
+     CL2                   Z-ADD0         COUNT
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD2         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   END
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR         RPKEY     KLIST
+     CSR                   KFLD           WKPRTF 10
+     C*   Query key
+     CSR         DETKEY    KLIST
+     CSR                   KFLD           WKWHDP
+     CSR                   KFLD           WKDSP2
+     C*
+     C*   Get report title.
+     C*
+     CSR                   MOVEL'RL342PR 'WKPRTF
+     CSR                   MOVE *BLANKS   RPTTTL
+     C                     MOVE *BLANKS   $PSTR
+     CSR         RPKEY     CHAINREPORTS              79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVELRPDESC    $PSTR  60
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR                   ENDIF
+     CSR                   Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR
+     CSR                   PARM           $PLEN
+     CSR                   MOVEL$PSTR     RPTTTL
+     C*
+     C*  Format date range
+     C*
+     C                     SELEC
+     C           $PFMDT    WHNE *BLANKS
+     C           $PTODT    ANDNE*BLANKS
+     C                     MOVEADTE,1     A22
+     C                     MOVEA$PFMMM    A22,1
+     C                     MOVEA$PFMDD    A22,4
+     C                     MOVEA$PFMYY    A22,7
+     C                     MOVEA$PTOMM    A22,15
+     C                     MOVEA$PTODD    A22,18
+     C                     MOVEA$PTOYY    A22,21
+     C                     MOVEAA22       DTERNG
+     C*
+     C           $PFMDT    WHNE *BLANKS
+     C                     MOVEADTE,2     A22
+     C                     MOVEA$PFMMM    A22,11
+     C                     MOVEA$PFMDD    A22,14
+     C                     MOVEA$PFMYY    A22,17
+     C                     MOVEAA22       DTERNG
+     C*
+     C           $PTODT    WHNE *BLANKS
+     C                     MOVEADTE,3     A22
+     C                     MOVEA$PTOMM    A22,11
+     C                     MOVEA$PTODD    A22,14
+     C                     MOVEA$PTOYY    A22,17
+     C                     MOVEAA22       DTERNG
+     C*
+     C                     OTHER
+     C                     MOVEADTE,4     DTERNG
+     C*
+     C                     ENDSL
+     C*
+     C                     MOVE $PREPL    REPL#   30
+     CSR                   TIME           TIME
+     CSR                   Z-ADD0         COUNT   30
+     CSR                   Z-ADD0         SLCNT   30
+     C                     MOVE *ON       FIRST   1
+     CSR                   Z-ADD1         L       10
+     CSR                   EXSR ZRZERO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C           *INL1     IFEQ '0'
+     C                     MOVE '1'       *IN91
+     C                     END
+     C*
+     CSR         *INL2     IFEQ '0'
+     CSR                   MOVE '1'       *IN92
+     CSR                   END
+     C*
+     C                     MOVE '0'       *IN90
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE   50
+     C                     MOVE *BLANKS   $PSTR
+     C           PTWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C                     WRITEHEAD1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C           L         IFEQ 1
+     C*                    WRITETOTAL1
+     C                     END
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*
+**      DTE   Date headings
+99/99/99 thru 99/99/99
+     From 99/99/99
+     Thru 99/99/99
+

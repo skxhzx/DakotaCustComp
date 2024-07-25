@@ -1,0 +1,525 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT111     Item maintenance - Item Type Prompt
+     F*  14 June 1999
+     F*  Kenneth Elder
+     F*
+     F*  Revisions
+     F*
+416 AF*   11/09/01  HNK  4.16
+     F*     - Removed initialization of $PXFLG. Left it alone so it
+     F*       is just passed to the next program. $PXFLG identifies
+     F*       if the extended description is being used or not.
+     F*     - Initialize NXTSCR.
+510 AF*   11/28/06  RH   5.10
+     F*     - Disable type 'C'contract item.
+510bAF*   01/24/07  TLJ  5.10b
+510bAF*     - Added Item Type 'R' for Repack Items.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  01 - 20   FIELD POSITION TO
+     F*  21 - 40   FIELD INPUT ERROR (REVERSE DISPLAY)
+     F*  90        VIEW MODE (PROTECT INPUT FIELDS)
+     F*  91        CHANGE MODE (PROTECT KEY)
+     F*  97        ALWAYS ON (USED FOR SFLEND KEYWORD)
+     F*  98        ERROR ON SCREEN (SOUND BUZZER)
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT111FM CF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        MSGK  KSFILE MSGREC
+     FPIRITEM IF  E           K        DISK
+     F            ITREC                             KRENAMERECORD
+     E                    $MD       128  1
+     E                    DESC    1   1 20
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I                                       37  37 $PXFLG
+     I                                      137 137 $PITPE
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  36 $PITEM
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                    P   1   32ERULEN
+     I                                    P   4   62ERUWDT
+     I                                    P   7   92ERUHGT
+     I                                    P  10  133ERCALC
+     I                                    P  14  173ERCUBE
+     I                                    P  18  222ERCDIV
+     I                                    P  23  241ERCRNG
+     I                                    P  25  284ERMAX
+     I*
+     I                                        1  30 ERFLD
+     I                                       31  40 ERFROM
+     I                                       41  50 ERTO
+     I*
+     I                                        1  15 ERITEM
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'IT112'               C         @BLKPG
+     I              'IT112A'              C         @OTHPG
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  WORKSTation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *ADD     - Create new record.
+     C*              *CHANGE  - Change item record
+     C*              *VIEW    - View record.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains unique key for everything but *ADD.
+     C*
+     C*    Returned Parameters
+     C*      $PUKY   Contains new unique key for *ADD.
+     C*              Unchanged for everything else.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *ON       *IN97
+     C                     MOVE *OFF      *IN90
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      ERROR
+     C                     MOVE *OFF      SC2FLG  1
+     C                     MOVE *OFF      SC3FLG  1
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+416 DC**                   MOVE '0'       $PXFLG
+416 AC                     MOVE *BLANKS   NXTSCR
+     C                     EXSR SCR01I
+     C           ERROR     IFEQ *ON
+     C                     MOVE 'EOJ'     NXTSCR
+     C                     END
+     C*
+     C           NXTSCR    DOWNE'EOJ'
+      * If change or view, call IT112 program based on type passed.
+     C           $PCMD     IFEQ '*CHANGE'
+     C           $PCMD     OREQ '*VIEW  '
+     C           $PCMD     OREQ '*WORKTIE'
+      *
+     C                     MOVEL*BLANKS   $PRTN
+     C           $PITPE    IFEQ ' '
+     C           $PITPE    OREQ 'B'
+510bAC           $PITPE    OREQ 'R'
+     C                     CALL @BLKPG
+     C                     PARM           $PARMS
+     C                     ELSE
+     C                     CALL @OTHPG
+     C                     PARM           $PARMS
+     C                     ENDIF
+     C                     MOVEL'EOJ'     NXTSCR
+      *
+     C                     ELSE
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+     C                     END
+     C                     END
+     C                     END
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     EXSR ZSCLR
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ *ON
+     CSR                   MOVE *ON       *IN98
+     CSR                   END
+     C*
+     C*   Overlay screen with error messages
+     C*
+     C                     EXSR ZMDMSG
+     C*
+     C*  Overlay screen with screen to be processed.
+     C*
+     CSR         NXTSCR    IFEQ '01 '
+     CSR                   EXFMTSCREEN1                50
+     CSR                   ENDIF
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     01
+     CSR                   SETOF                     70
+     CSR                   SETOF                     98
+     CSR                   MOVE *OFF      WARN    1
+     CSR                   MOVE *OFF      ERROR   1
+     CSR                   MOVE *OFF      CMDTKN  1
+     CSR                   Z-ADD0         E       20
+     C*
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     Screen initialization and wrap-up routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 01 initialization
+     C*
+     CSR         SCR01I    BEGSR
+416 DC**         $PXFLG    IFEQ '0'
+     CSR                   MOVE '01 '     NXTSCR  3
+416 DC**                   ENDIF
+     C*
+     CSR         $PCMD     IFEQ '*VIEW   '
+     CSR         $PCMD     OREQ '*CHANGE '
+     CSR         $PCMD     OREQ '*WORKTIE'
+     CSR                   MOVE *ON       *IN90
+     CSR                   ENDIF
+     C*
+     C*     Get field defaults if this is an add.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   MOVE W1TYPE    $PITPE
+     CSR                   EXSR ZZDFT1
+     CSR                   END
+     CSR                   MOVE *OFF      REFRSH  1
+     CSR                   MOVE *OFF      OVRRID  1
+     CSR         FILEKY    CHAINPIRITEM              79
+510bACSR         $PCMD     IFEQ '*VIEW   '
+510bACSR         $PCMD     OREQ '*CHANGE '
+510bACSR         $PCMD     OREQ '*WORKTIE'
+510bACSR                   MOVE ITTYPE    $PITPE
+510bACSR                   ENDIF
+     CSR         END01I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen 1
+     C*
+     CSR         SC1       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*     Check input FOR ADDS
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   EXSR ZZCHK1
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR                   EXSR ZZUPD1
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR                   END
+      *
+KDE  CSR         W1TYPE    IFEQ ' '
+KDE  CSR         W1TYPE    OREQ 'B'
+510bACSR         W1TYPE    OREQ 'R'
+KDE  CSR                   CALL @BLKPG
+KDE  CSR                   PARM           $PARMS
+KDE  CSR                   ELSE
+KDE  CSR                   CALL @OTHPG
+KDE  CSR                   PARM           $PARMS
+KDE  CSR                   ENDIF
+     C*
+KDE  CSR         $PITPE    IFEQ 'X'
+KDE  CSR                   MOVEL'EOJ'     NXTSCR
+KDE  CSR                   ENDIF
+     C*
+     CSR         ENDSC1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01122     ROLLUP  50
+     C                     Z-ADD01123     ROLLDN  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE *ON       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     CSR                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*      0105
+     C*
+     CSR         ZM0123    BEGSR
+     CSR                   MOVE 'PIR0123' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+510a C*
+510a CSR         ZM1001    BEGSR
+510a CSR                   MOVE 'PIR1001' #MSGID
+510a CSR                   MOVE '*DIAG  ' #MSGTP
+510a CSR                   MOVEAERRMSG    $MD,1
+510a CSR                   EXSR ZMPMSG
+510a CSR                   ENDSR
+510a C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK1   Screen 1 error checking.
+     C*
+     CSR         ZZCHK1    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  When adding ....
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     C*
+     C*    Make sure code was entered.
+     C*
+     CSR         W1TYPE    IFNE *BLANKS
+     CSR         W1TYPE    ANDNE'A'
+     CSR         W1TYPE    ANDNE'B'
+510aDC***        W1TYPE    ANDNE'C'
+     CSR         W1TYPE    ANDNE'S'
+510bACSR         W1TYPE    ANDNE'R'
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+510a CSR                   MOVEADESC,1    ERRMSG
+510aMCSR                   EXSR ZM1001
+510aDC**                   EXSR ZM0123
+     CSR                   END
+     CSR                   END
+     C*
+     CSR         ENDCK1    ENDSR
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDFT1   Get default values for add.
+     C*
+     CSR         ZZDFT1    BEGSR
+     CSR                   MOVE *BLANKS   W1TYPE
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL1   Fill screen 1 fields with info from file.
+     C*
+     CSR         ZZFIL1    BEGSR
+     CSR         *LIKE     DEFN ITITEM    SVITEM
+     CSR                   MOVE *BLANKS   SVITEM
+     CSR                   MOVE *BLANKS   W1TYPE
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     C*
+     C*  Define key for main file.
+     C*
+     CSR         FILEKY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD1   Update for screen 1.
+     C*
+     CSR         ZZUPD1    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*   Move screen type to parm list
+     C*
+     CSR                   MOVE W1TYPE    $PITPE
+     CSR         ENDUP1    ENDSR
+**
+Item type

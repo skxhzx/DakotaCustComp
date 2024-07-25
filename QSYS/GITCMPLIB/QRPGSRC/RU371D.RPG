@@ -1,0 +1,192 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 Roosevelt Rd.  Bldg 8, Suite 51
+     F*   WEST CHICAGO, IL 60158
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*  RU371D    Cleared flags - File clean up.
+     F*  December 6,2007
+     F*  Jose Duque
+     F*
+     F*  Revisions:
+     F*
+520 AF*    06/17/09  RBD  5.20
+     F*      - Removed hardcoding of start and end times, will use
+     F*        new pgm GETLOARNG instead to retrieve *LOADER options.
+     F*      - Added call to GETWHSE.
+     F*      - Enh: Added client custom code support to program.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Cheney
+     F*
+CBI AF*    06/17/09  CBI
+     F*      - Coded special produce items logic as specific to Cheney.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRUNCPY  IF  E           K        DISK
+     F*
+     FLABEL   IF  E           K        DISK
+     F*
+     FFLGTYP  UF  E           K        DISK
+     F*
+     FRU372   O   E           K        DISK
+     F*
+     I*----------------------------------------------------------------
+520 AI*  Client ID's
+     I*
+CBI A /COPY QCOPYSRC,IL#CHENEY
+     I*
+520 AI              'GETCLIENT'           C         @GETCL
+     I*----------------------------------------------------------------
+     I*
+     I*  Data structures for time calculation
+     I            DS
+     I                                        1  12 RUDISP
+     I                                        1   2 PREFIX
+     I                                        3  12 REST
+     I*
+     I*----------------------------------------------------------------
+     I*  Constants
+     I*
+520 AI              'GETLOARNG'           C         GETLOA
+      *----------------------------------------------------------------
+520 AI*  Program info data structure
+520 AI*
+520 AI           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I*----------------------------------------------------------------
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PFDTE  8
+     C                     PARM           $PTDTE  8
+     C*
+520 AC*      Get warehouse for user.
+     C*
+520 AC                     CALL 'GETWHSE'
+520 AC                     PARM           #USER
+520 AC                     PARM 0         #WHSE   30
+      *
+520 AC*      Get loader start and end times.
+     C*
+520 AC                     CALL GETLOA
+520 AC                     PARM           #WHSE
+520 AC                     PARM 0         STIME   60
+520 AC                     PARM 0         ETIME   60
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C                     READ RUREC                    LR
+     C*
+     C           *INLR     DOWNE*ON
+      *
+      *  Skip records that do not fall within shift schedule.
+520 AC                     MOVE RUODTT    NUMTIM  60
+     C           RUODTD    IFEQ $PFDTE
+520 MC           NUMTIM    ANDLTSTIME
+     C                     GOTO BYPASS
+     C                     ENDIF
+      *
+     C           RUODTD    IFEQ $PTDTE
+520 MC           NUMTIM    ANDGTETIME
+     C                     GOTO BYPASS
+     C                     ENDIF
+      *
+CBI AC           CLIENT    IFEQ CHENEY
+      *
+      *  Identify Produce item within CLR and DRY depts.
+      *
+     C                     SELEC
+      *
+     C           RUWHDP    WHEQ 'CLR'
+     C                     MOVEL'CLR   '  DEPTPI
+      *
+     C           RULBL#    CHAINLABEL                79
+     C           *IN79     IFEQ *OFF
+      *
+     C           LBITEM    IFGE '405000'
+     C           LBITEM    ANDLE'492999'
+     C                     MOVEL'PRD  '   RUWHDP
+     C           PREFIX    IFEQ 'CT'
+     C                     MOVEL'PRDPIR'  DEPTPI
+     C                     ELSE
+     C                     MOVEL'PRD   '  DEPTPI
+     C                     ENDIF
+     C                     ELSE
+     C           PREFIX    IFEQ 'CX'
+     C           PREFIX    OREQ 'CY'
+     C                     MOVEL'CLRPIR'  DEPTPI
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C                     ENDIF
+      *
+     C           RUWHDP    WHEQ 'DRY'
+     C                     MOVEL'DRY   '  DEPTPI
+      *
+     C           RULBL#    CHAINLABEL                79
+     C           *IN79     IFEQ *OFF
+      *
+     C           LBITEM    IFGE '405000'
+     C           LBITEM    ANDLE'492999'
+     C                     MOVEL'PRD  '   RUWHDP
+     C           PREFIX    IFEQ 'CT'
+     C                     MOVEL'PRDPIR'  DEPTPI
+     C                     ELSE
+     C                     MOVEL'PRD   '  DEPTPI
+     C                     ENDIF
+     C                     ELSE
+     C           PREFIX    IFEQ 'DX'
+     C           PREFIX    OREQ 'DY'
+     C                     MOVEL'DRYPIR'  DEPTPI
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C                     ENDIF
+      *
+     C           RUWHDP    WHEQ 'FRZ'
+     C                     MOVEL'FRZ   '  DEPTPI
+      *
+     C           PREFIX    IFEQ 'FX'
+     C           PREFIX    OREQ 'FY'
+     C                     MOVEL'FRZPIR'  DEPTPI
+     C                     ENDIF
+     C                     ENDSL
+      *
+CBI AC                     ENDIF
+      *
+     C                     WRITERUREC2
+     C*
+     C           BYPASS    TAG
+     C                     READ RUREC                    LR
+     C                     ENDDO
+     C*
+     C                     READ FLGREC                   LR
+     C*
+     C           *INLR     DOWNE*ON
+     C                     MOVEL$PFDTE    FFROM
+     C                     MOVEL$PTDTE    FTO
+     C                     UPDATFLGREC
+     C*
+     C                     READ FLGREC                   LR
+     C                     ENDDO
+      *
+     C*----------------------------------------------------------------
+     C*
+520 AC*  *INZSR  Initialization subrotine
+     C*
+520 AC           *INZSR    BEGSR
+     *
+520 A*  Get Client ID
+     *
+520 AC                     CALL @GETCL
+520 AC                     PARM           CLIENT 10
+     C*
+520 AC                     ENDSR
+     C*
+     C*----------------------------------------------------------------

@@ -1,0 +1,1099 @@
+     F********************************************************************
+     F*   Copyright (C) 1991 BFC Software, Inc. - All Rights Reserved    *
+     F*   BFC Software, Inc.                                             *
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108                           *
+     F*   Glen Ellyn, IL  60137                                          *
+     F*   (312) 790-8383                                                 *
+     F********************************************************************
+     F*
+     F*  FSI100    Food Star interface to update Home slot quantities.
+     F*  Hemant Kapadia
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+415 AF*    11/23/00  HNK
+     F*      - Created
+     F*
+415aAF*    04/02/01  DAS
+     F*      - Moved some code out of *INZSR into ZZCHEK
+     F*
+C001 F*    04/03/01  Larry Emery
+     F*      - Corrected problem with trying to call WH900.
+     F*        Lines corrected for this change are documented here
+     F*        but Larry has not documented in their version at
+     F*        Victoria.
+     F*
+415bAF*    04/10/01  HNK
+     F*      - Disable check against pick slot qty.(Per Paul M.)
+     F*        This will let the pick slot go to negative, and when
+     F*        letdown is done to this slot, it will be corrected.
+     F*
+415cAF*    07/24/01  HNK
+     F*      - Cleaned up program by deleting NEWQT's because they are
+     F*        not used.
+     F*      - Revised to fulfill breakdown quantity from normal qty
+     F*        for both slot and warehouse quantities.
+530aA*    12/07/09  RH   5.30a
+     *      - Add Designation code to parms for CHKSTAT.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPIRITEM IF  E           K        DISK
+     FSLOT2   UF  E           K        DISK
+     FSLOT3   IF  E           K        DISK
+     F            SLREC                             KRENAMERECORD
+     FITEMQTY IF  E           K        DISK
+     FITEMLNK IF  E           K        DISK
+C001AFWAREHS  IF  E           K        DISK
+     FITEMADJ O   E           K        DISK                      A
+     FLABEL   O   E           K        DISK                      A
+     FFSIFACE O   E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A5          5  1
+     E                    A6          6  1
+     E                    A9          9  1
+     E                    A40        40  1
+     E                    $MD       128  1
+     E                    DESC    1  13 50
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I* Program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  26 $LWHDP
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$AERM       DS
+     I                                        1  60 XAERM
+     I                                        1   4 $AMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1   6 ERRDTE
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*
+     I*  Input parameters
+     I*
+     I*     $PCODE   -  Transaction code
+     I*                 IV - Invoicing, decrease quantity
+     I*                 CR - Credits, increase quantity.
+     I*     $PWHSE   -  Warehouse
+     I*     $PWHDP   -  Department (Optional)
+     I*     $PISLT   -  Slot sentby Food Star
+     I*     $PITEM   -  Item number
+     I*     $PQTY1   -  Normal quantity
+     I*     $PQTY2   -  Brk1 quantity
+     I*     $PQTY3   -  Brk2 quantity
+     I*
+     I*  Output parameters
+     I*
+     I*     $PRTN    -  Return code
+     I*              *OK      - Update completed successfully.
+     I*              *ERRCODE - Error: Invalid transaction code.
+     I*              *ERRWHS  - Error: Invalid warehouse sent, nothing
+     I*                                updated.
+     I*              *ERRITM  - Error: Invalid item sent, nothing
+     I*                                updated.
+     I*              *ERRITYP - Error: Item is not a Fixed item,nothing
+     I*                                updated.
+     I*              *ERRSLOT - Error: Invalid department/slot sent,
+     I*                                nothing updated.
+     I*              *ERRSLTT - Error: Slot is not a fixed pick slot,
+     I*                                nothing updated.
+     I*              *ERRSLTI - Error: Slot contains different item,
+     I*                                nothing updated.
+     I*              *ERRNOSL - Error: No home slot exists for item,
+     I*                                nothing updated.
+     I*              *ERRQTY  - Error: Not enough quantity in stock for
+     I*                                for decrease transaction.
+     I*              *ERRSLCK - Error: Slot record locked, nothing
+     I*                                updated.
+     I*              *ERRSLUP - Error: Updating slot, nothing updated.
+     I*              *ERRWQTY - Error: Updating warehouse qty, nothing
+     I*                                updated.
+     I*     $PMSG    -  Return message
+     I*     $POSLT   -  Slot updated
+     I*
+     I*
+     I*----------------------------------------------------------------
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCODE  2
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PISLT 12
+     C                     PARM           $PITEM 15
+     C                     PARM           $PQTY1  50
+     C                     PARM           $PQTY2  30
+     C                     PARM           $PQTY3  30
+     C                     PARM           $PRTN   8
+     C                     PARM           $PMSG  50
+     C                     PARM           $POSLT 12
+     C*
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PMSG
+     C                     MOVE *BLANKS   $POSLT
+     C* Invoice transaction, decrease quantity.
+     C           $PCODE    IFEQ 'IV'
+     C           $PQTY1    MULT -1        $PQTY1
+     C           $PQTY2    MULT -1        $PQTY2
+     C           $PQTY3    MULT -1        $PQTY3
+     C                     ENDIF
+     C* Verify data sent in.
+     C                     EXSR ZZCHEK
+     C* Proceed, if no error found.
+     C           $PRTN     IFEQ ' '
+     C                     EXSR ZZUPD
+     C                     ENDIF
+     C* Create log record.
+     C                     EXSR ZZLOG
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*                                                                   DOC
+     C*  *INZSR - Initialize                                              DOC
+     C*                                                                   DOC
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Key for item file (Item sent in)
+     C*
+     CSR         ITKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     C*
+     C*  Key for item file (Base item)
+     C*
+     CSR         ITKEYB    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           #BITEM
+     C*
+     C*  Key for item link file
+     C*
+     CSR         ILKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PITEM
+     C*
+     C*  Key for slot2 file
+     C*
+     CSR         SL2KEY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           WKWHDP
+     CSR                   KFLD           WKISLT
+     C*
+     C*  Key for slot3 file
+     C*
+     CSR         SL3KEY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           #BITEM
+     CSR                   KFLD           WKSTAT
+     CSR                   KFLD           WKPICK
+     C*
+     C*  Define key for ITEMQTY file.
+     C*
+     CSR         IQKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           #BITEM
+415aDC**
+415aDC** Get department if dept sent in is blank.
+415aDC** Get base item, if item type is 'S' or 'A'
+415aDC**
+415aDC**                   MOVE *BLANKS   #BITEM
+415aDC**                   MOVEL$PITEM    #BITEM
+415aDC**                   MOVE *BLANKS   WKWHDP
+415aDC**         ITKEY     CHAINPIRITEM              79
+415aDC**         *IN79     IFEQ *OFF
+415aDC**
+415aDC**         $PWHDP    IFEQ *BLANKS
+415aDC**                   MOVE ITWHDP    WKWHDP
+415aDC**                   ELSE
+415aDC**                   MOVE $PWHDP    WKWHDP
+415aDC**                   ENDIF
+415aDC**
+415aDC**         ITTYPE    IFEQ 'S'
+415aDC**         ITTYPE    OREQ 'A'
+415aDC**
+415aDC**         ILKEY     CHAINITEMLNK              79
+415aDC**         *IN79     IFEQ *OFF
+415aDC**                   MOVE *BLANKS   #BITEM
+415aDC**                   MOVELILITM2    #BITEM
+415aDC**                   ENDIF
+415aDC**
+415aDC**                   ENDIF
+415aDC**                   ENDIF
+     C*
+     CSR         *LIKE     DEFN ITITEM    #BITEM
+     CSR         *LIKE     DEFN ITWHDP    WKWHDP
+     CSR         *LIKE     DEFN IAQTY1    CHGQT1
+     CSR         *LIKE     DEFN IAQTY2    CHGQT2
+     CSR         *LIKE     DEFN IAQTY3    CHGQT3
+     CSR         *LIKE     DEFN SLDISP    WKISLT
+     CSR         *LIKE     DEFN SLSTK1    NEWQT1
+     CSR         *LIKE     DEFN SLSTK2    NEWQT2
+     CSR         *LIKE     DEFN SLSTK3    NEWQT3
+     CSR                   MOVE *OFF      FOREVR  1
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*                                                                   DOC
+     C*  ZZCHEK - Error check                                             DOC
+     C*                                                                   DOC
+     CSR         ZZCHEK    BEGSR
+     C*
+     C*  Invalid transaction code
+     C*
+     CSR         $PCODE    IFNE 'IV'
+     CSR         $PCODE    ANDNE'CR'
+     CSR                   MOVE '*ERRCODE'$PRTN
+     CSR                   MOVEADESC,2    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     C*  Invalid warehouse
+     C*
+C001ACSR         $PWHSE    CHAINWAREHS               80
+C001ACSR         *IN80     IFEQ *ON
+C001ACSR                   MOVE '*ERRWHS '$PRTN
+C001ACSR                   MOVEADESC,3    $PMSG
+C001ACSR                   GOTO ENDCHK
+C001ACSR                   ENDIF
+C001DC*R                   MOVE #PROG     $LPRG
+C001DC*R                   MOVE '*VERIFY '$LCMD
+C001DC*R                   Z-ADD$PWHSE    $LWHSE
+C001DC*R                   CALL 'WH900'
+C001DC*R                   PARM           $LPARM
+C001DC*R         $LRTN     IFEQ '*PGMQ   '
+C001DC*R                   MOVE '*ERRWHS '$PRTN
+C001DC*R                   MOVEADESC,3    $PMSG
+C001DC*R                   GOTO ENDCHK
+C001DC*R                   ENDIF
+     C*
+     C*  Invalid item sent.
+     C*
+     CSR         ITKEY     CHAINPIRITEM              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*ERRITM '$PRTN
+     CSR                   MOVEADESC,4    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     C*  Item must be a Fixed section item, not a PIR item.
+     C*
+     CSR         *IN79     IFEQ *OFF
+     CSR         ITSTYP    ANDNE'F'
+     CSR                   MOVE '*ERRITYP'$PRTN
+     CSR                   MOVEADESC,5    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     C*  Item cannot be of type 'C'.
+     C*
+     CSR         *IN79     IFEQ *OFF
+     CSR         ITTYPE    ANDEQ'C'
+     CSR                   MOVE '*ERRITM '$PRTN
+     CSR                   MOVEADESC,4    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+415aAC*
+415aAC*  Get department if dept sent in is blank.
+415aAC*  Get base item, if item type is 'S' or 'A'
+415aAC*
+415aACSR                   MOVE *BLANKS   #BITEM
+415aACSR                   MOVEL$PITEM    #BITEM
+415aACSR                   MOVE *BLANKS   WKWHDP
+415aACSR         ITKEY     CHAINPIRITEM              79
+415aACSR         *IN79     IFEQ *OFF
+415aAC*
+415aACSR         $PWHDP    IFEQ *BLANKS
+415aACSR                   MOVE ITWHDP    WKWHDP
+415aACSR                   ELSE
+415aACSR                   MOVE $PWHDP    WKWHDP
+415aACSR                   ENDIF
+415aAC*
+415aACSR         ITTYPE    IFEQ 'S'
+415aACSR         ITTYPE    OREQ 'A'
+415aAC*
+415aACSR         ILKEY     CHAINITEMLNK              79
+415aACSR         *IN79     IFEQ *OFF
+415aACSR                   MOVE *BLANKS   #BITEM
+415aACSR                   MOVELILITM2    #BITEM
+415aACSR                   ENDIF
+415aAC*
+415aACSR                   ENDIF
+415aACSR                   ENDIF
+     C*
+     C*  If slot is sent in, .......
+     C*
+     CSR                   SELEC
+     CSR         $PISLT    WHNE *BLANKS
+     CSR                   MOVE $PISLT    WKISLT
+     C*  Dept/slot combo must exist.
+     CSR         SL2KEY    CHAINSLOT2               N79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*ERRSLOT'$PRTN
+     CSR                   MOVEADESC,6    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*  Slot must be a Fixed pick slot.
+     CSR         SLSTYP    IFNE 'F'
+     CSR         SLPICK    ORNE 'Y'
+     CSR                   MOVE '*ERRSLTT'$PRTN
+     CSR                   MOVEADESC,7    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*  Slot must contain item.
+     CSR         SLITEM    IFEQ *BLANKS
+     CSR                   MOVE '*ERRSLTI'$PRTN
+     CSR                   MOVEADESC,8    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*  Slot contain different item.
+415cDC**         ITTYPE    IFEQ ' '
+415cDC**         SLITEM    ANDNE$PITEM
+415cACSR         SLITEM    IFNE #BITEM
+     CSR                   MOVE '*ERRSLTI'$PRTN
+     CSR                   MOVEADESC,8    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     CSR                   OTHER
+     C*  No home slot exist for item.
+     CSR                   MOVE 'A '      WKSTAT  2
+     CSR                   MOVE 'Y'       WKPICK  1
+     CSR         SL3KEY    SETLLSLOT3
+     CSR         SL3KEY    READESLOT3                    79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*ERRNOSL'$PRTN
+     CSR                   MOVEADESC,9    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     C*  Home slot found. Save slot for update
+     C*
+     CSR                   MOVE SLDISP    WKISLT
+     CSR                   ENDSL
+     C*
+     C*  Get slot record and lock it this time.
+     C*
+     CSR         SL2KEY    CHAINSLOT2                7978
+     C*
+     C*    Record locked.
+     C*
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE '*ERRSLCK'$PRTN
+     CSR                   MOVEADESC,11   $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     C*    Record not found.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*ERRNOSL'$PRTN
+     CSR                   MOVEADESC,9    $PMSG
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     C*  Calculate available quantity
+     C*
+     CSR                   EXSR ZZAVAL
+     C*
+     C*  Calculate new and change quantities.
+     C*
+     C*
+     C*     Increasing/Decreasing quantity.
+     C*
+     CSR                   Z-ADD$PQTY1    CHGQT1
+     CSR                   Z-ADD$PQTY2    CHGQT2
+     CSR                   Z-ADD$PQTY3    CHGQT3
+415cDC**         EXCLD1    ADD  $PQTY1    NEWQT1
+415cDC**         EXCLD2    ADD  $PQTY2    NEWQT2
+415cDC**         EXCLD3    ADD  $PQTY3    NEWQT3
+415cDC*
+415bDC*  New available quantities can not be negative.
+415bDC*   For decrease transactions only.
+415bDC*R                   ADD  CHGQT1    AVAIL1
+415bDC*R                   ADD  CHGQT2    AVAIL2
+415bDC*R                   ADD  CHGQT3    AVAIL3
+415bDC*R         $PCODE    IFEQ 'IV'
+415bDC*R         AVAIL1    IFLT 0
+415bDC*R         AVAIL2    ORLT 0
+415bDC*R         AVAIL3    ORLT 0
+415bDC*R                   MOVE '*ERRQTY '$PRTN
+415bDC*R                   MOVEADESC,10   $PMSG
+415bDC*R                   UNLCKSLOT2
+415bDC*R                   GOTO ENDCHK
+415bDC*R                   ENDIF
+415bDC*R                   ENDIF
+     C*
+415cAC*  If Same Slot Breakdown Item
+415cAC*   Then quantities need to be changed into corresponding
+415cAC*        Base breakdown quantities.
+415cAC*
+415cACSR         ITTYPE    IFEQ 'S'
+415cACSR                   Z-ADDCHGQT2    CHGQT3
+415cACSR                   Z-ADDCHGQT1    CHGQT2
+415cACSR                   Z-ADD0         CHGQT1
+415cACSR                   ENDIF
+     C*
+     C*  New available quantities can not be negative.
+     C*   For decrease transactions only.
+415cAC*    ** This only applies to non-reserved PIR slots **
+415cAC*    ** and reserved PIR slots w/o Breakdown item   **
+415cACSR                   ADD  CHGQT1    AVAIL1
+415cACSR                   ADD  CHGQT2    AVAIL2
+415cACSR                   ADD  CHGQT3    AVAIL3
+415cAC*
+415cAC*  Fulfill negative breakdown quantities
+415cAC*
+415cACSR                   EXSR ZZBRKS
+     C*
+     C*
+     C*  Calculate available warehouse quantity.
+     C*
+     CSR         IQKEY     CHAINITEMQTY              79
+     C*
+     C*
+     CSR                   Z-ADD0         WHAVL1  50
+     CSR                   Z-ADD0         WHAVL2  50
+     CSR                   Z-ADD0         WHAVL3  50
+     C*
+     CSR         IQSTK1    ADD  IQTRI1    WHAVL1
+     CSR         WHAVL1    SUB  IQALC1    WHAVL1
+     CSR         WHAVL1    SUB  IQHLD1    WHAVL1
+     CSR         WHAVL1    SUB  IQTRO1    WHAVL1
+     C*
+     CSR         IQSTK2    ADD  IQTRI2    WHAVL2
+     CSR         WHAVL2    SUB  IQALC2    WHAVL2
+     CSR         WHAVL2    SUB  IQHLD2    WHAVL2
+     CSR         WHAVL2    SUB  IQTRO2    WHAVL2
+     C*
+     CSR         IQSTK3    ADD  IQTRI3    WHAVL3
+     CSR         WHAVL3    SUB  IQALC3    WHAVL3
+     CSR         WHAVL3    SUB  IQHLD3    WHAVL3
+     CSR         WHAVL3    SUB  IQTRO3    WHAVL3
+     C*
+     C*  Cannot adjust quantities out, if the available warehouse qty
+     C*  is not enough.
+     C*
+     CSR                   Z-ADD0         SUMAV1  50
+     CSR                   Z-ADD0         SUMAV2  50
+     CSR                   Z-ADD0         SUMAV3  50
+     C*
+     CSR         CHGQT1    ADD  WHAVL1    SUMAV1
+     CSR         CHGQT2    ADD  WHAVL2    SUMAV2
+     CSR         CHGQT3    ADD  WHAVL3    SUMAV3
+     C*
+415cAC*
+415cAC*  Fulfill negative breakdown quantities
+415cAC*
+415cACSR                   EXSR ZZBRKW
+415cAC*
+     CSR         SUMAV1    IFLT 0
+     CSR         SUMAV2    ORLT 0
+     CSR         SUMAV3    ORLT 0
+     CSR                   MOVE '*ERRQTY '$PRTN
+     CSR                   MOVEADESC,10   $PMSG
+     CSR                   UNLCKSLOT2
+     CSR                   GOTO ENDCHK
+     CSR                   ENDIF
+     C*
+     C*
+     CSR         ENDCHK    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZAVAL
+     C*
+     CSR         ZZAVAL    BEGSR
+     C*
+     C*   Calculate available qty including transactions in process.
+     C*
+     CSR                   CALL 'SLOTQTY'
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     C*
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     C*
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     C*
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     C*
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     C*
+     CSR                   PARM           STOCK1  50
+     CSR                   PARM           STOCK2  30
+     CSR                   PARM           STOCK3  30
+     C*
+     CSR                   PARM           AVAIL1  50
+     CSR                   PARM           AVAIL2  30
+     CSR                   PARM           AVAIL3  30
+     C*
+     C*   Calculate available qty excluding transactions in process.
+     C*
+     CSR         *LIKE     DEFN AVAIL1    EXCLD1
+     CSR         *LIKE     DEFN AVAIL2    EXCLD2
+     CSR         *LIKE     DEFN AVAIL3    EXCLD3
+     C*
+     CSR         SLRCV1    IFLT AVAIL1
+     CSR         AVAIL1    SUB  SLRCV1    EXCLD1
+     CSR                   ELSE
+     CSR                   Z-ADD0         EXCLD1
+     CSR                   ENDIF
+     CSR         SLRCV2    IFLT AVAIL2
+     CSR         AVAIL2    SUB  SLRCV2    EXCLD2
+     CSR                   ELSE
+     CSR                   Z-ADD0         EXCLD2
+     CSR                   ENDIF
+     CSR         SLRCV3    IFLT AVAIL3
+     CSR         AVAIL3    SUB  SLRCV3    EXCLD3
+     CSR                   ELSE
+     CSR                   Z-ADD0         EXCLD3
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+415cAC*----------------------------------------------------------------
+415cAC*
+415cAC*  ZZBRKS   Fulfill negative breakdown quantities for slot.
+415cAC*
+415cACSR         ZZBRKS    BEGSR
+     C*
+     C*     Breakdown 1 quantity.
+     C*
+     C*        Break carton if we need more stock.
+     C*
+     CSR         AVAIL2    DOWLT0
+     CSR         ITUMQ2    IFLE 0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   SUB  1         SLSTK1
+     CSR                   SUB  1         AVAIL1
+     CSR                   SUB  1         STOCK1
+     CSR                   ADD  ITUMQ2    SLSTK2
+     CSR                   ADD  ITUMQ2    AVAIL2
+     CSR                   ADD  ITUMQ2    STOCK2
+     CSR                   ENDDO
+     C*
+     C*     Breakdown 2 quantity.
+     C*
+     C*        Break carton if we need more stock.
+     C*
+     CSR         AVAIL3    DOWLT0
+     CSR         ITUMQ2    IFLE 0
+     CSR         ITUMQ3    ORLE 0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR         AVAIL2    IFGT 0
+     CSR                   SUB  1         SLSTK2
+     CSR                   SUB  1         AVAIL2
+     CSR                   SUB  1         STOCK2
+     CSR                   ADD  ITUMQ3    SLSTK3
+     CSR                   ADD  ITUMQ3    AVAIL3
+     CSR                   ADD  ITUMQ3    STOCK3
+     CSR                   ELSE
+     CSR                   SUB  1         SLSTK1
+     CSR                   SUB  1         AVAIL1
+     CSR                   SUB  1         STOCK1
+     CSR                   ADD  ITUMQ2    SLSTK2
+     CSR                   ADD  ITUMQ2    AVAIL2
+     CSR                   ADD  ITUMQ2    STOCK2
+     C*
+     CSR                   SUB  1         SLSTK2
+     CSR                   SUB  1         AVAIL2
+     CSR                   SUB  1         STOCK2
+     CSR                   ADD  ITUMQ3    SLSTK3
+     CSR                   ADD  ITUMQ3    AVAIL3
+     CSR                   ADD  ITUMQ3    STOCK3
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     CSR                   ENDSR
+415cAC*----------------------------------------------------------------
+415cAC*
+415cAC*  ZZBRKW   Fulfill negative breakdown quantities for warehouse.
+415cAC*
+415cACSR         ZZBRKW    BEGSR
+     C*
+     C*     Breakdown 1 quantity.
+     C*
+     C*        Break carton if we need more stock.
+     C*
+     CSR         SUMAV2    DOWLT0
+     CSR         ITUMQ2    IFLE 0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR                   SUB  1         SUMAV1
+     CSR                   ADD  ITUMQ2    SUMAV2
+     CSR                   ENDDO
+     C*
+     C*     Breakdown 2 quantity.
+     C*
+     C*        Break carton if we need more stock.
+     C*
+     CSR         SUMAV3    DOWLT0
+     CSR         ITUMQ2    IFLE 0
+     CSR         ITUMQ3    ORLE 0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR         SUMAV2    IFGT 0
+     CSR                   SUB  1         SUMAV2
+     CSR                   ADD  ITUMQ3    SUMAV3
+     CSR                   ELSE
+     CSR                   SUB  1         SUMAV1
+     CSR                   ADD  ITUMQ2    SUMAV2
+     C*
+     CSR                   SUB  1         SUMAV2
+     CSR                   ADD  ITUMQ3    SUMAV3
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZLOG    Create a record in log file.
+     C*
+     CSR         ZZLOG     BEGSR
+     CSR                   CLEARFSREC
+     CSR                   MOVE $PCODE    FSCODE
+     CSR                   Z-ADD$PWHSE    FSWHSE
+     CSR                   MOVE $PWHDP    FSWHDP
+     CSR                   MOVE $PISLT    FSISLT
+     CSR                   MOVE $PITEM    FSITEM
+     CSR                   Z-ADD$PQTY1    FSQTY1
+     CSR                   Z-ADD$PQTY2    FSQTY2
+     CSR                   Z-ADD$PQTY3    FSQTY3
+     CSR                   MOVE $PRTN     FSRTN
+     CSR                   MOVE $PMSG     FSMSG
+     CSR                   MOVE $POSLT    FSOSLT
+     CSR                   Z-ADDLBLBL#    FSLBL#
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    FSDATE
+     CSR                   TIME           FSTIME
+     CSR                   MOVE #USER     FSUSER
+     CSR                   MOVE #JOB      FSJOB
+     CSR                   MOVE #JOBN     FSJOBN
+     CSR                   WRITEFSREC
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD    Update record.
+     C*
+     CSR         ZZUPD     BEGSR
+     C*
+     C*  Update general quantities for item.
+     C*
+     CSR                   MOVE '*STOCK  '$ACMD
+     CSR                   MOVE #PROG     $APRG
+     CSR                   MOVE '*BATCH  '$ATYPE
+     CSR                   Z-ADDSLWHSE    $AWHSE
+     CSR                   MOVE SLITEM    $AITEM
+     CSR                   Z-ADDCHGQT1    $AQTY1
+     CSR                   Z-ADDCHGQT2    $AQTY2
+     CSR                   Z-ADDCHGQT3    $AQTY3
+     CSR                   CALL 'ADJQTY'
+     CSR                   PARM           $ACMD   8
+     CSR                   PARM           $APRG  10
+     CSR                   PARM           $ATYPE  8
+     CSR                   PARM           $AWHSE  30
+     CSR                   PARM           $AITEM 15
+     CSR                   PARM           $AQTY1  70
+     CSR                   PARM           $AQTY2  70
+     CSR                   PARM           $AQTY3  70
+     CSR                   PARM           $ARTQ1  70
+     CSR                   PARM           $ARTQ2  70
+     CSR                   PARM           $ARTQ3  70
+     CSR                   PARM           $ARTN   8
+     CSR                   PARM           $AERM
+     CSR         $ARTN     IFEQ '*PGMQ   '
+     CSR                   MOVE '*ERRWQTY'$PRTN
+     CSR                   MOVEADESC,13   $PMSG
+     CSR                   UNLCKSLOT2
+     CSR                   GOTO ENDUPD
+     CSR                   ENDIF
+     C*
+     C*  Update held quantities for item.
+     C*
+     CSR         SLSTAT    IFNE 'A '
+     CSR         SLSTAT    ANDNE'V '
+     CSR         SLSTAT    ANDNE'Z '
+     CSR                   MOVE '*HOLD   '$ACMD
+     CSR                   MOVE #PROG     $APRG
+     CSR                   MOVE '*INTER  '$ATYPE
+     CSR                   Z-ADDSLWHSE    $AWHSE
+     CSR                   MOVE SLITEM    $AITEM
+     CSR                   Z-ADDCHGQT1    $AQTY1
+     CSR                   Z-ADDCHGQT2    $AQTY2
+     CSR                   Z-ADDCHGQT3    $AQTY3
+     CSR                   CALL 'ADJQTY'
+     CSR                   PARM           $ACMD   8
+     CSR                   PARM           $APRG  10
+     CSR                   PARM           $ATYPE  8
+     CSR                   PARM           $AWHSE  30
+     CSR                   PARM           $AITEM 15
+     CSR                   PARM           $AQTY1  70
+     CSR                   PARM           $AQTY2  70
+     CSR                   PARM           $AQTY3  70
+     CSR                   PARM           $ARTQ1  70
+     CSR                   PARM           $ARTQ2  70
+     CSR                   PARM           $ARTQ3  70
+     CSR                   PARM           $ARTN   8
+     CSR                   PARM           $AERM
+     CSR         $ARTN     IFEQ '*PGMQ   '
+     CSR                   MOVE '*ERRWQTY'$PRTN
+     CSR                   MOVEADESC,13   $PMSG
+     CSR                   UNLCKSLOT2
+     CSR                   GOTO ENDUPD
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*  Add record to adjustment history file if change in qty.
+     C*
+     CSR         CHGQT1    IFNE 0
+     CSR         CHGQT2    ORNE 0
+     CSR         CHGQT3    ORNE 0
+     C*
+     C*       Write adjustment for base item.
+     C*
+     C                     CLEARIAREC
+     CSR                   Z-ADDSLWHSE    IAWHSE
+415cDC**                   MOVE $PITEM    IAITEM
+415cMCSR                   MOVE #BITEM    IAITEM
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    IADATE
+     CSR                   TIME           IATIME
+     CSR                   MOVE #USER     IABY
+     CSR                   MOVE SLWHDP    IAWHDP
+     CSR                   MOVE SLDISP    IADISP
+     CSR                   Z-ADD0         IACWTA
+     CSR                   Z-ADDIACWTA    SVCWTA  92
+     CSR                   Z-ADDCHGQT1    IAQTY1
+     CSR                   Z-ADDCHGQT2    IAQTY2
+     CSR                   Z-ADDCHGQT3    IAQTY3
+     CSR                   Z-ADD$CVD8O    IAUDTE
+     CSR                   TIME           IAUTIM
+     CSR                   MOVEL'FS'      IACODE
+     CSR                   MOVEL'FSI100-' IAMEMO
+     CSR         IAMEMO    CAT  $PCODE:0  IAMEMO
+     CSR                   WRITEIAREC
+     C*
+     CSR                   ENDIF
+     C*
+     C*    Create label rec for Adjustment.
+     CSR         CHGQT1    IFNE 0
+     CSR         CHGQT2    ORNE 0
+     CSR         CHGQT3    ORNE 0
+     C*
+     C           ITKEYB    CHAINPIRITEM              75
+     C*
+     CSR                   CLEARLBREC
+     CSR                   Z-ADD$PWHSE    LBWHSE
+     CSR                   MOVE SLWHDP    LBWHDP
+     CSR                   MOVE SLAISL    LBAISL
+     CSR                   Z-ADDSLLOC     LBLOC
+     CSR                   Z-ADDSLRLVL    LBRLVL
+     CSR                   MOVE SLHAND    LBHAND
+     CSR                   Z-ADDSLPSEQ    LBPSEQ
+     CSR                   MOVE SLSTYP    LBSTYP
+     CSR         SLSTYP    IFEQ 'P'
+     CSR                   Z-ADD1         LBQRYF
+     CSR                   ELSE
+     CSR                   Z-ADD0         LBQRYF
+     CSR                   ENDIF
+     CSR                   MOVE SLDISP    LBDISP
+415cDC**                   MOVE $PITEM    LBITEM
+415cMCSR                   MOVE #BITEM    LBITEM
+     CSR                   Z-ADD0         LBSEQ
+     CSR                   Z-ADD0         LBPBAT
+     CSR                   MOVE *BLANKS   LBPO
+     CSR                   Z-ADD0         LBORD
+     CSR                   Z-ADD0         LBQALC
+     CSR                   Z-ADD0         LBUCUB
+     CSR                   Z-ADD0         LBCUBE
+     CSR                   Z-ADD0         LBUWGT
+     CSR                   Z-ADD0         LBSWGT
+     CSR                   Z-ADD0         LBTIE
+     CSR                   Z-ADD0         LBHIGH
+     CSR                   Z-ADD0         LBTRN#
+     C*    Normal UOM
+     CSR         CHGQT1    IFNE 0
+     CSR                   Z-ADDCHGQT1    LBQPCK
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   MOVE *BLANKS   LBGRP1
+     CSR                   MOVE *BLANKS   LBGRP2
+     CSR                   MOVE 'N'       LBUTYP
+     CSR                   MOVE *BLANKS   LBUCOD
+     CSR         *IN75     IFEQ *OFF
+     CSR                   MOVE ITUM1     LBUCOD
+     CSR                   ENDIF
+     CSR                   MOVE 'A'       LBTYPE
+     CSR                   MOVE 'C'       LBSTAT
+     CSR                   Z-ADDIADATE    LBSDTE
+     CSR                   Z-ADDIATIME    LBSTIM
+     CSR                   Z-ADDIADATE    LBRDTE
+     CSR                   WRITELBREC
+     CSR                   ENDIF
+     C*
+     C*    BRK1 UOM
+     CSR         CHGQT2    IFNE 0
+     CSR                   Z-ADDCHGQT2    LBQPCK
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   MOVE *BLANKS   LBGRP1
+     CSR                   MOVE *BLANKS   LBGRP2
+     CSR                   MOVE '1'       LBUTYP
+     CSR                   MOVE *BLANKS   LBUCOD
+     CSR         *IN75     IFEQ *OFF
+     CSR                   MOVE ITUM2     LBUCOD
+     CSR                   ENDIF
+     CSR                   MOVE 'A'       LBTYPE
+     CSR                   MOVE 'C'       LBSTAT
+     CSR                   Z-ADDIADATE    LBSDTE
+     CSR                   Z-ADDIATIME    LBSTIM
+     CSR                   Z-ADDIADATE    LBRDTE
+     CSR                   WRITELBREC
+     CSR                   ENDIF
+     C*
+     C*    BRK2 UOM
+     CSR         CHGQT3    IFNE 0
+     CSR                   Z-ADDCHGQT3    LBQPCK
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   MOVE *BLANKS   LBGRP1
+     CSR                   MOVE *BLANKS   LBGRP2
+     CSR                   MOVE '2'       LBUTYP
+     CSR                   MOVE *BLANKS   LBUCOD
+     CSR         *IN75     IFEQ *OFF
+     CSR                   MOVE ITUM3     LBUCOD
+     CSR                   ENDIF
+     CSR                   MOVE 'A'       LBTYPE
+     CSR                   MOVE 'C'       LBSTAT
+     CSR                   Z-ADDIADATE    LBSDTE
+     CSR                   Z-ADDIATIME    LBSTIM
+     CSR                   Z-ADDIADATE    LBRDTE
+     CSR                   WRITELBREC
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*
+     C*   Update slot record.
+     C*
+     CSR                   ADD  CHGQT1    SLSTK1
+     CSR                   ADD  CHGQT2    SLSTK2
+     CSR                   ADD  CHGQT3    SLSTK3
+     C*
+     C*   Check if status needs to be changed
+     C*
+     CSR                   CALL 'CHKSTAT'
+     CSR                   PARM           SLWHSE
+     CSR                   PARM           SLITEM
+     CSR                   PARM           SLSTYP
+     CSR                   PARM           SLRSRV
+     CSR                   PARM           SLPICK
+     CSR                   PARM           SLSTAT
+530aACSR                   PARM           SLDESG
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     CSR                   PARM           $CNEWS  2
+     CSR                   PARM           $CRTN   8
+     C*
+     CSR         $CRTN     IFEQ '*CHANGED'
+     CSR                   MOVE $CNEWS    SLSTAT
+     CSR                   Z-ADDIADATE    SLSDTE
+     CSR                   TIME           SLSTIM
+     CSR         $CNEWS    IFEQ 'A'
+     CSR                   Z-ADDIADATE    SLENTD
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*
+     C*      Calculate available quantity
+     C*
+     CSR                   CALL 'SLOTQTY'
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     C*
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     C*
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     C*
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     C*
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     C*
+     CSR                   PARM           STOCK1  50
+     CSR                   PARM           STOCK2  30
+     CSR                   PARM           STOCK3  30
+     C*
+     CSR                   PARM           AVAIL1  50
+     CSR                   PARM           AVAIL2  30
+     CSR                   PARM           AVAIL3  30
+     C*
+     C*
+     C*      Make sure breakdown qty's are not greater than
+     C*        quantity in the unit of measure.
+     C*
+     CSR         AVAIL3    DOWGEITUMQ3
+     CSR         ITUMQ3    ANDNE0
+     CSR                   SUB  ITUMQ3    SLSTK3
+     CSR                   SUB  ITUMQ3    AVAIL3
+     CSR                   ADD  1         SLSTK2
+     CSR                   ADD  1         AVAIL2
+     CSR                   ENDDO
+     C*
+     CSR         AVAIL2    DOWGEITUMQ2
+     CSR         ITUMQ2    ANDNE0
+     CSR                   SUB  ITUMQ2    SLSTK2
+     CSR                   SUB  ITUMQ2    AVAIL2
+     CSR                   ADD  1         SLSTK1
+     CSR                   ADD  1         AVAIL1
+     CSR                   ENDDO
+     O*
+     CSR                   UPDATSLREC                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*ERRSLUP'$PRTN
+     CSR                   MOVEADESC,12   $PMSG
+     CSR                   GOTO ENDUPD
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE '*OK     '$PRTN
+     CSR                   MOVEADESC,1    $PMSG
+     CSR                   MOVE SLDISP    $POSLT
+     CSR         ENDUPD    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $CVPRG    #PGMQ  10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR1007  Invalid date
+     C*
+     CSR         ZM1007    BEGSR
+     CSR                   MOVE 'PIR1007' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE $CVD6I    ERRDTE
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $CVMSG
+     CSR                   ENDSR
+     O*----------------------------------------------------------------     ****
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+Update completed successfully.
+Invalid transaction code, nothing updated.
+Invalid warehouse sent, nothing updated.
+Invalid/Contract item sent, nothing updated.
+Item is not a fixed item, nothing updated.
+Invalid department/slot sent, nothing updated.
+Slot is not a Fixed Pick slot,nothing updated.
+Slot contains different item, nothing updated.
+No home slot exists for item, nothing updated.
+Not enough quantity in stock for decrease transaction.
+Slot record locked, nothing updated.
+Error updating slot, nothing updated.
+Error updating whse qty, nothing updated.

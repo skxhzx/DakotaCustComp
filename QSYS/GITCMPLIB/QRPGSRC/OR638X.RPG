@@ -1,0 +1,349 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2006 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*----------------------------------------------------------------
+     F*
+     F*  OR638     Truck build - Assign PIR seq#
+     F*  07 October 2006
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+510 AF*    10/07/06  DAS  5.10
+     F*      - Created
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPLTSUM3 IF  E           K        DISK
+     FOPTIONZ IF  E           K        DISK
+414aAFOPTIONS IF  E           K        DISK
+414aAE*----------------------------------------------------------------
+414aAE*  Table and array definitions
+414aAE*
+414aAE                    A80        80  1
+414aAE                    OVR     1   1 80
+     I*----------------------------------------------------------------
+     I*  *PICKLBL  -  Picking label options
+     I*----------------------------------------------------------------
+     I* Fields
+     I*
+     I*    OPCLVL  -  Qty level for combined labels.
+     I*    OPCWRB  -  Print combined label warning before.
+     I*    OPCWRA  -  Print combined label warning after.
+     I*    OPUWRB  -  Print unit of measure warning before.
+     I*    OPUWRA  -  Print unit of measure warning after.
+     I*    OPTEXT  -  Text for last line of label.
+     I*    OPERR   -  Error label ratio.
+     I*    OPCWGT  -  Catch weight label ratio.
+     I*    OPLPGM  -  Picking label program.
+     I*    OPPDEV  -  Printer device.
+     I*    OPPFRM  -  Printer form.
+     I*
+     I* Data structure
+     I*
+     IOPZDTA      DS
+     I I            0                         1   30OPCLVL
+     I                                        4   4 OPCWRA
+     I                                        5   5 OPCWRB
+     I                                        6   6 OPUWRA
+     I                                        7   7 OPUWRB
+     I                                        8  50 OPTEXT
+     I I            0                        51  520OPERR
+     I I            0                        53  540OPCWGT
+     I                                       55  64 OPLPGM
+     I                                       65  74 OPPDEV
+     I                                       75  84 OPPFRM
+     I                                      117 117 OPTEND
+414aAI*----------------------------------------------------------------
+414aAI*  *FTP      -  FTP options
+414aAI*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPFTP   -  Use FTP for exporting (Y,N)
+     I*    OPSRVR  -  FTP Server name
+     I*    OPUSER  -  FTP User id
+     I*    OPPWD   -  FTP Password
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPFTP
+     I                                        2  33 OPSRVR
+     I                                       34  48 OPUSER
+     I                                       49  63 OPPWD
+     I                                      117 117 OPTEN2
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Command  (*PRINT, *REPRINT)
+     C*      $PWHSE  Warehouse
+     C*      $PRTID  Route Id
+     C*      $PRTE   Route
+     C*      $PTRUK  Truck
+     C*      $PSZON  Zone for *REPRINT
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $WHSE   3
+     C                     PARM           $PRTID  5
+     C                     PARM           $PRTE   5
+     C                     PARM           $PTRUK 10
+     C                     PARM           $PSZON  6
+     C                     MOVE $WHSE     $PWHSE  30
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *OFF      PRFLAG  1
+414aAC                     MOVE *OFF      FIFLAG  1
+     C*
+     C*  Loop through pallets in reverse generation order.
+     C*
+     C                     MOVE 'O'       KYTYPE
+     C                     MOVE *HIVAL    LSTZON
+     C           KEYPS3    SETLLPLTSUM3
+     C           FOREVR    DOWEQFOREVR
+     C           KEYPS3    READEPLTSUM3                  79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*    Skip unwanted zones for *REPRINT.
+     C*
+     C           $PCMD     IFEQ '*REPRINT'
+     C           $PSZON    ANDNE'*ALL'
+     C           PSSZON    ANDNE$PSZON
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*    Skip duplicate zones.
+     C*
+     C           PSSZON    IFEQ LSTZON
+     C                     ITER
+     C                     ELSE
+     C                     MOVE PSSZON    LSTZON
+     C                     ENDIF
+     C*
+     C*    Get picking options for zone.
+     C*
+     C                     MOVE '*PICKLBL'KYCODE
+     C                     MOVE PSSZON    KYZONE
+     C           KEYOPZ    CHAINOPTIONZ              79
+     C           *IN79     IFEQ *ON
+402 AC           KEYOP2    SETLLOPTIONZ
+402 AC           KEYOP2    READEOPTIONZ                  78
+402 AC           *IN78     IFEQ *ON
+     C                     MOVE *BLANKS   OPLPGM
+402 AC                     ENDIF
+     C                     ENDIF
+     C*
+     C*    Call picking label program to print labels for zone.
+     C*
+     C           OPLPGM    IFNE *BLANKS
+414 AC                     MOVELOPLPGM    @PGM    4
+414 AC                     MOVE OPLPGM    @SET    6
+414 AC                     SELEC
+414 AC*
+414 AC*      Use special label program.
+414 AC*
+414 AC           @PGM      WHEQ 'PFMT'
+414 AC                     CALL 'PFMT'
+414 AC                     PARM '*PRINT  'CMD     8
+414 AC                     PARM           @SET
+414 AC                     PARM           @FMT    8
+414 AC                     PARM           $PWHSE
+414 AC                     PARM           $PRTID
+414 AC                     PARM           PSCOMP
+414 AC                     PARM           PSTZON
+414 AC                     PARM           PSGEN
+414 AC                     PARM           PSSZON
+414 AC                     PARM           $PTRUK
+414 AC                     PARM           $PRTE
+414 AC                     PARM           OPZDTA
+500a C                     PARM 0         $PTRN#  70
+500a C                     PARM 0         $PLBL#  70
+500a C                     PARM 0         $PQTY   50
+500a C                     PARM 0         $PCWT   72
+414aAC*
+414aAC*      Use program to write labels to a file.
+414aAC*
+414aAC           OPLPGM    WHEQ 'PFILE'
+414aAC*
+414aAC*        First call to this program, init file member.
+414aAC*
+414aAC           FIFLAG    IFEQ *OFF
+414aAC                     CALL 'PFILEINZ'
+414aAC                     PARM           $WHSE
+414aAC                     PARM           $PRTE
+414aAC                     PARM           $MBR   10
+414aAC                     EXSR OVRDBF
+414aAC                     MOVE *ON       FIFLAG
+414aAC                     ENDIF
+414aAC*
+414aAC*        Call program to write labels to file.
+414aAC*
+414aAC                     CALL OPLPGM
+414aAC                     PARM '*PRINT  'CMD     8
+414aAC                     PARM           $PWHSE
+414aAC                     PARM           $PRTID
+414aAC                     PARM           PSCOMP
+414aAC                     PARM           PSTZON
+414aAC                     PARM           PSGEN
+414aAC                     PARM           PSSZON
+414aAC                     PARM           $PTRUK
+414aAC                     PARM           $PRTE
+414aaC                     PARM           OPZDTA
+414 AC*
+414 AC*      Use original line printer label program.
+414 AC*
+414 AC                     OTHER
+414 AC*
+414 AC*      Use original line printer label program.
+414 AC*
+     C                     CALL OPLPGM
+     C                     PARM '*PRINT  'CMD     8
+     C                     PARM           $PWHSE
+     C                     PARM           $PRTID
+     C                     PARM           PSCOMP
+     C                     PARM           PSTZON
+     C                     PARM           PSGEN
+     C                     PARM           PSSZON
+     C                     PARM           $PTRUK
+     C                     PARM           $PRTE
+     C                     PARM           OPZDTA
+414 AC                     ENDSL
+     C                     ENDIF
+     C*
+     C                     ENDDO
+414aAC*
+414aAC*  If export file was created then see if we should FTP it.
+414aAC*
+414aAC           OPLPGM    IFEQ 'PFILE'
+414aAC           FIFLAG    ANDEQ*ON
+414aAC           OPFTP     ANDEQ'Y'
+414aAC*
+414aAC*      Close label program.
+414aAC*
+414aAC                     CALL OPLPGM
+414aAC                     PARM '*CLOSE  'CMD     8
+414aAC                     PARM           $PWHSE
+414aAC                     PARM           $PRTID
+414aAC                     PARM           PSCOMP
+414aAC                     PARM           PSTZON
+414aAC                     PARM           PSGEN
+414aAC                     PARM           PSSZON
+414aAC                     PARM           $PTRUK
+414aAC                     PARM           $PRTE
+414aaC                     PARM           OPZDTA
+414aAC*
+414aAC*      Call program to FTP file.
+414aAC*
+414aAC                     CALL 'PFILEFTP'
+414aAC                     PARM           $MBR
+414aAC                     ENDIF
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Define partial key for PLTSUM3 file.
+     C*
+     CSR         *LIKE     DEFN PSTYPE    KYTYPE
+     CSR         KEYPS3    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     CSR                   KFLD           KYTYPE
+     C*
+     C*  Define partial key for options file.
+     C*
+     CSR         *LIKE     DEFN OPZCOD    KYCODE
+     CSR         *LIKE     DEFN OPZZON    KYZONE
+     CSR         KEYOPZ    KLIST
+     CSR                   KFLD           KYCODE
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PTRUK
+     CSR                   KFLD           KYZONE
+402 AC*
+402 AC*  Define partial key for options file.
+402 AC*
+402 ACSR         KEYOP2    KLIST
+402 ACSR                   KFLD           KYCODE
+402 ACSR                   KFLD           $PWHSE
+402 ACSR                   KFLD           $PTRUK
+414 AC*
+414 AC*  Define key for options file.
+414 AC*
+414 ACSR         KEYOP     KLIST
+414 ACSR                   KFLD           OPWHSE
+414 ACSR                   KFLD           OPCODE
+414 AC*
+414 AC*   Get FTP options from options file.
+414 AC*
+414 ACSR                   Z-ADD0         OPWHSE
+414 ACSR                   MOVE '*FTP    'OPCODE
+414 ACSR         KEYOP     CHAINOPTIONS              79
+414 ACSR         *IN79     IFEQ *ON
+414 ACSR                   MOVE 'N'       OPFTP
+414 ACSR                   ENDIF
+     C*
+     CSR         *LIKE     DEFN PSSZON    LSTZON
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETOPT  Get picking options for zone.
+     C*
+     CSR         GETOPT    BEGSR
+     C*
+     CSR                   MOVE '*PICKLBL'KYCODE
+     CSR         KEYOPZ    CHAINOPTIONZ              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   OPLPGM
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+414aAC*----------------------------------------------------------------
+414aAC*
+414aAC*  OVRDBF  Override export file.
+414aAC*
+414aACSR         OVRDBF    BEGSR
+414aAC*
+414aAC*      Override database file.
+414aAC*
+414aAC*          OVRDBF FILE(EXPFPLBL) MBR(XXXXXXXXXX)
+414aAC*
+414aACSR                   MOVEAOVR,1     A80
+414aACSR                   MOVEA$MBR      A80,27
+414aACSR                   MOVEAA80       QCMD
+414aACSR                   CALL 'QCMDEXC'
+414aACSR                   PARM           QCMD   80
+414aACSR                   PARM 80        QLEN   155
+414aAC*
+414aACSR                   ENDSR
+**   OVRDBF statment
+OVRDBF FILE(EXPFPLBL) MBR(XXXXXXXXXX)

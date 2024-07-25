@@ -1,0 +1,308 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  LU120A    Populate transaction work file.
+     F*  28 December, 1998
+     F*  Hemant Kapadia
+     F*
+     F*  NOTE: PTTRAN2 IS IN DESCENDING ORDER OF DATE AND TIME, AND
+     F*        HENCE WHEN WE READ THE FILE, THE LATEST RECORD WILL BE
+     F*        READ FIRST.
+     F*
+     F*        EXAMPLE: 12/30/98  09:00:00
+     F*                 12/30/98  08:45:00
+     F*                 12/30/98  08:30:00
+     F*
+     F*
+     F*
+     F*  Revisions
+     F*  09/20/99  HNK 4.12
+     F*   - Imput parameter added. Records not processed based on these
+     F*     parameters.
+     F*
+     F*----------------------------------------------------------------
+     FPIRTRAN2IP  E           K        DISK
+     FWRKTRAN1UF  E           K        DISK
+     F            WTREC                             KRENAMEWTREC1
+     FTASK    IF  E           K        DISK
+     FWRKTRAN O   E           K        DISK
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  30 ERFLD
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  OTHER DATA STRUCTURE
+     I*
+     I            DS
+     I                                        1   60ETIME
+     I                                        1   40EHHMM
+     I                                        5   60ESS
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+412 AC*      $PFMDT - From date
+412 AC*      $PENDT - End date (To date + 1)
+412 AC*      $PBTIM - Shift begin time
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+412 AC           *ENTRY    PLIST
+412 AC                     PARM           $PFMDT  8
+412 AC                     PARM           $PENDT  8
+412 AC                     PARM           $PBTIM  6
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+412 AC                     MOVE $PFMDT    FRMDTE  80
+412 AC                     MOVE $PENDT    ENDDTE  80
+412 AC                     MOVE $PBTIM    BEGTIM  60
+412 AC* For "From date" trans time must be >= shift begin time.
+412 AC           PTSDTE    IFEQ FRMDTE
+412 AC           PTSTIM    ANDLTBEGTIM
+412 AC                     GOTO SKIP
+412 AC                     ENDIF
+412 AC* For "End date" trans time must be < shift begin time.
+412 AC           PTSDTE    IFEQ ENDDTE
+412 AC           PTSTIM    ANDGEBEGTIM
+412 AC                     GOTO SKIP
+412 AC                     ENDIF
+     C           PTTASK    CHAINTASK                 79
+     C*
+     C                     Z-ADDPTTRN#    WTTRN#
+     C                     MOVE PTSTAT    WTSTAT
+     C                     MOVE PTTASK    WTTASK
+     C                     MOVE PTCAT     WTCAT
+     C                     MOVE PTSUB     WTSUB
+     C                     Z-ADDPTWHSE    WTWHSE
+     C                     MOVE PTWHDP    WTWHDP
+     C                     MOVE PTSTYP    WTSTYP
+     C                     MOVE PTSHFT    WTSHFT
+     C                     MOVE PTCREW    WTCREW
+     C                     Z-ADDPTEMP#    WTEMP#
+     C                     Z-ADDPTCUBE    WTCUBE
+     C                     Z-ADDPTSWGT    WTSWGT
+     C                     Z-ADDPTPCS     WTPCS
+     C                     Z-ADDPTAISL    WTAISL
+     C                     Z-ADDPTQTY1    WTQTY1
+     C                     Z-ADDPTQTY2    WTQTY2
+     C                     Z-ADDPTQTY3    WTQTY3
+     C                     Z-ADDPTGDTE    WTGDTE
+     C                     Z-ADDPTGTIM    WTGTIM
+     C                     Z-ADDPTSDTE    WTSDTE
+     C                     Z-ADDPTSTIM    WTSTIM
+     C                     Z-ADDPTEDTE    WTEDTE
+     C                     Z-ADDPTETIM    WTETIM
+     C                     MOVE PTETYP    WTETYP
+     C                     Z-ADDPTCDTE    WTCDTE
+     C                     Z-ADDPTCTIM    WTCTIM
+     C                     Z-ADDPTRDTE    WTRDTE
+     C                     Z-ADDPTIMIN    WTIMIN
+     C                     MOVE PTRTPO    WTRTPO
+     C                     MOVE PTGRP1    WTGRP1
+     C                     MOVE PTGRP2    WTGRP2
+     C*
+     C                     SELEC
+     C* Idle task - Save the time to be added to the next direct task.
+     C           PTTASK    WHEQ 'IDLE'
+     C                     ADD  PTDMIN    SVIDLE
+     C                     Z-ADDPTDMIN    WTDMIN
+     C                     WRITEWTREC
+     C* Direct task other than 'IDLE' - Add idle time from the previous
+     C*                                 'IDLE' task to this task.
+     C           PTTASK    WHNE 'IDLE'
+     C           TKTYPE    ANDNE'I'
+     C                     ADD  SVIDLE    PTDMIN
+     C                     Z-ADD0         SVIDLE
+     C                     Z-ADDPTTRN#    SVTRN#
+     C                     Z-ADDPTDMIN    WTDMIN
+     C                     WRITEWTREC
+     C*
+     C* Indirect task - add the idle time to the previous direct task.
+     C           PTTASK    WHNE 'IDLE'
+     C           TKTYPE    ANDEQ'I'
+     C                     Z-ADDPTDMIN    WTDMIN
+     C                     WRITEWTREC
+     C           SVTRN#    CHAINWRKTRAN1             79
+     C           *IN79     IFEQ *OFF
+     C                     ADD  SVIDLE    WTDMIN
+     C                     UPDATWTREC1
+     C                     ENDIF
+     C                     ENDSL
+     C*
+412 AC           SKIP      TAG
+     C*
+     CLR         SVTRN#    CHAINWRKTRAN1             79
+     CLR         *IN79     IFEQ *OFF
+     CLR                   ADD  SVIDLE    WTDMIN
+     CLR                   UPDATWTREC1
+     CLR                   ENDIF
+     CLR                   RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE '0'       ERROR   1
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     C**                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C**                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*   PIR7972  Error in updating a record.
+     C*
+     CSR         ZM72      BEGSR
+     CSR                   MOVE 'PIR7972' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK  Select task
+     C*
+     CSR         ZZCHK     BEGSR
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     C*
+     CSR         *LIKE     DEFN PTDMIN    SVIDLE
+     CSR         *LIKE     DEFN PTTRN#    SVTRN#
+     CSR                   Z-ADD0         SVIDLE
+     CSR                   Z-ADD0         SVTRN#
+     C*
+     CSR                   MOVE #PROG     $PPRG  10
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD    Update record.
+     C*
+     CSR         ZZUPD     BEGSR
+     CSR                   MOVE '0'       ERROR
+     C*
+     CSR         ENDUPD    ENDSR

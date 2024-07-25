@@ -1,0 +1,608 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  PI215     Import customer purchase orders - Post
+     F*  Dave Sommerville
+     F*  Roxanne Harrison
+     F*  19 February, 1997
+     F*       created using OI215
+     F*
+     F*  Revisions
+     F*
+     F*    05/01/97  RH   2.20
+     F*      - Add check if PO exists in POHDR and if qty received.
+     F*      - Change POHDR & PODTL files process UF.
+     F*
+404  F*    09/04/97  RH      4.04
+     F*      - Changed to handle cross docking.
+     F*      - If Cross dock rec exists for PO & item, update with PDSEQ.
+     F*
+405 AF*    09/17/97  HNK     4.05
+     F*      - PO seq # update corrected.
+     F*      - UPDXDK subroutine added.
+     F*
+413 AF*    10/21/99  HNK     4.13
+     F*      - PHDATE being updated with today's date. (Date PO is
+     F*        imported into DAKOTA) PHTIME also updated.
+     F*
+414 AF*    07/05/00  KDE     4.14
+     F*      - PDVITM is forced with value from ITVIT# in PIRITEM
+     F*        if PIDVIT in IMPPOD is blank..
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  61        - Special order (Customer # > 0)
+     F*  78        - EOF for IMPPOD
+     F*  79        - EOF for IMPPOH
+     F*  91        - Overflow indicator
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     FIMPPOH  UF  E           K        DISK
+     FIMPPOD  UF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+220 MFPOHDR   UF  E           K        DISK                      A
+220 MFPODTL   UF  E           K        DISK                      A
+404 AFCROSSDK3IF  E           K        DISK
+404 AFCROSSDK2UF  E           K        DISK
+220 DF*OHDR   O   E           K        DISK                      A
+220 DF*ODTL   O   E           K        DISK                      A
+405 AFORDD    IF  E           K        DISK
+     FPI215PR O   E             91     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    DESC    1   3 20
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*
+413 AI            DS
+413 AI                                        1   60W1TIME
+413 AI                                        1   40W1HRMN
+413 AI                                        1   20W1HRS
+413 AI                                        3   40W1MIN
+413 AI                                        5   60W1SEC
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHS   Warehouse to process.
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHS  155
+     C*----------------------------------------------------------------
+     C                     Z-ADD$PWHS     $PWHSE  30
+400 AC           *LIKE     DEFN PIDSEQ    SEQ
+     C* Key definitions
+     C*
+     C* Download purchase order header file - Partial key
+     C*
+     C           PIHKEY    KLIST
+     C                     KFLD           $PWHSE
+     C*
+     C* Download purchase order detail file - Partial key
+     C*
+     C           PIDKEY    KLIST
+     C                     KFLD           PIHWHS
+     C                     KFLD           PIHPO
+220 AC*
+220 AC* P.O. Header file - Partial key
+220 AC*
+220 AC           POHKEY    KLIST
+220 AC                     KFLD           PIHWHS
+220 AC                     KFLD           PIHPO
+220 AC*
+220 AC* P.O. Detail file - Partial key
+220 AC*
+220 AC           PODKEY    KLIST
+220 AC                     KFLD           PIHWHS
+220 AC                     KFLD           PIHPO
+     C*
+     C* Item file
+     C*
+     C           ITKEY     KLIST
+     C                     KFLD           PIDWHS
+     C                     KFLD           PIDITM
+     C*
+404 AC* Cross Dock file
+     C*
+404 AC           XDKEY     KLIST
+404 AC                     KFLD           PIDWHS
+404 AC                     KFLD           PIDPO
+404 AC                     KFLD           SEQ
+405 AC*
+405 AC* Order detail file.
+405 AC*
+405 AC           ODKEY     KLIST
+405 AC                     KFLD           $PWHSE
+405 AC                     KFLD           CDORD
+405 AC                     KFLD           CDORSQ
+405 AC                     KFLD           SVITEM
+405 AC*
+405 AC* CROSSDK3 file.
+405 AC*
+405 AC           XD3KEY    KLIST
+405 AC                     KFLD           $PWHSE
+405 AC                     KFLD           PDPO
+405 AC                     KFLD           PDSEQ
+     C*
+404 AC                     MOVE *OFF      FOREVR  1
+     C*----------------------------------------------------------------
+     C* Main line
+     C*
+     C* Get report heading.
+     C*
+     C                     MOVE *BLANKS   W1HEAD
+     C                     MOVEL'PI215PR' RPPRTF
+     C           RPPRTF    CHAINREPORTS              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELRPDESC    $PSTR
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD50        $PLEN
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR  60
+     C                     PARM           $PLEN   30
+     C                     MOVEL$PSTR     W1HEAD
+     C*
+     C*   Get warehouse description.
+     C*
+     C           $PWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   WHDESC
+     C                     END
+     C*
+     C*   Create warehouse heading.
+     C*
+     C                     MOVE $PWHSE    WORK3A  3
+     C           ' 0'      CHECKWORK3A    POS     10
+     C           4         SUB  POS       LEN     10
+     C           LEN       SUBSTWORK3A:POSWHHEAD
+     C           WHHEAD    CAT  '-':1     WHHEAD
+     C           WHHEAD    CAT  WHDESC:1  WHHEAD
+     C                     CALL 'CENTER'
+     C                     PARM WHHEAD    $CSTR  60
+     C                     PARM 40        $CLEN   30
+     C                     MOVEL$CSTR     WHHEAD
+     C*
+     C* Initialize grand total fields
+     C*
+     C                     Z-ADD0         GRDORD
+     C                     Z-ADD0         GRDLIN
+     C                     Z-ADD0         PREOH
+     C                     Z-ADD0         PREOD
+     C                     Z-ADD0         NOITEM
+     C                     Z-ADD0         BADBRK
+     C*
+     C* Whip through all the download header records
+     C*
+     C                     MOVE *OFF      PFLAG   1
+     C                     MOVE *OFF      EOFH    1
+     C                     Z-ADD55        LINPPG  30       MAX LINES PER PAGE
+     C                     Z-ADD0         COUNT   30       LINE COUNTER
+     C           PIHKEY    SETLLIMPPOH
+     C           EOFH      DOUEQ*ON
+     C*
+     C           PIHKEY    READEIMPPOH                   79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       EOFH
+     C                     GOTO ENDDOH
+     C                     ENDIF
+     C*
+     C*  Print report heading if necessary.
+     C*
+     C           PFLAG     IFEQ *OFF
+     C           COUNT     ORGE LINPPG
+     C                     Z-ADD0         COUNT
+     C                     WRITEHEAD1
+     C                     ADD  3         COUNT
+     C                     MOVE *OFF      PFLAG
+     C                     ENDIF
+     C*
+     C*  Add record to order header file. If an error occurs, assume
+     C*    it was caused by a duplicate record.
+     C*
+     C                     MOVE *BLANKS   HEDMSG
+220 AC                     EXSR ZZCHKH
+220 AC           BADHDR    IFEQ *OFF
+     C                     EXSR FILLOH
+220 AC           *IN75     IFEQ *ON
+     C                     WRITEPHREC                  49
+     C           *IN49     IFEQ *ON
+     C                     MOVE DESC,1    HEDMSG
+     C                     ADD  1         PREOH
+     C                     ENDIF
+220 AC                     ELSE
+220 AC                     UPDATPHREC
+220 AC                     ENDIF
+220 AC                     ENDIF
+     C*
+     C*    Print order heading
+     C*
+     C           PFLAG     IFEQ *OFF
+     C                     WRITEHEAD2
+     C                     ADD  2         COUNT
+     C                     ENDIF
+     C*
+     C                     WRITEHEAD3
+     C                     ADD  2         COUNT
+     C*
+     C           PFLAG     IFEQ *OFF
+     C                     WRITEHEAD4
+     C                     ADD  2         COUNT
+     C                     MOVE *ON       PFLAG
+     C                     ENDIF
+     C*
+     C*    Initialize order subtotals
+     C*
+     C                     Z-ADD0         SUBLIN  30
+     C                     Z-ADD0         SUBQ1   70
+     C                     Z-ADD0         SUBQ2   70
+     C                     Z-ADD0         SUBQ3   70
+     C*
+     C*    Whip through all the download detail records
+     C*
+     C                     MOVE *OFF      EOFD    1
+     C           PIDKEY    SETLLIMPPOD
+     C           EOFD      DOUEQ*ON
+     C*
+     C           PIDKEY    READEIMPPOD                   78
+     C           *IN78     IFEQ *ON
+     C                     MOVE *ON       EOFD
+     C                     GOTO ENDDOD
+     C                     ENDIF
+220 AC           BADHDR    IFEQ *OFF
+     C                     MOVE *BLANKS   DETMSG
+     C                     MOVE 'N'       GOOD1
+     C*
+     C*       If item doesn't exist write error message.
+     C*
+     C           ITKEY     CHAINPIRITEM              76
+     C           *IN76     IFEQ *ON
+     C                     MOVE DESC,2    DETMSG
+     C                     ADD  1         NOITEM
+     C                     MOVE *BLANKS   ITDESC
+     C                     MOVEL'*****'   ITDESC
+     C                     ELSE
+414 AC*
+414 AC*       Check Mfg. Code sent in IMPPOD.  If different than
+414 AC*       PIRITEM then force item master code on imported PO.
+414 AC           PIDVIT    IFEQ *BLANKS
+414 AC                     MOVELITVIT#    PIDVIT
+414 AC                     ENDIF
+414 AC*
+     C*       Check if breakdown qty is allowed piritem file.
+     C*       Add rec if qty1, brk qty2 or brk qty3 has good qty.
+     C                     EXSR ZZBKDN
+     C*
+     C*       If qty1, brkdown qty2 or brkdown qty3 has good qty,
+     C*        add record to order detail file. If an error
+     C*        occurs, assume was caused by a duplicate record.
+     C*
+     C           GOOD1     IFEQ 'Y'
+     C                     EXSR FILLOD
+     C                     WRITEPDREC                  49
+     C           *IN49     IFEQ *ON
+     C                     MOVE DESC,1    DETMSG
+     C                     ADD  1         PREOD
+404 AC                     ELSE
+404 AC                     Z-ADD0         SEQ
+404 AC           XDKEY     SETLLCROSSDK3
+404 AC           FOREVR    DOWEQFOREVR
+     C*
+404 AC           XDKEY     READECROSSDK3                 79
+404 AC           *IN79     IFEQ *ON
+404 AC                     LEAVE
+404 AC                     END
+405 AC                     MOVELODITEM    SVITEM 15
+404 AC           ODITEM    IFEQ PIDITM
+404 AC           XDKEY     SETLLCROSSDK2
+405 AC           FOREVR    DOWEQFOREVR
+404 AC           XDKEY     READECROSSDK2                 77
+405 AC*
+405 AC           *IN77     IFEQ *ON
+405 AC                     LEAVE
+405 AC                     ENDIF
+405 AC           ODKEY     CHAINORDD                 75
+405 AC           *IN75     IFEQ *OFF
+405 AC                     Z-ADDPIDSEQ    CDPOSQ
+405 AC                     UPDATCDREC
+405 AC                     LEAVE
+405 AC                     ELSE
+405 AC                     ITER
+405 AC                     ENDIF
+405 AC                     ENDDO
+405 AC*
+404 AC                     ENDIF
+404 AC                     ENDDO
+     C*
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C                     ENDIF
+     C*
+     C*       Print order detail and update subtotals
+     C*
+     C                     EXSR ZRHEAD
+     C                     WRITEDETAIL
+220 AC                     ENDIF
+     C                     ADD  1         COUNT
+     C                     ADD  1         SUBLIN
+     C                     ADD  PIDQO1    SUBQ1
+     C                     ADD  PIDQO2    SUBQ2
+     C                     ADD  PIDQO3    SUBQ3
+     C*
+     C*       Delete detail record from download file
+     C*
+     C                     DELETPIDREC
+     C*
+     C           ENDDOD    TAG
+     C                     ENDDO
+     C*
+     C*    Print order subtotals and update grand totals
+     C*
+     C**                   EXSR ZRHEAD
+     C                     WRITESUBTTL
+     C                     ADD  3         COUNT
+     C                     ADD  1         GRDORD
+     C                     ADD  SUBLIN    GRDLIN
+     C*
+     C*  Delete header record from download file
+     C*
+     C                     DELETPIHREC
+     C*
+     C           ENDDOH    TAG
+     C                     ENDDO
+     C*
+     C*  Print order grand totals
+     C*
+     C           PFLAG     IFEQ *ON
+     C           COUNT     IFGE LINPPG
+     C                     WRITEHEAD1
+     C                     ENDIF
+     C                     WRITEGRNDTTL
+     C                     ENDIF
+     C*
+     C*  We are finished so get out
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLOD  Fill order detail fields.
+     C*
+     CSR         FILLOD    BEGSR
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEARPDREC
+     C*
+     C*  Move fields from download file to purchase order detail fields
+     C*
+     CSR                   Z-ADDPIDWHS    PDWHSE
+     CSR                   MOVE PHPO      PDPO
+     CSR                   Z-ADDPIDSEQ    PDSEQ
+     CSR                   MOVE PIDITM    PDITEM
+     CSR                   Z-ADDPIDQO1    PDQOR1
+     CSR         ITFLG1    IFEQ 'Y'
+     CSR                   Z-ADDPIDQO2    PDQOR2
+     CSR                   ELSE
+     CSR                   Z-ADD0         PDQOR2
+     CSR                   ENDIF
+     CSR         ITFLG2    IFEQ 'Y'
+     CSR                   Z-ADDPIDQO3    PDQOR3
+     CSR                   ELSE
+     CSR                   Z-ADD0         PDQOR3
+     CSR                   ENDIF
+     CSR                   MOVE PIDSPC    PDSPCL
+     CSR                   MOVE PIDVIT    PDVITM
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLOH   Fill purchase order header fields.
+     C*
+     CSR         FILLOH    BEGSR
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEARPHREC
+     C*
+     C*  Move fields from download file to purchase order header fields
+     C*
+     CSR                   Z-ADDPIHWHS    PHWHSE
+     CSR                   MOVE PIHPO     PHPO
+     CSR                   Z-ADDPIHVEN    PHVEN
+     CSR                   MOVE PIHVNA    PHVNAM
+     CSR                   MOVE PIHVA1    PHVAD1
+     CSR                   MOVE PIHVA2    PHVAD2
+     CSR                   MOVE PIHVCT    PHVCTY
+     CSR                   MOVE PIHVST    PHVST
+     CSR                   MOVE PIHVZP    PHVZP1
+     CSR                   MOVE '0'       PHSTAT
+413 MCSR                   MOVE '*CURCMD '$CVCMD
+413 MCSR                   CALL @CVTDT
+413 MCSR                   PARM           $CVTDT
+413 MCSR                   Z-ADD$CVD8O    PHDATE
+413 MCSR                   TIME           W1TIME
+413 ACSR                   Z-ADDW1HRMN    PHTIME
+413 ACSR         W1HRS     IFGE 12
+413 ACSR                   MOVE 'P'       PHAMPM
+413 ACSR                   ELSE
+413 ACSR                   MOVE 'A'       PHAMPM
+413 ACSR                   ENDIF
+     C*
+     CSR                   ENDSR
+405 AC*----------------------------------------------------------------
+405 AC*
+405 AC*  UPDXDK  Zero out PO seq #, when PO detail line is deleted.
+405 AC*
+405 ACSR         UPDXDK    BEGSR
+405 ACSR         XD3KEY    SETLLCROSSDK3
+405 ACSR         FOREVR    DOWEQFOREVR
+405 ACSR         XD3KEY    READECROSSDK3                 79
+405 ACSR         *IN79     IFEQ *ON
+405 ACSR                   LEAVE
+405 ACSR                   ENDIF
+405 ACSR                   MOVELODITEM    SVITEM 15
+405 ACSR         ODITEM    IFEQ PDITEM
+405 ACSR         XD3KEY    SETLLCROSSDK2
+405 ACSR         FOREVR    DOWEQFOREVR
+405 ACSR         XD3KEY    READECROSSDK2                 77
+405 AC*
+405 ACSR         *IN77     IFEQ *ON
+405 ACSR                   LEAVE
+405 ACSR                   ENDIF
+405 ACSR         ODKEY     CHAINORDD                 75
+405 ACSR         *IN75     IFEQ *OFF
+405 ACSR                   Z-ADD0         CDPOSQ
+405 ACSR                   UPDATCDREC
+405 ACSR                   LEAVE
+405 ACSR                   ELSE
+405 ACSR                   ITER
+405 ACSR                   ENDIF
+405 ACSR                   ENDDO
+405 AC*
+405 ACSR                   ENDIF
+405 ACSR                   ENDDO
+405 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZBKDN  Check breakdown quanties.
+     C*
+     CSR         ZZBKDN    BEGSR
+     CSR         PIDQO2    IFNE 0
+     CSR         ITFLG1    ANDNE'Y'
+     CSR                   MOVE DESC,3    DETMSG
+     CSR                   ADD  1         BADBRK
+     CSR                   ENDIF
+     C*
+     CSR         PIDQO3    IFNE 0
+     CSR         ITFLG2    ANDNE'Y'
+     CSR                   MOVE DESC,3    DETMSG
+     CSR                   ADD  1         BADBRK
+     CSR                   ENDIF
+     C*
+     C*  Move fields from download file to purchase order header fields
+     C*
+     CSR         PIDQO1    IFNE 0
+     CSR                   MOVE 'Y'       GOOD1   1
+     CSR                   ELSE
+     CSR         PIDQO2    IFNE 0
+     CSR         ITFLG1    ANDEQ'Y'
+     CSR                   MOVE 'Y'       GOOD1
+     CSR                   ELSE
+     CSR         PIDQO3    IFNE 0
+     CSR         ITFLG2    ANDEQ'Y'
+     CSR                   MOVE 'Y'       GOOD1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+220 AC*
+220 AC*  ZZCHKH  Check if header exists and if qty received.
+220 AC*
+220 ACSR         ZZCHKH    BEGSR
+220 ACSR                   MOVE *OFF      BADHDR  1
+220 ACSR         POHKEY    CHAINPOHDR                75
+220 ACSR         *IN75     IFEQ *OFF
+220 AC*  POHDR record exists, if none were received, delete PODTL records
+220 AC*  and update POHDR.
+220 ACSR         PHSTAT    IFEQ '0'
+220 ACSR                   MOVE *OFF      ENDH    1
+220 AC           PODKEY    SETLLPODTL
+220 AC           ENDH      DOUEQ*ON
+220 AC*
+220 AC           PODKEY    READEPODTL                    74
+220 AC           *IN74     IFEQ *ON
+220 AC                     MOVE *ON       ENDH
+220 AC                     GOTO ENDPD1
+220 AC                     ENDIF
+405 AC*
+405 AC*       Update PO seq# with 0 in Crossdock file.
+405 AC*
+405 ACSR                   EXSR UPDXDK
+220 AC*
+220 AC*       Delete detail record from PODTL file
+220 AC*
+220 ACSR                   DELETPDREC
+220 AC*
+220 AC           ENDPD1    TAG
+220 AC                     ENDDO
+220 AC*
+220 ACSR                   ELSE
+220 ACSR                   MOVE DESC,1    HEDMSG
+220 ACSR                   ADD  1         PREOH
+220 ACSR                   MOVE *ON       BADHDR
+220 ACSR                   ENDIF
+220 ACSR                   ENDIF
+     C*
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZRHEAD   Print report headings.
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         COUNT     IFGE LINPPG
+     CSR                   SETON                     81
+     CSR                   Z-ADD0         COUNT
+     CSR                   WRITEHEAD1
+     CSR                   ADD  3         COUNT
+     CSR                   WRITEHEAD2
+     CSR                   ADD  2         COUNT
+     CSR                   WRITEHEAD3
+     CSR                   ADD  2         COUNT
+     CSR                   WRITEHEAD4
+     CSR                   ADD  2         COUNT
+     CSR                   SETOF                     81
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+*EXIST*
+*INVALID ITEM*
+*BREAKDOWN INVALID*

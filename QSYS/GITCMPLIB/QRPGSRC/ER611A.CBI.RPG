@@ -1,0 +1,350 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  ER611A    View Summary by User - Process
+     F*  Hemant Kapadia
+     F*  18 September, 2001
+     F*
+     F*  Revisions
+     F*
+     F*    09/04/01  HNK  4.16
+     F*      - Created
+     F*
+416aAF*    07/14/02  HNK  4.16a
+     F*      - Fix - Use section type field from label file instead
+     F*        of PIRTRAN file.
+     F*      - Fix - Update direct minutes when there is change in
+     F*        trans number.  There could be more than one label rec
+     F*        for selection transaction.
+416dAF*    02/20/02  HNK  4.16d
+     F*      - Revised to exclude records if they are out of Shift time
+416bAF*    09/25/02  MLB  4.16b
+     F*      - Enh - Add support to accumulate number of returns put
+     F*        aways done by a user.
+     F*        Note: Return putaways will no longer be included in
+     F*        p/o putaways.
+416cAF*    09/26/02  MLB  4.16c
+     F*      - Fix - Revised program to only add direct/indirect time
+     F*        when transaction nbr changes.
+     F*
+417 AF*    02/20/03  HNK  4.17
+     F*      - Revised program to not count replenishments with zero
+     F*        quantity.
+417aAF*    02/20/03  HNK  4.17
+     F*      - Revised program to not count replenishments with zero
+     F*        quantity.
+417bAF*    04/25/03  MLB  4.17b
+     F*      - Fix: Revised *INZSR to set flag FIRST off.
+417cAF*    08/26/03  HNK  4.17c
+     F*      - Fix: Force 'F' in LBSTYP, if it is not 'F' or 'P'.  CBI
+     F*        had garbage in that field.
+CBIdAF*    12/22/03  HNK  CBId
+     F*      - ENH: Add staging to screen.
+417eAF*    07/08/04  HNK  4.17d
+     F*      - Enh: Add $PBTIM and $PETIM.  Don't look at shift time
+     F*             when we come in with $PBTIM and $PETIM
+417fAF*    08/18/04  HNK  4.17e
+     F*      - Enh: Count record only if Tran# and Slot # changed.
+     F*
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FER611   IP  E           K        DISK
+     F*ORCV3  IF  E           K        DISK
+416dAFSHIFT1  IF  E           K        DISK
+     FER611A  O   E           K        DISK                      A
+     I*----------------------------------------------------------------
+     IOQREC
+     I                                              PTEMP#L1
+     I*****************************************************************
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I*----------------------------------------------------------------
+     I*
+     I*  Program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  36 $LITEM
+     I                                       37  51 $LITMF
+     I                                       52  83 $LDESC
+     I*
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      None
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PFMDT  8
+     C                     PARM           $PENDT  8
+417e C                     PARM           $PBTIM  6
+417e C                     PARM           $PETIM  6
+     C*
+     C*  Main line
+     C*
+416dAC           FIRST     IFEQ *OFF
+416dAC                     EXSR ZZINZ
+416dAC                     MOVE *ON       FIRST
+416dAC                     ENDIF
+     C*
+     C                     MOVE $PFMDT    FRMDTE  80
+     C                     MOVE $PENDT    ENDDTE  80
+417e C                     MOVE $PBTIM    FRMTIM  60
+417e C                     MOVE $PETIM    ENDTIM  60
+     C*
+     C           LBGRP1    CABEQ'M'       SKIP
+     C*
+417cAC           LBGRP1    IFEQ 'S'
+417cAC           LBSTYP    ANDNE'F'
+417cAC           LBSTYP    ANDNE'P'
+417cAC                     MOVE 'F'       LBSTYP
+417cAC                     ENDIF
+     C*
+416dAC*  Skip records, if not within Shift's time range.
+     C*
+417e C           FRMTIM    IFEQ 0
+417e C           ENDTIM    ANDEQ0
+     C*
+416dAC           SHSTIM    IFGT 0
+     C*
+416dAC           PTSDTE    IFEQ FRMDTE
+416dAC           PTSTIM    ANDLTSHSTIM
+416dAC                     GOTO SKIP
+416dAC                     ENDIF
+     C*
+416dAC           PTSDTE    IFEQ ENDDTE
+416dAC           PTSTIM    ANDGTSHETIM
+416dAC                     GOTO SKIP
+416dAC                     ENDIF
+     C*
+416dAC                     ENDIF
+     C*
+417e C                     ENDIF
+     C*
+     C                     SELEC
+     C*  Idle time
+     C           PTTASK    WHEQ 'IDLE  '
+     C                     ADD  PTDMIN    W1IDLE
+     C*  Put-away
+     C           LBTYPE    WHEQ 'P'
+     C           LBGRP1    ANDEQ'P'
+     C           PTTASK    ANDNE'IDLE  '
+416bDC*          LBTYPE    OREQ 'P'
+416bDC*          LBGRP1    ANDEQ'R'
+416bDC*          PTTASK    ANDNE'IDLE  '
+416cAC           LBTRN#    IFNE SVTRN#
+417f C           LBDISP    ORNE SVDISP
+     C                     ADD  1         W1PUT
+     C                     ADD  PTDMIN    W1DMIN
+416cAC                     ENDIF
+416bAC*  Customer returns put-away
+416bAC           LBTYPE    WHEQ 'P'
+416bAC           LBGRP1    ANDEQ'R'
+416bAC           PTTASK    ANDNE'IDLE  '
+416cAC           LBTRN#    IFNE SVTRN#
+417f C           LBDISP    ORNE SVDISP
+416bAC                     ADD  1         W1RTNP
+416bAC                     ADD  PTDMIN    W1DMIN
+416cAC                     ENDIF
+     C*  Replenishment
+     C           LBTYPE    WHEQ 'R'
+     C           LBGRP1    ANDEQ'L'
+     C           PTTASK    ANDNE'IDLE  '
+416cAC           LBTRN#    IFNE SVTRN#
+417f C           LBDISP    ORNE SVDISP
+417 AC           PTPCS     IFGT 0
+     C                     ADD  1         W1REPL
+417 AC                     ENDIF
+     C                     ADD  PTDMIN    W1DMIN
+416cAC                     ENDIF
+     C*  Transfer
+     C           LBTYPE    WHEQ 'T'
+     C           LBGRP2    ANDEQ'A'
+     C           PTTASK    ANDNE'IDLE  '
+416cAC           LBTRN#    IFNE SVTRN#
+417f C           LBDISP    ORNE SVDISP
+417aAC           PTPCS     IFGT 0
+     C                     ADD  1         W1TFR
+417aAC                     ENDIF
+     C                     ADD  PTDMIN    W1DMIN
+416cAC                     ENDIF
+     C*  Verify
+     C           PTTASK    WHEQ 'VERIFY'
+     C           PTTASK    ANDNE'IDLE  '
+     C                     ADD  1         W1VRFY
+416cAC           LBTRN#    IFNE SVTRN#
+     C                     ADD  PTDMIN    W1DMIN
+416cAC                     ENDIF
+     C*  Fix - Selection
+     C           LBGRP1    WHEQ 'S'
+416aMC           LBSTYP    ANDEQ'F'
+416aDC**         PTSTYP    ANDEQ'F'
+     C           PTTASK    ANDNE'IDLE  '
+     C                     ADD  LBQPCK    W1FIX
+416aAC           LBTRN#    IFNE SVTRN#
+     C                     ADD  PTDMIN    W1DMIN
+416aAC                     ENDIF
+     C*  PIR - Selection
+     C           LBGRP1    WHEQ 'S'
+416aMC           LBSTYP    ANDEQ'P'
+416aDC**         PTSTYP    ANDEQ'P'
+     C           PTTASK    ANDNE'IDLE  '
+     C                     ADD  LBQPCK    W1PIR
+416aAC           LBTRN#    IFNE SVTRN#
+     C                     ADD  PTDMIN    W1DMIN
+416aAC                     ENDIF
+     C*
+CBId C*  Staging
+CBId C           PTTASK    WHEQ 'PUTSTG'
+CBId C           PTTASK    ANDNE'IDLE  '
+CBId C                     ADD  1         W1STAG
+CBId C           LBTRN#    IFNE SVTRN#
+CBId C                     ADD  PTDMIN    W1DMIN
+CBId C                     ENDIF
+     C*
+     C*  Indirect time
+     C*
+     C           TKTYPE    WHEQ 'I'
+     C                     ADD  PTIMIN    W1IMIN
+     C                     ENDSL
+     C*
+416aAC                     Z-ADDLBTRN#    SVTRN#
+417f C                     MOVE LBDISP    SVDISP
+     C*
+     C           SKIP      TAG
+     C*
+     C*****************************************************************
+     C*
+     CL1                   EXSR ZZUPD
+     CL1                   EXSR ZZZERO
+     CLR                   RETRN
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+417aDC*R                   MOVE '1'       FIRST   1
+417aMCSR                   MOVE *OFF      FIRST   1
+     CSR                   MOVE *OFF      FOREVR  1
+     CSR         *LIKE     DEFN WKRECV    W1RECV
+     CSR         *LIKE     DEFN WKPUT     W1PUT
+     CSR         *LIKE     DEFN WKREPL    W1REPL
+     CSR         *LIKE     DEFN WKTFR     W1TFR
+     CSR         *LIKE     DEFN WKVRFY    W1VRFY
+     CSR         *LIKE     DEFN WKFIX     W1FIX
+     CSR         *LIKE     DEFN WKPIR     W1PIR
+     CSR         *LIKE     DEFN WKIDLE    W1IDLE
+     CSR         *LIKE     DEFN WKDMIN    W1DMIN
+     CSR         *LIKE     DEFN WKIMIN    W1IMIN
+416bACSR         *LIKE     DEFN WKRTN     W1RTNP
+CBID CSR         *LIKE     DEFN WKSTAG    W1STAG
+416aACSR         *LIKE     DEFN LBTRN#    SVTRN#
+416aACSR                   Z-ADD0         SVTRN#
+417f CSR         *LIKE     DEFN LBDISP    SVDISP
+417f CSR                   MOVE *BLANKS   SVDISP
+     C*
+     C**         PORKEY    KLIST
+     C**                   KFLD           PTEMP#
+     C*
+416dACSR         SHKEY1    KLIST
+416dACSR                   KFLD           PTSHFT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+416dACSR         ZZINZ     BEGSR
+     CSR         SHKEY1    SETLLSHIFT1
+     CSR         SHKEY1    READESHIFT1                   79
+     CSR         *IN79     IFEQ *ON
+     CSR                   Z-ADD0         SHSTIM
+     CSR                   Z-ADD0         SHETIM
+     CSR                   ENDIF
+416dACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZZUPD     BEGSR
+     C*
+     C           PTEMP#    IFGT 0
+     C                     CLEARWKREC
+     C*          PORKEY    SETLLPORCV3
+     C*          FOREVR    DOWEQFOREVR
+     C*          PORKEY    READEPORCV3                   79
+     C*          *IN79     IFEQ *ON
+     C*                    LEAVE
+     C*                    ENDIF
+     C*          PORDTE    IFLT FRMDTE
+     C*          PORDTE    ORGT ENDDTE
+     C*                    ITER
+     C*                    ENDIF
+     C*          PORACT    IFEQ 'R'
+     C*                    ADD  1         W1RECV
+     C*                    ENDIF
+     C*          PORACT    IFEQ 'D'
+     C*                    SUB  1         W1RECV
+     C*                    ENDIF
+     C*                    ENDDO
+     C                     Z-ADDPTEMP#    WKEMP#
+     C                     MOVELUSFNAM    WKFNAM
+     C                     MOVELUSLNAM    WKLNAM
+     C*                    Z-ADDW1RECV    WKRECV
+     C                     Z-ADDW1PUT     WKPUT
+     C                     Z-ADDW1REPL    WKREPL
+     C                     Z-ADDW1TFR     WKTFR
+     C                     Z-ADDW1VRFY    WKVRFY
+     C                     Z-ADDW1FIX     WKFIX
+     C                     Z-ADDW1PIR     WKPIR
+     C                     Z-ADDW1IDLE    WKIDLE
+     C                     Z-ADDW1DMIN    WKDMIN
+     C                     Z-ADDW1IMIN    WKIMIN
+416bAC                     Z-ADDW1RTNP    WKRTNP
+CBId C                     Z-ADDW1STAG    WKSTAG
+     C                     WRITEWKREC
+     C                     ENDIF
+     C                     ENDSR
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C           ZZZERO    BEGSR
+     C                     Z-ADD0         W1RECV
+     C                     Z-ADD0         W1PUT
+     C                     Z-ADD0         W1REPL
+     C                     Z-ADD0         W1TFR
+     C                     Z-ADD0         W1VRFY
+     C                     Z-ADD0         W1FIX
+     C                     Z-ADD0         W1PIR
+     C                     Z-ADD0         W1IDLE
+     C                     Z-ADD0         W1DMIN
+     C                     Z-ADD0         W1IMIN
+416bAC                     Z-ADD0         W1RTNP
+CBId C                     Z-ADD0         W1STAG
+     C                     ENDSR

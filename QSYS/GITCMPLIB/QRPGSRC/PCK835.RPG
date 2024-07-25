@@ -1,0 +1,469 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  PCK835    Create ITEMSLS and ITEMAVG test records - Create
+     F*  21 June 2001
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+415 AF*    06/21/01  DAS  4.15
+     F*      - Created.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPCK835FMCF  E                    WORKSTN                        UC
+     F                                              KINFDS INFDS
+     F                                        MSGK  KSFILE MSGREC
+     FPIRITEM IP  E           K        DISK
+     FITEMSLS O   E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I              'CLCDUR'              C         @CLCDR
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I                                      133 140 $CVDR1
+     I                                      141 1450$CVVL1
+     I                                      146 153 $CVDR2
+     I                                      154 1580$CVVL2
+     I                                      159 166 $CVDR3
+     I                                      167 1710$CVVL3
+     I                                      172 179 $CVDR4
+     I                                      180 1840$CVVL4
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  15 ERITEM
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PJTYP  0 - Batch
+     C*              1 - Interactive
+     C*      $PTYPE  Sales quantity option
+     C*                1 = Static
+     C*                2 = Incrementing
+     C*                3 = Random
+     C*      $PMIN   Minimum for random.
+     C*      $PMAX   Maximum for randdom.
+     C*      $PWKS   Number of weeks to create.
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PJTYP  1
+     C                     PARM           $PTYPE  1
+     C                     PARM           $PMIN  155
+     C                     PARM           $PMAX  155
+     C                     PARM           $PWKS  155
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*  Only work with warehouse 900.
+     C*
+     C           ITWHSE    CABNE900       BOTTOM
+     C*
+     C*  Keep user informed if running interactively.
+     C*
+     C           $PJTYP    IFEQ *ON
+     C                     WRITESCREEN1
+     C                     ENDIF
+     C*
+     C*  Initialize static fields.
+     C*
+     C                     CLEARIHREC
+     C                     Z-ADDITWHSE    IHWHSE
+     C                     MOVE ITITEM    IHITEM
+     C                     Z-ADDSUNDTE    IHSTRD
+     C                     Z-ADD1         IHTQS1
+     C                     Z-ADD10        IHTQS2
+     C                     Z-ADD100       IHTQS3
+     C                     Z-ADD1000      IHTQS4
+     C                     Z-ADD100       IHTQS5
+     C                     Z-ADD10        IHTQS6
+     C                     Z-ADD1         IHTQS7
+     C                     Z-ADDIHTQS1    IHTQSW
+     C                     ADD  IHTQS2    IHTQSW
+     C                     ADD  IHTQS3    IHTQSW
+     C                     ADD  IHTQS4    IHTQSW
+     C                     ADD  IHTQS5    IHTQSW
+     C                     ADD  IHTQS6    IHTQSW
+     C                     ADD  IHTQS7    IHTQSW
+     C*
+     C*  Repeat for number of weeks user wants.
+     C*
+     C                     Z-ADD$PWKS     #WEEKS  30
+     C                     DO   #WEEKS
+     C*
+     C*    If user selected option 3, then get random quantities.
+     C*
+     C           $PTYPE    IFEQ '3'
+     C*
+     C                     Z-ADD$PMIN     $RMIN
+     C                     Z-ADD$PMAX     $RMAX
+     C*
+     C                     CALL 'RANDOM2'
+     C                     PARM           $RSEED  99
+     C                     PARM           $RMIN   60
+     C                     PARM           $RMAX   60
+     C                     PARM           $RNUM   60
+     C                     Z-ADD$RNUM     IHTQS1
+     C*
+     C                     CALL 'RANDOM2'
+     C                     PARM           $RSEED  99
+     C                     PARM           $RMIN   60
+     C                     PARM           $RMAX   60
+     C                     PARM           $RNUM   60
+     C                     Z-ADD$RNUM     IHTQS2
+     C*
+     C                     CALL 'RANDOM2'
+     C                     PARM           $RSEED  99
+     C                     PARM           $RMIN   60
+     C                     PARM           $RMAX   60
+     C                     PARM           $RNUM   60
+     C                     Z-ADD$RNUM     IHTQS3
+     C*
+     C                     CALL 'RANDOM2'
+     C                     PARM           $RSEED  99
+     C                     PARM           $RMIN   60
+     C                     PARM           $RMAX   60
+     C                     PARM           $RNUM   60
+     C                     Z-ADD$RNUM     IHTQS4
+     C*
+     C                     CALL 'RANDOM2'
+     C                     PARM           $RSEED  99
+     C                     PARM           $RMIN   60
+     C                     PARM           $RMAX   60
+     C                     PARM           $RNUM   60
+     C                     Z-ADD$RNUM     IHTQS5
+     C*
+     C                     CALL 'RANDOM2'
+     C                     PARM           $RSEED  99
+     C                     PARM           $RMIN   60
+     C                     PARM           $RMAX   60
+     C                     PARM           $RNUM   60
+     C                     Z-ADD$RNUM     IHTQS6
+     C*
+     C                     CALL 'RANDOM2'
+     C                     PARM           $RSEED  99
+     C                     PARM           $RMIN   60
+     C                     PARM           $RMAX   60
+     C                     PARM           $RNUM   60
+     C                     Z-ADD$RNUM     IHTQS7
+     C*
+     C                     Z-ADDIHTQS1    IHTQSW
+     C                     ADD  IHTQS2    IHTQSW
+     C                     ADD  IHTQS3    IHTQSW
+     C                     ADD  IHTQS4    IHTQSW
+     C                     ADD  IHTQS5    IHTQSW
+     C                     ADD  IHTQS6    IHTQSW
+     C                     ADD  IHTQS7    IHTQSW
+     C*
+     C                     ENDIF
+     C*
+     C*    Create record.
+     C*
+     C                     WRITEIHREC                  78
+     C*
+     C*    If user selected option 2, then increment qtys for next rec.
+     C*
+     C           $PTYPE    IFEQ '2'
+     C                     ADD  1         IHTQS1
+     C                     ADD  10        IHTQS2
+     C                     ADD  100       IHTQS3
+     C                     ADD  1000      IHTQS4
+     C                     ADD  100       IHTQS5
+     C                     ADD  10        IHTQS6
+     C                     ADD  1         IHTQS7
+     C*
+     C                     Z-ADDIHTQS1    IHTQSW
+     C                     ADD  IHTQS2    IHTQSW
+     C                     ADD  IHTQS3    IHTQSW
+     C                     ADD  IHTQS4    IHTQSW
+     C                     ADD  IHTQS5    IHTQSW
+     C                     ADD  IHTQS6    IHTQSW
+     C                     ADD  IHTQS7    IHTQSW
+     C*
+     C                     ENDIF
+     C*
+     C*   Get Sunday's date for next record.
+     C*
+     C                     MOVE '*CMDCMD '$CVCMD
+     C                     MOVE IHSTRD    $CVD8I
+     C                     MOVE '*SUBDAYS'$CVDR1
+     C                     Z-ADD7         $CVVL1
+     C                     CALL @CLCDR
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD8O    IHSTRD
+     C*
+     C                     ENDDO
+     C*
+     C           BOTTOM    TAG
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize variables
+     C*
+     CSR                   MOVE *ON       FOREVR  1
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+     C*    Retrieve today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*    Convert Current date to day number.
+     C*
+     CSR                   MOVE '*CMDNBR '$CVCMD
+     CSR                   MOVE TODAY     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    T       10
+     C*
+     C*   Compute Sunday date for current week.
+     C*
+     CSR                   MOVE '*CMDCMD '$CVCMD
+     CSR                   MOVE TODAY     $CVD8I
+     CSR                   MOVE '*SUBDAYS'$CVDR1
+     CSR         T         SUB  1         $CVVL1
+     CSR                   CALL @CLCDR
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    SUNDTE  80
+     C*
+     C*   Open display file if this program is being run interactively.
+     C*
+     CSR         $PJTYP    IFEQ *ON
+     CSR                   OPEN PCK835FM
+     CSR                   ENDIF
+     C*
+     C*   Initialize message handling
+     C*
+     CSR         $PJTYP    IFEQ *ON
+     CSR                   EXSR ZMIMSG
+     CSR                   ENDIF
+     C*
+     C*   Fool the compiler.
+     C*
+     CSR                   MOVE *BLANKS   DUMMY   1
+     CSR         DUMMY     IFNE *BLANKS
+     CSR                   READ PCK835FM                 50
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE #PROG     $PPRG  10
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMCPMQ  Clear program message queue.
+     C*
+     CSR         ZMCPMQ    BEGSR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMCSBF  Clear message subfile.
+     C*
+     CSR         ZMCSBF    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE *ON       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     CSR                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*   UT81201  Item recalculated successfully.
+     C*
+     CSR         ZM01      BEGSR
+     CSR                   MOVE 'UT81201' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG   4
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   UT81221  Item not recalculated - No ITEMQTY record.
+     C*
+     CSR         ZM21      BEGSR
+     CSR                   MOVE 'UT81221' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   UT81222  Item not recalculated - Item does not exist.
+     C*
+     CSR         ZM22      BEGSR
+     CSR                   MOVE 'UT81222' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   UT81223  Item not recalculated - Error updating ITEMQTY.
+     C*
+     CSR         ZM23      BEGSR
+     CSR                   MOVE 'UT81223' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR

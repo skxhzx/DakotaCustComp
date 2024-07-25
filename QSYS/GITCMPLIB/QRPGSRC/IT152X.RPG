@@ -1,0 +1,1714 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT152     Inventory transfer - Change
+     F*  26 September, 1994
+     F*  Dave Sommerville
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions:
+     F*
+     F*    11/11/94  DAS
+     F*      - Added logic for checking to see if the from slot's
+     F*        status code needs to be changed.
+     F*      - Sending back *OK instead of *PGMQ if everything goes
+     F*        well. The message is still sent back.
+     F*
+     F*    12/22/94  DAS
+     F*      - Added check for zero qty and "TO" slot occupied by
+     F*        another item.
+     F*
+     F*    01/13/95  DAS
+     F*      - Initialized the "to" slot's enter date if the status
+     F*        was 'Z' or 'V'.
+     F*
+     F*    02/21/95  DAS
+     F*      - Revised ZZUPD to set slot status to 'Z' for any slot
+     F*        in which all quantities are <= 0.
+     F*
+     F*    03/06/95  DAS  2.10
+     F*      - Replaced logic in routine ZZUPD that changed status to
+     F*        'A' or 'Z' with a call to program CHKSTAT.
+     F*
+     F*    03/31/95  DAS  2.10  (marked as FIX)
+     F*      - Added PIRITEM file.
+     F*      - Added ITKEY to ZZINZ routine.
+     F*      - Revised ZZFIL1 routine to get item record.
+     F*      - Revised ZZUPD to "up" stock qty before updating record.
+     F*
+     F*    04/12/95  DAS  2.10  (marked as FX2)
+     F*      - Revised "up" qty logic to use available qty.
+     F*      - Revised ZZUPD routine to calculate available qty before
+     F*        uping qty.
+     F*
+     F*    04/26/95  DAS  2.10
+     F*      - Revised ZZCHK1 routine to update $CQTY1,2,3 with
+     F*        CHGQT1,2,3 and to check $CQTY1,2,3 for negatives
+     F*        instead of NEWQT1,2,3.
+     F*
+     F*    07/07/95  DAS  2.10
+     F*      - Revised routine ZZUPD to initialize SLPRTY when the
+     F*        status of the "to" slot is 'Z' or 'V'.
+     F*
+     F*    08/21/95  DAS  2.10  (marked as FX3)
+     F*      - Revised routine ZZUPD to ensure the 'to' slot would
+     F*        be in the correct FIFO order.
+     F*      - Added SV variables to ZZINZ routine.
+     F*
+213 AF*    05/20/96  DAS  2.13
+     F*      - Revised to write out records to the ITEMADJ file for
+     F*        history - One for 'from' slot and one for 'to' slot.
+     F*
+213 AF*    05/20/96  RH   2.13
+     F*      - Added new fields for breakdown display ITFLG1 & ITFLG2.
+     F*      - Add screen 2, Change sc1 qty to 3 fields, add 3 unit of
+     F*        measure fields.
+     F*      - Add USESC field, to select screen to use for version.
+     F*
+216 AF*    08/05/96  RH   2.16
+     F*      - Change to set off all error indicators.
+     F*      - Correct error msg for verify catchweight.
+     F*      - Add code to protect/display catchweight field for *add.
+     F*      - Display Whse & Dept on one line.
+     F*      - Check if tie/high exists for slot, display warning.
+     F*      - Add CMD to call tie/high maintenance.
+     F*      - Add CMD to call view item slot information.
+     F*
+218 AF*    01/24/97  HNK  2.18
+     F*      - Change to display W1STYP and W1ITEM displayed on the
+     F*        screen, instead of SLSTYP and SLITEM.
+     F*        Update of memo field in adjustment file corrected.
+     F*        1 added to IATIME so that we do not get duplicate key
+     F*        error while writing 'From' and 'To' record one after
+     F*        other.
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  01 - 10   Position cursor indicators
+     F*  21 - 30   Reverse display indicators
+     F*  90        View mode (protect all fields)
+     F*  91        Change mode (protect key fields)
+     F*  97        Alawys on (used for SFLEND keyword)
+     F*  98        Error on screen (sound alarm)
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT152FM CF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        MSGK  KSFILE MSGREC
+     FSLOT2   UF  E           K        DISK
+     F            SLREC                             KRENAMERECORD
+     FWAREHS  IF  E           K        DISK
+     FWHDEPT  IF  E           K        DISK
+     FSLOTSTATIF  E           K        DISK
+FIX AFPIRITEM IF  E           K        DISK
+213 AFUNMESR  IF  E           K        DISK
+216 AFITEMDEF IF  E           K        DISK
+213 AFITEMADJ O   E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+     E                    $MD       128  1
+    ME*                   DESC    1   2 50
+    ME                    DESC    1   3 50
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  26 $PWHDP
+     I                                       27  38 $PDISP
+216 AI                                       39  53 $PITEM
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$AERM       DS
+     I                                        1  60 XAERM
+     I                                        1   4 $AMSG
+     I$CERM       DS
+     I                                        1  60 XCERM
+     I                                        1   4 $CMSG
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  20 $LCODE
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  26 $LWHDP
+     I                                       27  41 $LITEM
+     I                                       42  53 $LDISP
+     I                                       54  58 $LDESG
+     I                                       59  60 $LSTAT
+     I                                       61  62 $LSDEF
+     I                                       63  64 $LACTV
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERQTY
+     I                                       11  25 ERITEM
+     I                                       26  37 ERFROM
+     I                                       38  49 ERTO
+     I*
+     I                                        1  12 ERDISP
+     I*
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *ADD     - Create new batch.
+     C*              *EDIT    - Edit batch.
+     C*              *DELETE  - Delete batch.
+     C*              *PRINT   - Print batch edit listing.
+     C*              *POST    - Post batch.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains key for everything by *ADD.
+     C*
+     C*    Returned Parameters
+     C*      $PUKY   Contains new batch number for *ADD.
+     C*              Unchanged for everything else.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *ON       *IN97
+     C                     MOVE *OFF      *IN90
+     C                     MOVE *OFF      *IN91
+213 AC                     MOVE *OFF      *IN92
+213 AC                     MOVE *OFF      *IN93
+     C                     MOVE *OFF      ERROR
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C                     EXSR ZZINZ2
+     C           ERROR     IFEQ *ON
+     C                     MOVE 'EOJ'     NXTSCR
+     C                     END
+     C*
+     C           NXTSCR    DOWNE'EOJ'
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+213 AC           NXTSCR    CASEQ'02 '     SC2
+     C                     END
+     C                     END
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     EXSR ZSCLR
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ *ON
+     CSR                   MOVE *ON       *IN98
+     CSR                   END
+     C*
+     C*   Overlay screen with error messages
+     C*
+     C                     EXSR ZMDMSG
+     C*
+     C*  Overlay screen with screen to be processed.
+     C*
+     CSR         NXTSCR    IFEQ '01 '
+     CSR                   EXFMTSCREEN1                50
+     CSR                   END
+     C*
+213 ACSR         NXTSCR    IFEQ '02 '
+213 ACSR                   EXFMTSCREEN2                50
+213 ACSR                   END
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     010203
+     CSR                   SETOF                     040506
+     CSR                   SETOF                     070809
+216 MCSR                   SETOF                     101112
+216 ACSR                   SETOF                     131415
+216 ACSR                   SETOF                     161718
+216 ACSR                   SETOF                     1920
+     CSR                   SETOF                     212223
+     CSR                   SETOF                     242526
+     CSR                   SETOF                     272829
+216 MCSR                   SETOF                     303132
+216 ACSR                   SETOF                     333435
+216 ACSR                   SETOF                     363738
+216 ACSR                   SETOF                     3940
+     CSR                   SETOF                     98
+     CSR                   MOVE *OFF      WARN    1
+     CSR                   MOVE *OFF      ERROR   1
+     CSR                   MOVE *OFF      CMDTKN  1
+     CSR                   Z-ADD0         E       20
+     C*
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     Screen initialization and wrap-up routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 01 initialization
+     C*
+     CSR         SCR01I    BEGSR
+     CSR                   MOVE '01 '     NXTSCR  3
+     C*
+     C*  Get field defaults if this is an add.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   EXSR ZZDFT1
+     CSR                   ELSE
+     C*
+     C*  Otherwise get existing record(s).
+     C*
+     CSR                   MOVE *ON       *IN91
+     CSR                   EXSR ZZGET1
+     CSR                   EXSR ZZFIL1
+     CSR                   END
+     CSR                   MOVE *OFF      OVRRID  1
+     CSR         END01I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 02 initialization
+     C*
+     CSR         SCR02I    BEGSR
+     CSR                   MOVE '02 '     NXTSCR  3
+     C*
+     C*  Get field defaults if this is an add.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   EXSR ZZDFT2
+     CSR                   ELSE
+     C*
+     C*  Otherwise get existing record(s).
+     C*
+     CSR                   MOVE *ON       *IN91
+     CSR                   EXSR ZZGET2
+     CSR                   EXSR ZZFIL2
+     CSR                   END
+     CSR                   MOVE *OFF      OVRRID  1
+     CSR         END02I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen 1
+     C*
+     CSR         SC1       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR         $PCMD     IFNE '*VIEW   '
+     CSR                   EXSR SCR01I
+     CSR                   END
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for other command keys BEFORE verification and update.
+     C*
+     CSR                   EXSR ZZCMD1
+     CSR         CMDTKN    CABEQ*ON       ENDSC1
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR         $PCMD     OREQ '*CHANGE '
+     CSR                   EXSR ZZCHK1
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR                   EXSR ZZUPD
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR                   END
+     C*
+     C*  Everything went fine so get out of program.
+     C*
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR         ENDSC1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SC2  -  Screen 2
+     C*
+     CSR         SC2       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR         $PCMD     IFNE '*VIEW   '
+     CSR                   EXSR SCR02I
+     CSR                   END
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for other command keys BEFORE verification and update.
+     C*
+     CSR                   EXSR ZZCMD2
+     CSR         CMDTKN    CABEQ*ON       ENDSC2
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR         $PCMD     OREQ '*CHANGE '
+     CSR                   EXSR ZZCHK2
+     CSR         ERROR     CABEQ*ON       ENDSC2
+     CSR                   EXSR ZZUPD
+     CSR         ERROR     CABEQ*ON       ENDSC2
+     CSR                   END
+     C*
+     C*  Everything went fine so get out of program.
+     C*
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR         ENDSC2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01122     ROLLUP  50
+     C                     Z-ADD01123     ROLLDN  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE *ON       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     CSR                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*   PIR0009  Number can not be negative.
+     C*
+     CSR         ZM0009    BEGSR
+     CSR                   MOVE 'PIR0009' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEADESC      ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      0105
+     C*
+     CSR         ZM0105    BEGSR
+     CSR                   MOVE 'PIR0105' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR0201  Code must be entered for create.
+     C*
+     CSR         ZM0201    BEGSR
+     CSR                   MOVE 'PIR0201' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEADESC      ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR0202  Code already exists.
+     C*
+     CSR         ZM0202    BEGSR
+     CSR                   MOVE 'PIR0202' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEADESC      ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7971  Error in writing a record.
+     C*
+     CSR         ZM71      BEGSR
+     CSR                   MOVE 'PIR7971' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7972  Error in updating a record.
+     C*
+     CSR         ZM72      BEGSR
+     CSR                   MOVE 'PIR7972' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR7973  Slot record does not exist.
+     C*
+     CSR         ZM7973    BEGSR
+     CSR                   MOVE 'PIR7973' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR7974  Slot record is locked.
+     C*
+     CSR         ZM7974    BEGSR
+     CSR                   MOVE 'PIR7974' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR9905  Cursor not in correct position for lookup.
+     C*
+     CSR         ZM9905    BEGSR
+     CSR                   MOVE 'PIR9905' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+    AC*----------------------------------------------------------------
+    AC*   PIR0110  Quantity must be greater than 0.
+    AC*
+    ACSR         ZM0110    BEGSR
+    ACSR                   MOVE 'PIR0110' #MSGID
+    ACSR                   MOVE '*DIAG  ' #MSGTP
+    ACSR                   MOVEAERRMSG    $MD,1
+    ACSR                   EXSR ZMPMSG
+    ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR1001  Invalid value entered.
+     C*
+     CSR         ZM1001    BEGSR
+     CSR                   MOVE 'PIR1001' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+216 AC*     ZM07  Warning - No record exists in Tie/High def. file.
+216 AC*
+216 ACSR         ZM07      BEGSR
+216 ACSR                   MOVE 'IT13207' #MSGID
+216 ACSR                   MOVE '*DIAG  ' #MSGTP
+216 ACSR                   MOVE SLDISP    ERDISP
+216 ACSR                   MOVE SLITEM    ERITEM
+216 ACSR                   MOVEAERRMSG    $MD,1
+216 ACSR                   EXSR ZMPMSG
+216 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT12216  Quantity can not be negative when replacing.
+     C*
+     CSR         ZM16      BEGSR
+     CSR                   MOVE 'IT12216' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT12215  Slot does not contian item.
+     C*
+     CSR         ZM15      BEGSR
+     CSR                   MOVE 'IT12215' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT12217  Warning: Slot quanitiy changed before adjustment.
+     C*
+     CSR         ZM17      BEGSR
+     CSR                   MOVE 'IT12217' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT12273  Adjustment not completed - Record doesn't exist.
+     C*
+     CSR         ZM73      BEGSR
+     CSR                   MOVE 'IT12273' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT12274  Adjustment not completed - Record locked.
+     C*
+     CSR         ZM74      BEGSR
+     CSR                   MOVE 'IT12274' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT15201  Transfer completed successfully.
+     C*
+     CSR         ZM1521    BEGSR
+     CSR                   MOVE 'IT15201' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT15202  From and To slot cannot be same.
+     C*
+     CSR         ZM1522    BEGSR
+     CSR                   MOVE 'IT15202' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+    AC*----------------------------------------------------------------
+    AC*     IT15203  To slot contains a different item.
+    AC*
+    ACSR         ZM1523    BEGSR
+    ACSR                   MOVE 'IT15203' #MSGID
+    ACSR                   MOVE '*DIAG  ' #MSGTP
+    ACSR                   MOVE *BLANKS   $MD
+    ACSR                   EXSR ZMPMSG
+    ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK1   Screen 1 error checking.
+     C*
+     CSR         ZZCHK1    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  Verify "To Slot" number.
+     C*
+     CSR         TOKEY     CHAINRECORD              N79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN01
+     CSR                   EXSR ZM73
+     CSR                   GOTO ENDCK1
+     CSR                   ENDIF
+     C*
+     C*   From and To slot cannot be same.
+     C*
+     CSR         W1DISP    IFEQ FMDISP
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN01
+     CSR                   EXSR ZM1522
+     CSR                   GOTO ENDCK1
+     CSR                   ENDIF
+    AC*
+    AC*   To slot cannot have a different item.
+    AC*
+    ACSR         SLITEM    IFNE *BLANKS
+    ACSR         SLITEM    ANDNESVITEM
+    ACSR                   MOVE *ON       ERROR
+    ACSR                   MOVE *ON       *IN21
+    ACSR                   MOVE *ON       *IN01
+    ACSR                   EXSR ZM1523
+    ACSR                   GOTO ENDCK1
+    ACSR                   ENDIF
+     C*
+216 AC*   Verify record exists in itemdef (tie/high) file.
+216 AC*   If no record is found, display warning message.
+     C*
+216 ACSR         OVRRID    IFEQ *OFF
+216 ACSR         IDKEY     CHAINITEMDEF              79
+216 ACSR         *IN79     IFEQ *ON
+216 ACSR                   MOVE *ON       ERROR
+216 ACSR                   MOVE *ON       WARN
+216 ACSR                   MOVE *BLANKS   ERRMSG
+216 ACSR                   EXSR ZM07
+216 ACSR                   ENDIF
+216 ACSR                   ENDIF
+     C*
+     C*
+     C*   Verify quantity.
+213 ACSR         USESC     IFEQ 1
+     CSR                   Z-ADDW1QT01    W1QTY1
+     CSR                   Z-ADDW1QT02    W1QTY2
+     CSR                   Z-ADDW1QT03    W1QTY3
+213 ACSR                   Z-ADDW1QT01    $CQTY1
+213 ACSR                   Z-ADDW1QT02    $CQTY2
+213 ACSR                   Z-ADDW1QT03    $CQTY3
+     CSR                   ENDIF
+     C*
+     C*     Convert string to quantities.
+     C*
+213 ACSR         USESC     IFEQ 2
+     CSR         W2QTY     ANDNE*BLANKS
+     CSR                   MOVE '*STR2QTY'$CCMD
+     CSR                   MOVE #PROG     $CPRG
+     CSR                   MOVE W2QTY     $CQSTR
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD   8
+     CSR                   PARM           $CPRG  10
+     CSR                   PARM           $CQTY1  70
+     CSR                   PARM           $CQTY2  70
+     CSR                   PARM           $CQTY3  70
+     CSR                   PARM           $CUM1   2
+     CSR                   PARM           $CUM2   2
+     CSR                   PARM           $CUM3   2
+     CSR                   PARM           $CQSTR 10
+     CSR                   PARM           $CUSTR 17
+     CSR                   PARM           $CRTN   8
+     CSR                   PARM           $CERM
+     CSR         $CRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN22
+     CSR                   MOVE *ON       *IN02
+     CSR                   MOVE $CMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   Z-ADD$CQTY1    W1QTY1
+     CSR                   Z-ADD$CQTY2    W1QTY2
+     CSR                   Z-ADD$CQTY3    W1QTY3
+     CSR                   ENDIF
+    AC*
+    AC*  Verify quantity is greater than zero.
+    AC*
+    ACSR         W1QTY1    IFLE 0
+    ACSR         W1QTY2    ANDLE0
+    ACSR         W1QTY3    ANDLE0
+    ACSR                   MOVE *ON       ERROR
+    ACSR                   MOVE *ON       *IN22
+    ACSR                   MOVE *ON       *IN02
+    ACSR                   MOVE *BLANKS   ERRMSG
+    ACSR                   MOVEADESC,3    ERRMSG
+    ACSR                   EXSR ZM0110
+    ACSR                   GOTO ENDCK1
+    ACSR                   ENDIF
+     C*
+     C*  If error has occured then skip the rest of the checks.
+     C*
+     CSR         ERROR     CABEQ*ON       ENDCK1
+     C*
+     C*  Get slot record and lock it this time.
+     C*
+     CSR         FILEKY    CHAINRECORD               7978
+     C*
+     C*    Record locked.
+     C*
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM74
+     CSR                   GOTO ENDCK1
+     CSR                   ENDIF
+     C*
+     C*    Record not found.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM73
+     CSR                   GOTO ENDCK1
+     CSR                   ENDIF
+     C*
+     C*    See if quanities or status has changed
+     C*
+     CSR                   EXSR ZZFIL0
+     CSR         OVRRID    IFEQ *OFF
+     CSR         $CQTY1    IFNE SAVQT1
+     CSR         $CQTY2    ORNE SAVQT2
+     CSR         $CQTY3    ORNE SAVQT3
+     CSR                   MOVE *ON       WARN
+     CSR                   MOVE *ON       ERROR
+     CSR                   UNLCKSLOT2
+     CSR                   EXSR ZM17
+     CSR                   GOTO ENDCK1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*     Decrease quantity from the "FROM SLOT".
+     C*
+     CSR                   Z-ADDW1QTY1    CHGQT1
+     CSR                   Z-ADDW1QTY2    CHGQT2
+     CSR                   Z-ADDW1QTY3    CHGQT3
+     CSR         SLSTK1    SUB  W1QTY1    NEWQT1
+     CSR         SLSTK2    SUB  W1QTY2    NEWQT2
+     CSR         SLSTK3    SUB  W1QTY3    NEWQT3
+     C*
+210 DC*  New quantities can not be negative.
+210 MC*  New available quantities can not be negative.
+     C*
+210 ACSR                   SUB  CHGQT1    $CQTY1
+210 ACSR                   SUB  CHGQT2    $CQTY2
+210 ACSR                   SUB  CHGQT3    $CQTY3
+210 DC*          NEWQT1    IFLT 0
+210 DC*          NEWQT2    ORLT 0
+210 DC*          NEWQT3    ORLT 0
+210 MCSR         $CQTY1    IFLT 0
+210 MCSR         $CQTY2    ORLT 0
+210 MCSR         $CQTY3    ORLT 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN22
+     CSR                   MOVE *ON       *IN02
+     CSR                   UNLCKSLOT2
+     CSR                   EXSR ZM16
+     CSR                   ENDIF
+     C*
+     CSR         ENDCK1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK2   Screen 2 error checking.
+     C*
+     CSR         ZZCHK2    BEGSR
+     CSR                   EXSR ZZCHK1
+     C*
+     CSR         ENDCK2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD1   User defined command keys for screen 1.
+     C*
+     CSR         ZZCMD1    BEGSR
+     CSR                   MOVE *OFF      CMDTKN
+     C*
+     C*  Test for F4 - Lookup
+     C*
+     CSR         *INKD     IFEQ *ON
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     C*
+     CSR                   SELEC
+     C*
+     C*     SLOT.
+     C*
+     CSR         ROW#      WHEQ 14
+     CSR                   MOVE *ON       *IN01
+     CSR                   MOVE '*GENERAL'$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE $PWHDP    $LWHDP
+     CSR                   MOVE *BLANKS   $LITEM
+     CSR                   MOVE W1DISP    $LDISP
+     CSR                   CALL 'SL900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LDISP    W1DISP
+     CSR                   ENDIF
+     C*
+     C*     Cursor not on a valid lookup field.
+     C*
+     CSR                   OTHER
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM9905
+     CSR                   ENDSL
+     CSR                   GOTO ENDCM1
+     CSR                   ENDIF
+216 AC*
+216 AC*      F8 - View item slot information.
+216 AC*
+216 ACSR         *INKH     IFEQ *ON
+216 ACSR                   MOVE *ON       CMDTKN
+216 ACSR                   MOVE W1DISP    $PDISP
+216 ACSR                   MOVE SLITEM    $PITEM
+216 DC*R                   MOVE 'IT135   '$PCMD
+216 ACSR                   CALL 'IT135'
+216 ACSR                   PARM           $PARMS
+216 ACSR                   ENDIF
+     C*
+     C*      F20 - Accept Warning.
+     C*
+     CSR         *INKU     IFEQ *ON
+     CSR                   MOVE *ON       OVRRID
+     CSR                   ENDIF
+     C*
+216 AC*
+216 AC*      F21 - Item Tie/High Maintenance.
+216 AC*
+216 ACSR         *INKV     IFEQ *ON
+216 ACSR                   MOVE *ON       CMDTKN
+216 ACSR                   Z-ADD$PWHSE    WHSE    30
+216 ACSR                   CALL 'IT141'
+216 ACSR                   PARM           WHSE
+216 DC*R                   PARM           $PITEM
+218 DC*R                   PARM           SLITEM
+218 ACSR                   PARM           W1ITEM
+216 ACSR                   ENDIF
+     C*
+     CSR         ENDCM1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD2   User defined command keys for screen 2.
+     C*
+     CSR         ZZCMD2    BEGSR
+     CSR                   EXSR ZZCMD1
+     C*
+     CSR         ENDCM2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDFT1   Get default values for add.
+     C*
+     CSR         ZZDFT1    BEGSR
+     C*
+     C*   This program is only called with *CHANGE.
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDFT2   Get default values for add.
+     C*
+     CSR         ZZDFT2    BEGSR
+     C*
+     C*   This program is only called with *CHANGE.
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL0   Fill screen 1 & 2 heading fields.
+     C*
+     CSR         ZZFIL0    BEGSR
+     CSR                   MOVE SLITEM    SVITEM
+218 ACSR                   MOVE SLITEM    W1ITEM
+218 ACSR                   MOVE SLSTYP    W1STYP
+     C*
+     C*   Convert quantity to string.
+     C*
+     CSR                   MOVE '*QTY2STR'$CCMD
+     CSR                   MOVE '#PROG   '$CPRG
+     C*
+     CSR                   CALL 'SLOTQTY'
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     C*
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     C*
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     C*
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     C*
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     C*
+     CSR                   PARM           STOCK1  50
+     CSR                   PARM           STOCK2  30
+     CSR                   PARM           STOCK3  30
+     C*
+     CSR                   PARM           AVAIL1  50
+     CSR                   PARM           AVAIL2  30
+     CSR                   PARM           AVAIL3  30
+     C*
+     CSR                   Z-ADDAVAIL1    $CQTY1
+     CSR                   Z-ADDAVAIL2    $CQTY2
+     CSR                   Z-ADDAVAIL3    $CQTY3
+     C*
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD
+     CSR                   PARM           $CPRG
+     CSR                   PARM           $CQTY1
+     CSR                   PARM           $CQTY2
+     CSR                   PARM           $CQTY3
+     CSR                   PARM           $CUM1
+     CSR                   PARM           $CUM2
+     CSR                   PARM           $CUM3
+     CSR                   PARM           $CQSTR
+     CSR                   PARM           $CUSTR
+     CSR                   PARM           $CRTN
+     CSR                   PARM           $CERM
+     CSR                   MOVEL$CQSTR    W1CURQ
+     C*
+     C*  Get status description.
+     C*
+     CSR         SLSTAT    CHAINSLOTSTAT             79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   SSDESC
+     CSR                   MOVELSLSTAT    SSDESC
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL1   Fill screen 1 fields with info from file.
+     C*
+     CSR         ZZFIL1    BEGSR
+     C*
+     C*   Get Unit of measure fields
+     CSR                   MOVE *BLANKS   W1UM1
+     CSR                   MOVE *BLANKS   W1UM2
+     CSR                   MOVE *BLANKS   W1UM3
+     CSR                   EXSR ZZUOM
+     C*
+FIX AC*
+FIX AC*   Get item record.
+FIX AC*
+FIX ACSR         KEYIT     CHAINPIRITEM              79
+FIX ACSR         *IN79     IFEQ *ON
+FIX ACSR                   Z-ADD0         ITUMQ2
+FIX ACSR                   Z-ADD0         ITUMQ3
+FIX ACSR                   ENDIF
+     C*
+     C*   Initialize entry fields
+     C*
+     CSR                   MOVE *BLANKS   W1DISP
+213 ACSR                   Z-ADD0         W1QT01
+213 ACSR                   Z-ADD0         W1QT02
+213 ACSR                   Z-ADD0         W1QT03
+213 ACSR                   Z-ADD0         W1QTY1
+213 ACSR                   Z-ADD0         W1QTY2
+213 ACSR                   Z-ADD0         W1QTY3
+     C*
+     C*   Initialize header fields. Save quantities and status for
+     C*     comparison before updating.
+     C*
+     CSR                   EXSR ZZFIL0
+     CSR         *LIKE     DEFN $CQTY1    SAVQT1
+     CSR         *LIKE     DEFN $CQTY2    SAVQT2
+     CSR         *LIKE     DEFN $CQTY3    SAVQT3
+     CSR         *LIKE     DEFN SLSTAT    SAVST
+     CSR                   Z-ADD$CQTY1    SAVQT1
+     CSR                   Z-ADD$CQTY2    SAVQT2
+     CSR                   Z-ADD$CQTY3    SAVQT3
+     CSR                   MOVE SLSTAT    SAVST
+     CSR                   MOVE SLDISP    FMDISP
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL2   Fill screen 2 fields with info from file.
+     C*
+     CSR         ZZFIL2    BEGSR
+     C*
+     C*   Initialize entry fields
+     C*
+     CSR                   MOVE *BLANKS   W2QTY
+     CSR                   EXSR ZZFIL1
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGET1   Get record(s) for screen 1.
+     C*
+     CSR         ZZGET1    BEGSR
+     C*
+     C*   Get record from main file.
+     C*
+     CSR         FILEKY    CHAINRECORD              N79
+     C*
+     C*  Record not found.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE DESC,1    ERRMSG
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   EXSR ZM7973
+     CSR                   GOTO ENDGT1
+     CSR                   ENDIF
+     C*
+     C*  Slot does not contain an item.
+     C*
+     CSR         SLITEM    IFEQ *BLANKS
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   EXSR ZM15
+     CSR                   GOTO ENDGT1
+     CSR                   ENDIF
+     C*
+     CSR         ENDGT1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGET2   Get record(s) for screen 2.
+     C*
+     CSR         ZZGET2    BEGSR
+     C*
+     CSR                   EXSR ZZGET1
+     C*
+     CSR         ENDGT2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     C*
+     C*  Define key for main file.
+     C*
+     CSR         FILEKY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           $PDISP
+     C*
+     CSR         TOKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           W1DISP
+FIX AC*
+FIX AC*  Define key for PIRITEM file.
+FIX AC*
+FIX ACSR         KEYIT     KLIST
+FIX ACSR                   KFLD           $PWHSE
+FIX ACSR                   KFLD           SLITEM
+216 AC*
+216 AC*  Define key for itemdef file.
+216 AC*
+216 ACSR         IDKEY     KLIST
+216 ACSR                   KFLD           $PWHSE
+218 DC*R                   KFLD           SLITEM
+218 ACSR                   KFLD           W1ITEM
+216 ACSR                   KFLD           SLSDEF
+216 AC*
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR         *LIKE     DEFN $CQTY1    W1QTY1
+     CSR         *LIKE     DEFN $CQTY2    W1QTY2
+     CSR         *LIKE     DEFN $CQTY3    W1QTY3
+     CSR         *LIKE     DEFN SLSTK1    CHGQT1
+     CSR         *LIKE     DEFN SLSTK2    CHGQT2
+     CSR         *LIKE     DEFN SLSTK3    CHGQT3
+     CSR         *LIKE     DEFN SLSTK1    NEWQT1
+     CSR         *LIKE     DEFN SLSTK2    NEWQT2
+     CSR         *LIKE     DEFN SLSTK3    NEWQT3
+     CSR         *LIKE     DEFN SLITEM    SVITEM
+FX3 ACSR         *LIKE     DEFN SLENTD    SVENTD
+FX3 ACSR         *LIKE     DEFN SLEXPD    SVEXPD
+FX3 ACSR         *LIKE     DEFN SLPRTY    SVPRTY
+     C*
+     CSR                   MOVE #PROG     $LPRG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Program initialization. Called from main line.
+     C*
+     CSR         ZZINZ2    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     CSR         $PWHSE    CHAINWAREHS               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   WHDESC
+     CSR                   ENDIF
+     CSR                   MOVE $PWHSE    $CSTR
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$CCMD   8
+     CSR                   PARM           $CSTR  30
+     CSR                   MOVEL$CSTR     WOWHSE
+     C*
+     C*   Get department description.
+     C*
+     CSR         KEYWD     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR         KEYWD     CHAINWHDEPT               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   WDCODE
+     CSR                   MOVE *BLANKS   WDDESC
+     CSR                   ENDIF
+     C*
+     C*   Select first screen to display.
+     C*
+     CSR                   MOVE *OFF      LOCK    1
+213 ACSR                   Z-ADD1         USESC   10
+213 ACSR         USESC     IFEQ 1
+     CSR                   EXSR SCR01I
+213 ACSR                   ELSE
+213 ACSR                   EXSR SCR02I
+213 ACSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUOM    Get Unit Of Measure Normal, Breakdown1, Breakdown2.
+     C*
+     CSR         ZZUOM     BEGSR
+     C*
+     C*   Get Unit of Measures.
+     C*    *IN92=Protect & non-display breakdown1 unit of measure
+     C*    *IN93=Protect & non-display breakdown2 unit of measure
+     C*
+     C*
+     CSR         KEYIT     CHAINPIRITEM              75
+     CSR         *IN75     IFEQ *ON
+     CSR                   MOVE *ON       *IN92
+     CSR                   MOVE *ON       *IN93
+     CSR                   GOTO ENDUOM
+     CSR                   ELSE
+213 DC*R         ITUM2     IFEQ *BLANKS
+     CSR         ITFLG1    IFEQ 'N'
+     CSR                   MOVE *ON       *IN92
+     CSR                   ENDIF
+213 DC*R         ITUM3     IFEQ *BLANKS
+     CSR         ITFLG2    IFEQ 'N'
+     CSR                   MOVE *ON       *IN93
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ITUM1     CHAINUNMESR               75
+     CSR         *IN75     IFEQ *OFF
+     CSR                   MOVE UMSHRT    W1UM1
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   W1UM1
+     CSR                   ENDIF
+     C*
+     CSR         *IN92     IFEQ *OFF
+     CSR         ITUM2     CHAINUNMESR               75
+     CSR         *IN75     IFEQ *OFF
+     CSR                   MOVE UMSHRT    W1UM2
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   W1UM2
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         *IN93     IFEQ *OFF
+     CSR         ITUM3     CHAINUNMESR               75
+     CSR         *IN75     IFEQ *OFF
+     CSR                   MOVE UMSHRT    W1UM3
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   W1UM3
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR         ENDUOM    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD    Update record.
+     C*
+     CSR         ZZUPD     BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    SLSDTE
+     C*
+     CSR                   TIME           SLSTIM
+     CSR                   MOVE SLITEM    SVITEM
+FX3 AC*
+FX3 AC*     Save FIFO information from "From" slot
+FX3 AC*
+FX3 ACSR                   Z-ADDSLPRTY    SVPRTY
+FX3 ACSR                   Z-ADDSLEXPD    SVEXPD
+FX3 ACSR                   Z-ADDSLENTD    SVENTD
+     C*
+     C*   Update slot record. (From Slot)
+     C*
+     CSR                   Z-ADDNEWQT1    SLSTK1
+     CSR                   Z-ADDNEWQT2    SLSTK2
+     CSR                   Z-ADDNEWQT3    SLSTK3
+210 DC*
+210 DC*      See if we need to change the slot status to 'Z '.
+210 DC*
+210 DC*        - All quantities have to be less than or equal to zero.
+210 DC*        - Slot must have one of the following characteristics:
+210 DC*            - PIR slot.
+210 DC*            - Fixed slot, non-reserved.
+210 DC*            - Fixed slot, reserved, non-picking.
+210 DC*        - Reserved picking slots are left alone.
+210 DC*
+210 DC*          SLSTK1    IFLE 0
+210 DC*          SLSTK2    ANDLE0
+210 DC*          SLSTK3    ANDLE0
+210 DC*          SLALC1    ANDLE0
+210 DC*          SLALC2    ANDLE0
+210 DC*          SLALC3    ANDLE0
+210 DC*          SLTFR1    ANDLE0
+210 DC*          SLTFR2    ANDLE0
+210 DC*          SLTFR3    ANDLE0
+210 DC*          SLPCK1    ANDLE0
+210 DC*          SLPCK2    ANDLE0
+210 DC*          SLPCK3    ANDLE0
+210  C*          SLRCV1    ANDLE0
+210  C*          SLRCV2    ANDLE0
+210  C*          SLRCV3    ANDLE0
+210  C*
+209 DC*          SLSTYP    IFEQ 'P'
+209 DC*
+209 DC*          SLSTYP    OREQ 'F'
+209 DC*          SLRSRV    ANDEQ'N'
+209 DC*
+209 DC*          SLSTYP    OREQ 'F'
+209 DC*          SLRSRV    ANDEQ'Y'
+209 DC*          SLPICK    ANDEQ'N'
+210  C*
+210  C*                    MOVE 'Z '      SLSTAT
+210  C*                    Z-ADDTODAY     SLSDTE
+210  C*                    TIME           SLSTIM
+210  C*
+209 DC*                    ENDIF
+210 DC*                    ENDIF
+210 AC*
+210 AC*   Check if status needs to be changed
+210 AC*
+210 ACSR                   CALL 'CHKSTAT'
+210 ACSR                   PARM           SLWHSE
+210 ACSR                   PARM           SLITEM
+210 ACSR                   PARM           SLSTYP
+210 ACSR                   PARM           SLRSRV
+210 ACSR                   PARM           SLPICK
+210 ACSR                   PARM           SLSTAT
+210 ACSR                   PARM           SLSTK1
+210 ACSR                   PARM           SLSTK2
+210 ACSR                   PARM           SLSTK3
+210 ACSR                   PARM           SLALC1
+210 ACSR                   PARM           SLALC2
+210 ACSR                   PARM           SLALC3
+210 ACSR                   PARM           SLTFR1
+210 ACSR                   PARM           SLTFR2
+210 ACSR                   PARM           SLTFR3
+210 ACSR                   PARM           SLPCK1
+210 ACSR                   PARM           SLPCK2
+210 ACSR                   PARM           SLPCK3
+210 ACSR                   PARM           SLRCV1
+210 ACSR                   PARM           SLRCV2
+210 ACSR                   PARM           SLRCV3
+210 ACSR                   PARM           $CNEWS  2
+210 ACSR                   PARM           $CRTN
+210 AC*
+210 ACSR         $CRTN     IFEQ '*CHANGED'
+210 ACSR                   MOVE $CNEWS    SLSTAT
+210 ACSR                   Z-ADDTODAY     SLSDTE
+210 ACSR                   TIME           SLSTIM
+210 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*      Calculate available quantity
+FX2 AC*
+FX2 ACSR                   CALL 'SLOTQTY'
+FX2 ACSR                   PARM           SLSTK1
+FX2 ACSR                   PARM           SLSTK2
+FX2 ACSR                   PARM           SLSTK3
+FX2 AC*
+FX2 ACSR                   PARM           SLALC1
+FX2 ACSR                   PARM           SLALC2
+FX2 ACSR                   PARM           SLALC3
+FX2 AC*
+FX2 ACSR                   PARM           SLTFR1
+FX2 ACSR                   PARM           SLTFR2
+FX2 ACSR                   PARM           SLTFR3
+FX2 AC*
+FX2 ACSR                   PARM           SLPCK1
+FX2 ACSR                   PARM           SLPCK2
+FX2 ACSR                   PARM           SLPCK3
+FX2 AC*
+FX2 ACSR                   PARM           SLRCV1
+FX2 ACSR                   PARM           SLRCV2
+FX2 ACSR                   PARM           SLRCV3
+FX2 AC*
+FX2 ACSR                   PARM           STOCK1  50
+FX2 ACSR                   PARM           STOCK2  30
+FX2 ACSR                   PARM           STOCK3  30
+FX2 AC*
+FX2 ACSR                   PARM           AVAIL1  50
+FX2 ACSR                   PARM           AVAIL2  30
+FX2 ACSR                   PARM           AVAIL3  30
+FX2 AC*
+FIX AC*
+FIX AC*      Make sure breakdown qty's are not greater than
+FIX AC*        quantity in the unit of measure.
+FIX AC*
+FIX DC*          SLSTK3    DOWGEITUMQ3
+FX2 MCSR         AVAIL3    DOWGEITUMQ3
+FIX ACSR         ITUMQ3    ANDNE0
+FIX ACSR                   SUB  ITUMQ3    SLSTK3
+FX2 ACSR                   SUB  ITUMQ3    AVAIL3
+FIX ACSR                   ADD  1         SLSTK2
+FX2 ACSR                   ADD  1         AVAIL2
+FIX ACSR                   ENDDO
+FIX AC*
+FIX DC*          SLSTK2    DOWGEITUMQ2
+FX2 MCSR         AVAIL2    DOWGEITUMQ2
+FIX ACSR         ITUMQ2    ANDNE0
+FIX ACSR                   SUB  ITUMQ2    SLSTK2
+FX2 ACSR                   SUB  ITUMQ2    AVAIL2
+FIX ACSR                   ADD  1         SLSTK1
+FX2 ACSR                   ADD  1         AVAIL1
+FIX ACSR                   ENDDO
+     C*
+     C*      Update from slot recrod.
+     C*
+     CSR                   UPDATRECORD                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM72
+     CSR                   GOTO ENDUPD
+     CSR                   ENDIF
+213 AC*
+213 AC*  Add record to adjustment history file for "From Slot" transaction.
+213 AC*
+213 ACSR                   Z-ADDSLWHSE    IAWHSE
+213 ACSR                   MOVE SLITEM    IAITEM
+213 ACSR                   MOVE '*CURCMD '$CVCMD
+213 ACSR                   CALL @CVTDT
+213 ACSR                   PARM           $CVTDT
+213 ACSR                   Z-ADD$CVD8O    IADATE
+213 AC*
+213 ACSR                   TIME           IATIME
+213 ACSR                   MOVE #USER     IABY
+213 ACSR                   MOVE SLWHDP    IAWHDP
+213 ACSR                   MOVE SLDISP    IADISP
+213 ACSR                   Z-ADD0         IACWTA
+213 ACSR                   Z-SUBW1QTY1    IAQTY1
+213 ACSR                   Z-SUBW1QTY2    IAQTY2
+213 ACSR                   Z-SUBW1QTY3    IAQTY3
+213 ACSR                   MOVE 'TF'      IACODE
+218 DC*R         'From'    CAT  SLDISP:1  IAMEMO
+218 ACSR         'To'      CAT  W1DISP:1  IAMEMO
+213 ACSR                   WRITEIAREC
+     C*
+     C*   Update the "To Slot" record.
+     C*
+     CSR         TOKEY     CHAINRECORD               79
+     CSR                   ADD  W1QTY1    SLSTK1
+     CSR                   ADD  W1QTY2    SLSTK2
+     CSR                   ADD  W1QTY3    SLSTK3
+     CSR         SLSTAT    IFEQ 'Z '
+     CSR         SLSTAT    OREQ 'V '
+     CSR                   MOVE 'A '      SLSTAT
+FX3 DC*                    Z-ADDTODAY     SLENTD
+FX3 MCSR                   Z-ADDSVENTD    SLENTD
+FX3 ACSR                   Z-ADDSVEXPD    SLEXPD
+     CSR                   Z-ADDTODAY     SLSDTE
+     CSR                   TIME           SLSTIM
+FX3 DC*                    Z-ADD0         SLPRTY
+FX3 MCSR                   Z-ADDSVPRTY    SLPRTY
+     CSR                   ENDIF
+     CSR                   MOVE SVITEM    SLITEM
+FX3 AC*
+FX3 AC*     Don't allow zero entered date.
+FX3 AC*
+FX3 ACSR         SLENTD    IFEQ 0
+FX3 ACSR                   Z-ADDSVENTD    SLENTD
+FX3 ACSR                   ENDIF
+FX3 AC*
+FX3 AC*     Make sure "To" slot stays in correct FIFO order.
+FX3 AC*
+FX3 ACSR         SVPRTY    IFLT SLPRTY
+FX3 ACSR         SVPRTY    OREQ SLPRTY
+FX3 ACSR         SVEXPD    ANDLTSLEXPD
+FX3 ACSR         SVPRTY    OREQ SLPRTY
+FX3 ACSR         SVEXPD    ANDEQSLEXPD
+FX3 ACSR         SVENTD    ANDLTSLENTD
+FX3 ACSR                   Z-ADDSVPRTY    SLPRTY
+FX3 ACSR                   Z-ADDSVEXPD    SLEXPD
+FX3 ACSR                   Z-ADDSVENTD    SLENTD
+FX3 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*      Calculate available quantity
+FX2 AC*
+FX2 ACSR                   CALL 'SLOTQTY'
+FX2 ACSR                   PARM           SLSTK1
+FX2 ACSR                   PARM           SLSTK2
+FX2 ACSR                   PARM           SLSTK3
+FX2 AC*
+FX2 ACSR                   PARM           SLALC1
+FX2 ACSR                   PARM           SLALC2
+FX2 ACSR                   PARM           SLALC3
+FX2 AC*
+FX2 ACSR                   PARM           SLTFR1
+FX2 ACSR                   PARM           SLTFR2
+FX2 ACSR                   PARM           SLTFR3
+FX2 AC*
+FX2 ACSR                   PARM           SLPCK1
+FX2 ACSR                   PARM           SLPCK2
+FX2 ACSR                   PARM           SLPCK3
+FX2 AC*
+FX2 ACSR                   PARM           SLRCV1
+FX2 ACSR                   PARM           SLRCV2
+FX2 ACSR                   PARM           SLRCV3
+FX2 AC*
+FX2 ACSR                   PARM           STOCK1  50
+FX2 ACSR                   PARM           STOCK2  30
+FX2 ACSR                   PARM           STOCK3  30
+FX2 AC*
+FX2 ACSR                   PARM           AVAIL1  50
+FX2 ACSR                   PARM           AVAIL2  30
+FX2 ACSR                   PARM           AVAIL3  30
+FX2 AC*
+FIX AC*
+FIX AC*      Make sure breakdown qty's are not greater than
+FIX AC*        quantity in the unit of measure.
+FIX AC*
+FIX DC*          SLSTK3    DOWGEITUMQ3
+FX2 MCSR         AVAIL3    DOWGEITUMQ3
+FIX ACSR         ITUMQ3    ANDNE0
+FIX ACSR                   SUB  ITUMQ3    SLSTK3
+FX2 ACSR                   SUB  ITUMQ3    AVAIL3
+FIX ACSR                   ADD  1         SLSTK2
+FX2 ACSR                   ADD  1         AVAIL2
+FIX ACSR                   ENDDO
+FIX AC*
+FIX DC*          SLSTK2    DOWGEITUMQ2
+FX2 MCSR         AVAIL2    DOWGEITUMQ2
+FIX ACSR         ITUMQ2    ANDNE0
+FIX ACSR                   SUB  ITUMQ2    SLSTK2
+FX2 ACSR                   SUB  ITUMQ2    AVAIL2
+FIX ACSR                   ADD  1         SLSTK1
+FX2 ACSR                   ADD  1         AVAIL1
+FIX ACSR                   ENDDO
+     CSR                   UPDATRECORD                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM72
+     CSR                   GOTO ENDUPD
+     CSR                   ENDIF
+213 AC*
+213 AC*  Add record to adjustment history file for "To Slot" transaction.
+213 AC*
+213 ACSR                   Z-ADDSLWHSE    IAWHSE
+213 ACSR                   MOVE SLITEM    IAITEM
+213 ACSR                   MOVE '*CURCMD '$CVCMD
+213 ACSR                   CALL @CVTDT
+213 ACSR                   PARM           $CVTDT
+213 ACSR                   Z-ADD$CVD8O    IADATE
+213 AC*
+213 ACSR                   TIME           IATIME
+218 ACSR                   ADD  1         IATIME
+213 ACSR                   MOVE #USER     IABY
+213 ACSR                   MOVE SLWHDP    IAWHDP
+213 ACSR                   MOVE SLDISP    IADISP
+213 ACSR                   Z-ADD0         IACWTA
+213 ACSR                   Z-ADDW1QTY1    IAQTY1
+213 ACSR                   Z-ADDW1QTY2    IAQTY2
+213 ACSR                   Z-ADDW1QTY3    IAQTY3
+213 ACSR                   MOVE 'TF'      IACODE
+218 DC*R         'To'      CAT  SLDISP:1  IAMEMO
+218 ACSR         'From'    CAT  $PDISP:1  IAMEMO
+213 ACSR                   WRITEIAREC
+     C*
+     C*   Send back info message.
+     C*
+     CSR                   MOVE '*OK     '$PRTN
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE W2QTY     ERQTY
+     CSR                   MOVE SVITEM    ERITEM
+     CSR                   MOVE FMDISP    ERFROM
+     CSR                   MOVE W1DISP    ERTO
+     CSR                   EXSR ZM1521
+     C*
+     CSR         ENDUPD    ENDSR
+     O*----------------------------------------------------------------     ****
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+Slot
+Adjustment Type
+Transfer Quantity

@@ -1,0 +1,303 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1996 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  CALINVSTS   Calculate inventory status
+     F*  27 February 1996
+     F*  Dave Sommerville
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions
+409 AF*  07/24/98  RH   4.09
+     F*    - Recompile - INVPAGE file changed.
+411 AF*  05/03/99  RH   4.11
+     F*    - Count # of exceptions in INVSLOT file.
+     F*    - Count # of unentered slots in INVSLOT file.
+412 AF*  08/30/99  RH   4.12
+     F*    - Recompiled, object was missing.
+414 AF*  05/15/00  RH   4.14
+     F*    - Recompile - INVSLOT file changed.
+416 AF*  09/25/01  RH   4.16
+     F*    - Recompile - INVSLOT file changed.
+416aAF*    09/16/02  RH
+     F*      - Added department.
+416bAF*    01/27/03  RH
+     F*    - FIX - Count error slots, slots with quantity but no item.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Chain indicator
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERQTY
+     I                                    P  11  120ERPAL
+     I                                       13  27 ERITEM
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  SQL
+     I*
+     IPRNDS       DS
+     I I            0                         1   50PCNT
+     I I            0                         6  100PMAX
+     I I            0                        11  150PMIN
+     IENTDS       DS
+     I I            0                         1   50ECNT
+     I I            0                         6  100EMAX
+     I I            0                        11  150EMIN
+411 AIEXCDS       DS
+411 AI I            0                         1   50ESLT
+411 AIUSLDS       DS
+411 AI I            0                         1   50USLT
+416bAIRSLDS       DS
+411 AI I            0                         1   50RSLT
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PPRG   Program to send messages back to.
+     C*      $PPMIN  Beginning sheet #
+     C*      $PPMAX  Ending sheet #
+     C*      $PPPAG  # of sheets printed
+     C*      $PEPAG  # of sheets entered
+     C*      $PCPAG  # of sheets created
+411 AC*      $PESLT  # of exception slots
+411 AC*      $PUSLT  # of unentered slots
+416bAC*      $PRSLT  # of error slots
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   *OK      - No problem encountered.
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*                         (for use with $PTYPE = *INTER).
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PPRG  10
+     C                     PARM           $PWHSE  30
+416a C                     PARM           $PWHDP  5
+     C                     PARM           $PPMIN  50
+     C                     PARM           $PPMAX  50
+     C                     PARM           $PPPAG  50
+     C                     PARM           $PEPAG  50
+     C                     PARM           $PCPAG  50
+411 AC                     PARM           $PESLT  50
+411 AC                     PARM           $PUSLT  50
+416bAC                     PARM           $PRSLT  50
+     C                     PARM           $PRTN   8
+     C                     PARM           $PMSG   4
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PMSG
+     C                     Z-ADD0         PCNT
+     C                     Z-ADD0         PMAX
+     C                     Z-ADD0         PMIN
+     C                     Z-ADD0         ECNT
+     C                     Z-ADD0         EMAX
+     C                     Z-ADD0         EMIN
+411 AC                     Z-ADD0         ESLT
+411 AC                     Z-ADD0         USLT
+411 AC                     Z-ADD0         RSLT
+     C*
+416a C*     Selecting ALL departments.
+     C*  Select beginning sheet #, ending sheet #, # of sheets printed,
+     C*  and # of sheets entered
+     C*
+416a C                     SELEC
+416a C           $PWHDP    WHEQ '*ALL'
+     C/EXEC SQL
+     C*  SELECT IVPPAG, COUNT(*), MAX(IVPPAG), MIN(IVPPAG)
+     C+  SELECT COUNT(*), MAX(IVPPAG), MIN(IVPPAG)
+     C+         INTO :PRNDS
+     C+  FROM   INVPAGE
+     C+  WHERE  IVPWHS = :$PWHSE AND  IVPSTA = 'P'
+     C/END-EXEC
+     C/EXEC SQL
+     C+  SELECT COUNT(*), MAX(IVPPAG), MIN(IVPPAG)
+     C+         INTO :ENTDS
+     C+  FROM   INVPAGE
+     C+  WHERE  IVPWHS = :$PWHSE AND IVPSTA = 'E'
+     C/END-EXEC
+411 AC*
+411 AC*  Count # of slots with exception status in INVSLOT file.
+411 AC*
+411 AC/EXEC SQL
+411 AC+  SELECT COUNT(*)
+411 AC+         INTO :EXCDS
+411 AC+  FROM   INVSLOT
+411 AC+  WHERE  IVSWHS = :$PWHSE AND IVSSTA = 'X'
+411 AC/END-EXEC
+     C*
+411 AC*
+411 AC*  Count # of unentered slots in INVSLOT file.
+411 AC*
+411 AC/EXEC SQL
+411 AC+  SELECT COUNT(*)
+411 AC+         INTO :USLDS
+411 AC+  FROM   INVSLOT
+411 AC+  WHERE  IVSWHS = :$PWHSE AND IVSEDT = 0
+411 AC/END-EXEC
+     C*
+416bAC*
+416bAC*  Count # of error slots in INVSLOT file.
+416bAC*  Slots with quantity but NO item number.
+416bAC*
+416bAC/EXEC SQL
+416bAC+  SELECT COUNT(*)
+416bAC+         INTO :RSLDS
+416bAC+  FROM   INVSLOT
+416bAC+  WHERE  IVSWHS = :$PWHSE AND IVSITM = ' '
+416bAC+  AND (IVSQT1 <> 0 OR IVSQT2 <> 0 OR IVSQT3 <>0)
+416bAC/END-EXEC
+     C*
+416a C*     Selecting ONE department.
+416a C           $PWHDP    WHNE '*ALL'
+416a C/EXEC SQL
+416a C*  SELECT IVPPAG, COUNT(*), MAX(IVPPAG), MIN(IVPPAG)
+416a C+  SELECT COUNT(*), MAX(IVPPAG), MIN(IVPPAG)
+416a C+         INTO :PRNDS
+416a C+  FROM   INVPAGE
+416a C+  WHERE  IVPWHS = :$PWHSE AND IVPSTA = 'P' AND IVPWHD = :$PWHDP
+416a C***       AND IVPWHD = :$PWHDP
+416a C/END-EXEC
+416a C/EXEC SQL
+416a C+  SELECT COUNT(*), MAX(IVPPAG), MIN(IVPPAG)
+416a C+         INTO :ENTDS
+416a C+  FROM   INVPAGE
+416a C+  WHERE  IVPWHS = :$PWHSE AND IVPSTA = 'E'
+416a C+         AND IVPWHD = :$PWHDP
+416a C/END-EXEC
+416aAC*
+416aAC*  Count # of slots with exception status in INVSLOT file.
+416aAC*
+416aAC/EXEC SQL
+416aAC+  SELECT COUNT(*)
+416aAC+         INTO :EXCDS
+416aAC+  FROM   INVSLOT
+416aAC+  WHERE  IVSWHS = :$PWHSE AND IVSSTA = 'X'
+416a C+         AND IVSWHD = :$PWHDP
+416aAC/END-EXEC
+     C*
+416aAC*
+416aAC*  Count # of unentered slots in INVSLOT file.
+416aAC*
+416aAC/EXEC SQL
+416aAC+  SELECT COUNT(*)
+416aAC+         INTO :USLDS
+416aAC+  FROM   INVSLOT
+416aAC+  WHERE  IVSWHS = :$PWHSE AND IVSEDT = 0
+416a C+         AND IVSWHD = :$PWHDP
+416aAC/END-EXEC
+     C*
+416bAC*
+416bAC*  Count # of error slots in INVSLOT file.
+416bAC*  Slots with quantity but NO item number.
+416bAC*
+416bAC/EXEC SQL
+416bAC+  SELECT COUNT(*)
+416bAC+         INTO :RSLDS
+416bAC+  FROM   INVSLOT
+416bAC+  WHERE  IVSWHS = :$PWHSE AND IVSWHD = :$PWHDP AND IVSITM = ' '
+416bAC+  AND (IVSQT1 <> 0 OR IVSQT2 <> 0 OR IVSQT3 <>0)
+416bAC/END-EXEC
+     C*
+416a C                     ENDSL
+     C*
+     C           PMAX      IFLE EMAX
+     C                     Z-ADDEMAX      $PPMAX
+     C                     ELSE
+     C                     Z-ADDPMAX      $PPMAX
+     C                     ENDIF
+     C*
+     C           PMIN      IFEQ 0
+     C           EMIN      OREQ 0
+     C           PMIN      IFEQ 0
+     C                     Z-ADDEMIN      $PPMIN
+     C                     ENDIF
+     C           EMIN      IFEQ 0
+     C                     Z-ADDPMIN      $PPMIN
+     C                     ENDIF
+     C                     ELSE
+     C           PMIN      IFLE EMIN
+     C                     Z-ADDPMIN      $PPMIN
+     C                     ELSE
+     C                     Z-ADDEMIN      $PPMIN
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C                     Z-ADDPCNT      $PPPAG
+     C                     Z-ADDECNT      $PEPAG
+     C           $PPPAG    ADD  $PEPAG    $PCPAG
+411 AC                     Z-ADDESLT      $PESLT
+411 AC                     Z-ADDUSLT      $PUSLT
+416bAC                     Z-ADDRSLT      $PRSLT
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C                     ENDSR

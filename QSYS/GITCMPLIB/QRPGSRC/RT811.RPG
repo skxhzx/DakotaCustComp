@@ -1,0 +1,310 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (630) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  RT811     Calculate route totals - Calc
+     F*  26 April 2001
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+415 AF*    04/26/01  DAS  4.15
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        CHAIN INDICATOR
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRTEHED  IP  E           K        DISK
+     FORDH3   IF  E           K        DISK
+     FORDD    IF  E           K        DISK
+     FLABEL31 IF  E           K        DISK
+     FRTETTL  O   E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    TABD#   7   7  1 0 TABDAY  3   Day table
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I              'CLCDUR'              C         @CLCDR
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I                                      133 140 $CVDR1
+     I                                      141 1450$CVVL1
+     I                                      146 153 $CVDR2
+     I                                      154 1580$CVVL2
+     I                                      159 166 $CVDR3
+     I                                      167 1710$CVVL3
+     I                                      172 179 $CVDR4
+     I                                      180 1840$CVVL4
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse
+     C*      $PSTRT  Start time for day
+     C*      $PWKS   Weeks
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE 155
+     C                     PARM           $PSTRT 155
+     C                     PARM           $PWKS  155
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*  Only work with normal routes.
+     C*
+     C           RHTYPE    CABNE' '       BOTTOM
+     C*
+     C*  Calculate stat date for route.
+     C*
+     C                     EXSR ZZCLDY
+     C*
+     C*  If date is less than cutoff date then skip record.
+     C*
+     C           RLSDTE    IFLT CUTOFF
+     C           RLSDTE    ORGE TODAY
+     C                     GOTO BOTTOM
+     C                     ENDIF
+     C*
+     C*  Calculate order totals.
+     C*
+     C                     EXSR CALCOH
+     C*
+     C*  Calculate label totals.
+     C*
+     C                     EXSR CALCLB
+     C*
+     C*  Write route total record.
+     C*
+     C                     Z-ADDRHWHSE    RLWHSE
+     C                     MOVE RHRTID    RLRTID
+     C                     Z-ADD1         RLCNT#
+     C                     WRITERLREC
+     C*
+     C           BOTTOM    TAG
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   MOVE *ON       FOREVR  1
+     C*
+     C*  Define partial key for ORDH3 file.
+     C*
+     CSR         KEYOH     KLIST
+     CSR                   KFLD           RHWHSE
+     CSR                   KFLD           RHRTID
+     C*
+     C*  Define partial key for ORDD file.
+     C*
+     CSR         KEYOD     KLIST
+     CSR                   KFLD           OHWHSE
+     CSR                   KFLD           OHORD
+     C*
+     C*  Define partial key for LABEL31 file.
+     C*
+     CSR         KEYLB     KLIST
+     CSR                   KFLD           RHWHSE
+     CSR                   KFLD           RHRTID
+     C*
+     C*    Retrieve today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*    Convert Current date to day number.
+     C*
+     CSR                   MOVE '*CMDNBR '$CVCMD
+     CSR                   MOVE TODAY     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    T       10
+     C*
+     C*   Compute Sunday date for current week.
+     C*
+     CSR                   MOVE '*CMDCMD '$CVCMD
+     CSR                   MOVE TODAY     $CVD8I
+     CSR                   MOVE '*SUBDAYS'$CVDR1
+     CSR         T         SUB  1         $CVVL1
+     CSR                   CALL @CLCDR
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    CUTOFF  80
+     C*
+     C*   Compute cutoff date.
+     C*
+     CSR                   MOVE '*CMDCMD '$CVCMD
+     CSR                   MOVE CUTOFF    $CVD8I
+     CSR                   MOVE '*SUBDAYS'$CVDR1
+     CSR         $PWKS     MULT 7         $CVVL1
+     CSR                   CALL @CLCDR
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    CUTOFF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CALCLB  Calculate label totals
+     C*
+     CSR         CALCLB    BEGSR
+     C*
+     CSR                   Z-ADD0         RLLBO#
+     CSR                   Z-ADD0         RLLBB#
+     CSR                   Z-ADD0         RLLBM#
+     CSR                   Z-ADD0         RLLBR#
+     CSR                   Z-ADD0         RLLBX#
+     CSR                   Z-ADD0         RLLBL#
+     C*
+     CSR         KEYLB     SETLLLABEL31
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYLB     READELABEL31                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ADD  1         RLLBL#
+     C*
+     CSR                   SELEC
+     CSR         LBTYPE    WHEQ 'O'
+     CSR                   ADD  1         RLLBO#
+     CSR         LBTYPE    WHEQ 'B'
+     CSR                   ADD  1         RLLBB#
+     CSR         LBTYPE    WHEQ 'M'
+     CSR                   ADD  1         RLLBM#
+     CSR         LBTYPE    WHEQ 'R'
+     CSR                   ADD  1         RLLBR#
+     CSR                   OTHER
+     CSR                   ADD  1         RLLBX#
+     CSR                   ENDSL
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CALCOD  Calculate order detail totals
+     C*
+     CSR         CALCOD    BEGSR
+     C*
+     CSR         KEYOD     SETLLORDD
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYOD     READEORDD                     78
+     CSR         *IN78     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ADD  1         RLLIN#
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CALCOH  Calculate order totals
+     C*
+     CSR         CALCOH    BEGSR
+     C*
+     CSR                   Z-ADD0         RLORD#
+     CSR                   Z-ADD0         RLLIN#
+     C*
+     CSR         KEYOH     SETLLORDH3
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYOH     READEORDH3                    79
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ADD  1         RLORD#
+     CSR                   EXSR CALCOD
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCLDY  Calculate stat day
+     C*
+     CSR         ZZCLDY    BEGSR
+     C*
+     C*    Set status date to build date.
+     C*
+     CSR                   Z-ADDRHBLDD    RLSDTE
+     C*
+     C*    If build time is less than user entered start time
+     C*     Then subtract 1 from the day.
+     C*
+     CSR         RHBLDT    IFLT $PSTRT
+     CSR                   MOVE '*CMDCMD '$CVCMD
+     CSR                   MOVE RHBLDD    $CVD8I
+     CSR                   MOVE '*SUBDAYS'$CVDR1
+     CSR                   Z-ADD1         $CVVL1
+     CSR                   CALL @CLCDR
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    RLSDTE
+     CSR                   ENDIF
+     C*
+     C*    Convert date to day number.
+     C*
+     CSR                   MOVE '*CMDNBR '$CVCMD
+     CSR                   MOVE RHBLDD    $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    T       10
+     C*
+     C*    Get 3-character day
+     C*
+     CSR         T         LOKUPTABD#     TABDAY         40
+     CSR                   MOVE TABDAY    RLSDAY
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+** Day
+1SUN2MON3TUE4WED5THU6FRI7SAT

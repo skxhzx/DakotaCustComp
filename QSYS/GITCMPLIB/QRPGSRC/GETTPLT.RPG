@@ -1,0 +1,180 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  GETTPLT   Get truck pallet
+     F*  09 February 2001
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+415 AF*   02/09/01  DAS  4.15
+     F*     -Created.
+     F*
+416 AF*   05/01/02  HNK  4.16
+     F*     -Add parameter $PMLBL - Return merge label #.
+     F*
+416aAF*   06/05/02  DAS  4.16a
+     F*     - Infinite loop created when original label sent in was for
+     F*       a generation 3 pallet. A generation 3 pallet is created
+     F*       when a zone is merged into a zone which is merged into
+     F*       a final zone going onto a truck.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FLABEL11 IF  E           K        DISK
+     FPLTSUM4 IF  E           K        DISK
+     I*----------------------------------------------------------------
+     I*  Pallet id data structure
+     I*
+     I*    DSPLID  -  Pallet id.
+     I*    DSPLXX  -  Unused.
+     I*    DSPLGN  -  Generation.
+     I*    DSPLRW  -  Pallet row.
+     I*    DSPLCL  -  Pallet column.
+     I*    DSPLSQ  -  Sequence number.
+     I*               Equal to zero     - Only one pallet in this position.
+     I*               Greater than zero - Multiple pallets in this position.
+     I*
+     I*
+     IPLTID       DS
+     I I            0                         1   70DSPLID
+     I                                        1   20DSPLXX
+     I                                        3   30DSPLGN
+     I                                        4   50DSPLRW
+     I                                        6   60DSPLCL
+     I                                        7   70DSPLSQ
+     I*----------------------------------------------------------------
+     I*
+     I*  Input parameters
+     I*
+     I*     $PLBL#   -  Label number of merge item.
+     I*
+     I*  Output parameters
+     I*
+     I*     $PTPLT   - Truck pallet number for merge item.
+416 AI*     $PMLBL   - Merge label number.
+416 AI*     $PMPID   - Merge label pallet ID.
+     I*     $PSPLT   - Split across multiple truck pallets (Y/N)
+     I*     $PLOW    - Truck pallet is low pallet for tran. (Y/N)
+     I*     $PRTN    - *OK      -  Truck pallet found
+     I*                *ERROR   -  Truck pallet not found
+     I*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PLBL#  70
+     C                     PARM           $PTPLT  70
+416 AC                     PARM           $PMLBL  70
+416 AC                     PARM           $PMPID  70
+     C                     PARM           $PSPLT  1
+     C                     PARM           $PLOW   1
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*    Initialize return parameters.
+     C*
+     C                     Z-ADD0         $PTPLT
+     C                     MOVE 'N'       $PSPLT
+     C                     MOVE 'N'       $PLOW
+     C                     MOVE *BLANKS   $PRTN
+     C*
+     C*  Get corresponding truck (gen = 1) label.
+     C*
+     C                     Z-ADD0         COUNT   10
+     C                     Z-ADD$PLBL#    KYLBL#
+     C           KEYLB     SETLLLABEL11
+     C           FOREVR    DOWEQFOREVR
+     C*
+     C*      Get corresponding label.
+     C*
+     C           KEYLB     READELABEL11                  79
+     C           *IN79     IFEQ *ON
+     C                     SELEC
+     C           COUNT     WHEQ 0
+     C                     MOVE 'Y'       $PSPLT
+     C                     MOVE '*ERROR  '$PRTN
+     C           COUNT     WHEQ 1
+     C                     MOVE 'N'       $PSPLT
+     C                     OTHER
+     C                     MOVE 'Y'       $PSPLT
+     C                     ENDSL
+     C                     LEAVE
+     C                     ENDIF
+     C*
+416 AC           LBTYPE    IFNE 'M'
+416 AC                     ITER
+416 AC                     ENDIF
+     C*
+     C*      If pallet is merge pallet, get next corresponding pallet.
+     C*
+     C                     Z-ADDLBPAL#    DSPLID
+     C           DSPLGN    IFNE 1
+416aDC**                   Z-ADDLBCTR#    KYLBL#
+416aMC                     Z-ADDLBPAL#    KYLBL#
+     C           KEYLB     SETLLLABEL11
+     C                     ITER
+     C                     ENDIF
+     C*
+     C*      Otherwise, get actual truck pallet number.
+     C*
+     C                     Z-ADD*HIVAL    LOWPLT  70
+     C           KEYPS     SETLLPLTSUM4
+     C           FOREVR    DOWEQFOREVR
+     C           KEYPS     READEPLTSUM4                  78
+     C           *IN78     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C           PSPAL#    IFLT LOWPLT
+     C                     Z-ADDPSPAL#    LOWPLT
+     C                     ENDIF
+     C*
+     C           PSPLID    IFNE LBPAL#
+     C                     ITER
+     C                     ENDIF
+     C*
+     C                     Z-ADDPSPAL#    $PTPLT
+416 AC                     Z-ADDLBLBL#    $PMLBL
+416 AC                     Z-ADDLBPAL#    $PMPID
+     C                     MOVE '*OK     '$PRTN
+     C                     ENDDO
+     C*
+     C           $PTPLT    IFGT 0
+     C                     ADD  1         COUNT
+     C           $PTPLT    IFEQ LOWPLT
+     C                     MOVE 'Y'       $PLOW
+     C                     ELSE
+     C                     MOVE 'N'       $PLOW
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C                     ENDDO
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Define key for LABEL11 file.
+     C*
+     CSR         *LIKE     DEFN LBLBL#    KYLBL#
+     CSR         KEYLB     KLIST
+     CSR                   KFLD           KYLBL#
+     C*
+     C*  Define key for PLTSUM4 file.
+     C*
+     CSR         KEYPS     KLIST
+     CSR                   KFLD           LBTRN#
+     C*
+     CSR                   ENDSR

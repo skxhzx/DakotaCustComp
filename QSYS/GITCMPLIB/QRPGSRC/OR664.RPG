@@ -1,0 +1,833 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR664     Pallet detail Report Comp X only
+     F*  19 August, 2004
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions:
+     F*
+CHY AF*    08/19/04   RH   CHY
+     F*      - Created using OR660,Custom for CBI, Mark E email 8-10-04
+404 AF*    08/26/97   HNK  4.04
+     F*      - Changed to print pallet number and transaction number.
+     F*      - Print DETAIL3 record for pack description.
+410 AF*    12/03/98   RH   4.10
+     F*      - Recompiled - problem with OR660 file from 404 changes.
+414aAF*    06/14/00   RH   4.14
+     F*      - Removed '**' for unload seq and pallet to read easier.
+     F*
+415 AF*    02/16/01  DAS  4.15
+     F*      - Added REPORTS override for OR660PR.
+     F*
+416aAF*    04/16/02  HNK  4.16a
+     F*      - Add dock door number.
+     F*
+416bAF*    07/17/02  HNK  4.16b
+     F*      - Get bulk pick tran #.
+     F*
+417 AF*    07/11/03  MLB  4.17
+     F*      - Revised heading build to use PSPAL# instead of PSUNLD for
+     F*        pallet number.
+417bAF*    08/21/03  RH   4.17b
+     F*      - FIX: Change to use printer entered in option program.
+417cAF*    09/10/03  RH   4.17c
+     F*      - ENH: Add extended description to detail3.
+     F*----------------------------------------------------------------
+     F*
+     F*  Custom Changes
+     F*
+CBI AF*    06/27/03  HNK  CBI
+     F*      - Get dock door number from OHMISC field.
+     F*        Remove call to program to get dock door number.
+CBIbAF*    08/21/03  RH   CBIa
+     F*      - Pass parms for printing, OVRFLW and PAGRTT
+CBIcAF*    09/30/03  HNK  CBIc
+     F*      - Print Catch weight flag and Cust order #
+CBIdAF*    11/03/03  RH   CBId
+     F*      - Move description and brand, print entry line for each CW
+CBIeAF*    12/17/03  RH/hnk CBIe
+     F*      - Reverse CBId level break change (L1)
+CBIfAF*    03/08/04  RH   CBIf
+     F*      - Change to print detail per CBI requests
+     F*        Print COLUMND instead of COLUMNS
+     F*        Don't print TOTALD for detail
+     F*        Add '/' to CWLIN
+     F*        Change head2 to print transaction with Compartment.
+CBIhAF*    04/05/04  MLB  CBIh
+     F*      - Change to print 35 char. customer name.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FOR664   IP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FRTEHED  IF  E           K        DISK
+417c FITEMMSC IF  E           K        DISK
+417cAFOPTIONS IF  E           K        DISK
+417cAFITEMDSC IF  E           K        DISK
+415 DF**660PR O   E             90     PRINTER
+x   MF**664PR O   E             90     PRINTER                        UC
+x   MFOR664PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+415 AE                    A80        80  1
+     E                    TTL     1   2 40
+     E                    RPD     1   5 25
+CBId E                    CWLN    1   1  9
+     E                    RECK        5  7 0
+     E                    LVLK        5  7 0
+     E*
+     E                    QPCK        5  5 0
+     E                    CUBE        5  9 3
+     E                    WGHT        5  9 2
+415 AE*                   OVRPRT  1   1 80
+xBIbAE*                   OVRPRT  1   2 80
+     E*
+     I*----------------------------------------------------------------
+     I              'Unload Seq:'         C         @UNLD
+     I              'Compartment:'        C         @COMP
+404 AI              'Pallet:'             C         @PALT
+416aAI              'Door:'               C         @DOOR
+CBIfAI              'Transaction:'        C         @TRAN
+     I*----------------------------------------------------------------
+     IOQREC
+     I                                              PSCOMPL4
+     I                                              PSUNLDL3
+     I                                              PSPLIDL3
+     I                                              LBSTOPL2
+CBId I                                              LBDISPL1
+CBIe I                                              LBSEQ L1
+CBIe I                                              LBITEML1
+CBIe I                                              LBUCODL1
+     I*
+CBI AI            DS
+CBI AI                                        1  20 DSMISC
+CBI AI                                        1   8 DSSDTE
+CBI AI                                        9  11 DSSPCL
+CBI AI                                       12  12 DSRPCK
+CBI AI                                       13  14 DSDOOR
+CBI AI                                       15  15 DSMEAT
+     I*----------------------------------------------------------------
+416aAI*
+416aAI$LPARM      DS
+416aAI                                        1   8 $LCMD
+416aAI                                        9  18 $LPRG
+416aAI                                       19  68 $LUKY
+416aAI                                       69  76 $LRTN
+416aAI                                       77 136 $LERM
+416aAI                                       77  80 $LMSG
+416aAI*
+416aAI*   Redefine key
+416aAI*
+416aAI                                       19  210$LWHSE
+416aAI                                       22  26 $LRTID
+416aAI                                       27  330$LTRN#
+416aAI                                       34  38 $LWHDP
+416aAI                                       39  410$LDOOR
+416aAI*
+     I*----------------------------------------------------------------
+417cAI* Data structure
+417cAI*
+417cAIOPDATA      DS
+417cAI                                        1   1 OPSTYP
+417cAI                                        2   6 OPWHDP
+417cAI                                        7   8 OPUM1
+417cAI                                        9  23 OPDUM
+417cAI                                       24  43 OPCUM
+417cAI                                       44  522OPCDIV
+417cAI                                       53  53 OPCAUT
+417cAI                                       54  54 OPCWRN
+417cAI                                       55  571OPCRNG
+417cAI                                       58  72 OPWUM
+417cAI                                       73  73 OPXDSC
+417cAI                                      117 117 OPTEND
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $CMD    8
+     C                     PARM           $RTYPE  8
+417b C**                   PARM           $DEV   10
+417b C**                   PARM           $FORM  10
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+415 AC                     EXSR OPNPRT
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*  Level 1 break - Item
+     C*
+     C           *INL1     IFEQ *ON
+     C                     Z-ADD1         L
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*  Level 2 break - Stop
+     C*
+     C           *INL2     IFEQ *ON
+     C                     Z-ADD2         L
+     C                     EXSR ZRZERO
+     C*
+     C                     MOVE *BLANKS   $CSTR
+     C                     MOVE *BLANKS   CUST#
+CBIg C                     MOVE OHCUST    CUST2   2
+CBIg C                     MOVELOHCUST    CUST9   9
+CBIg C**                   MOVE OHCUST    $CSTR
+CBIg C                     MOVE CUST9     $CSTR
+     C                     CALL 'ADJUST'
+     C                     PARM '*LEFT   '$CCMD   8
+     C                     PARM           $CSTR  30
+CBIg C**                   MOVEL$CSTR     CUST#  11
+CBIg C                     MOVEL$CSTR     CUST6   6
+CBIg C                     MOVE *BLANKS   CUST#
+CBIg C           CUST#     CAT  CUST6:1   CUST#
+CBIg C           CUST#     CAT  '/':1     CUST#
+CBIg C           CUST#     CAT  CUST2:1   CUST#
+     C                     MOVELOHCNAM    CSNAME
+     C                     ENDIF
+     C*
+     C*  Level 3 break - Pallet ID/Unload sequence
+     C*
+     C           *INL3     IFEQ *ON
+     C                     Z-ADD3         L
+     C                     EXSR ZRZERO
+     C*
+416bAC           PSTRN#    IFEQ 0
+416bAC                     MOVE 'B'       WKTYPE  1
+416bAC                     Z-ADD0         WKTRN#  70
+416bAC                     CALL 'GETBLTRN'
+416bAC                     PARM           PSWHSE
+416bAC                     PARM           PSRTID
+416bAC                     PARM           PSCOMP
+416bAC                     PARM           PSTZON
+416bAC                     PARM           PSGEN
+416bAC                     PARM           PSSZON
+416bAC                     PARM           WKTYPE
+416bAC                     PARM           PSUNLD
+416bAC                     PARM           PSROW
+416bAC                     PARM           PSCOL
+416bAC                     PARM           WKTRN#
+416bAC                     ELSE
+416bAC                     Z-ADDLBTRN#    WKTRN#
+416bAC                     ENDIF
+     C*
+CBI DC*     Get dock door for the transaction.
+CBI DC*
+CBI DC*                    Z-ADDPSWHSE    $LWHSE
+CBI DC*                    MOVE PSRTID    $LRTID
+CBI DC*                    Z-ADDWKTRN#    $LTRN#
+CBI DC**                   Z-ADDLBTRN#    $LTRN#
+CBI DC*                    MOVE *BLANKS   $LWHDP
+CBI DC*                    Z-ADD0         $LDOOR
+CBI DC*                    CALL 'DH900'
+CBI DC*                    PARM           $LPARM
+     C*
+     C                     MOVE *BLANKS   P#DESC
+     C           P#DESC    CAT  '** ':1   P#DESC
+     C           P#DESC    CAT  @COMP:1   P#DESC
+     C           P#DESC    CAT  '-':1     P#DESC
+     C           P#DESC    CAT  PSCOMP:1  P#DESC
+414aDC*          P#DESC    CAT  ' ** - ':1P#DESC
+414aMC           P#DESC    CAT  '    - ':1P#DESC
+CBIf C           $RTYPE    IFEQ '*DETAIL '
+CBIf C           P#DESC    CAT  @TRAN:1   P#DESC
+CBIf C                     MOVE *BLANKS   $CSTR
+CBIf C                     MOVE LBTRN#    $CSTR
+CBIf C                     CALL 'ADJUST'
+CBIf C                     PARM '*LEFT   '$CCMD   8
+CBIf C                     PARM           $CSTR  30
+CBIf C                     MOVEL$CSTR     LBTRN   7
+CBIf C           P#DESC    CAT  LBTRN:1   P#DESC
+CBIf C                     ELSE
+     C           P#DESC    CAT  @UNLD:1   P#DESC
+     C                     MOVE *BLANKS   $CSTR
+     C                     MOVE PSUNLD    $CSTR
+     C                     CALL 'ADJUST'
+     C                     PARM '*LEFT   '$CCMD   8
+     C                     PARM           $CSTR  30
+     C                     MOVEL$CSTR     PSUNL   2
+     C           P#DESC    CAT  PSUNL:1   P#DESC
+414aDC*          P#DESC    CAT  ' ** - ':1P#DESC
+414aMC           P#DESC    CAT  '    - ':1P#DESC
+404 AC           P#DESC    CAT  @PALT:1   P#DESC
+417 DC*          P#DESC    CAT  PSUNL:1   P#DESC
+417 AC                     MOVE PSPAL#    $CSTR     P
+417 AC                     CALL 'ADJUST'
+417 AC                     PARM '*LEFT   '$CCMD   8
+417 AC                     PARM           $CSTR  30
+417 AC                     MOVEL$CSTR     PSPAL   2
+417 MC           P#DESC    CAT  PSPAL:1   P#DESC
+     C*
+CBI AC                     MOVE OHMISC    DSMISC
+CBI DC*                    MOVE *BLANKS   $CSTR
+CBI DC*                    MOVE $LDOOR    $CSTR
+CBI DC*                    CALL 'ADJUST'
+CBI DC*                    PARM '*LEFT   '$CCMD   8
+CBI DC*                    PARM           $CSTR  30
+CBI DC*                    MOVEL$CSTR     DDOOR   3
+CBI AC                     MOVELDSDOOR    DDOOR   3
+416aAC           P#DESC    CAT  '    - ':1P#DESC
+416aAC           P#DESC    CAT  @DOOR:1   P#DESC
+416aAC           P#DESC    CAT  DDOOR:1   P#DESC
+CBIf C                     ENDIF
+     C                     ENDIF
+     C*
+     C*  Level 4 break - Compartment
+     C*
+     C           *INL4     IFEQ *ON
+     C                     Z-ADD4         L
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*  Print headings.
+     C*
+     C           *IN93     IFEQ *ON
+     C           *INL3     OREQ *ON
+CBIf C*          $RTYPE    IFEQ '*DETAIL '
+CBIf C*          CUST#     IFNE SCUST#
+CBIf C*                    WRITEDETAIL1
+CBIf C*                    WRITECOLUMND
+CBIf C*                    MOVE CUST#     SCUST#
+CBIf C*                    ENDIF
+CBIf C*                    ENDIF
+     C                     WRITEHEAD2
+     C                     ENDIF
+     C*
+     C           *IN92     IFEQ *ON
+     C           *INL2     OREQ *ON
+     C           $RTYPE    IFEQ '*DETAIL '
+CBIfDC****                 WRITEDETAIL1
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*  Accumulate totals
+     C*
+     C                     ADD  LBQPCK    QPCK,1
+     C                     ADD  LBCUBE    CUBE,1
+     C                     ADD  LBSWGT    WGHT,1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN94
+     C                     MOVE *OFF      *IN93
+     C                     MOVE *OFF      *IN92
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      FIRST
+     C*----------------------------------------------------------------
+     C*
+     C* Item totals
+     C*
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     C*
+     CL1         RECK,L    IFGT 0
+410 ACL1         *IN90     IFEQ *ON
+410 ACL1                   EXSR ZRHEAD
+410 ACL1                   ENDIF
+     CL1                   EXSR ZRTOTL
+     CL1                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Stop totals
+     C*
+     CL2                   Z-ADD2         L
+     CL2                   EXSR ZRROLL
+     C*
+     CL2         RECK,L    IFGT 0
+410 ACL2         *IN90     IFEQ *ON
+410 ACL2                   EXSR ZRHEAD
+410 ACL2                   ENDIF
+     CL2                   EXSR ZRTOTL
+     CL2                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Pallet totals
+     C*
+     CL3                   Z-ADD3         L
+     CL3                   EXSR ZRROLL
+     C*
+     CL3         RECK,L    IFGT 0
+410 ACL3         *IN90     IFEQ *ON
+410 ACL3                   EXSR ZRHEAD
+410 ACL3                   ENDIF
+     CL3                   EXSR ZRTOTL
+     CL3                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Department totals
+     C*
+     CL4                   Z-ADD4         L
+     CL4                   EXSR ZRROLL
+     C*
+     CL4         RECK,L    IFGT 0
+410 ACL4         *IN90     IFEQ *ON
+410 ACL4                   EXSR ZRHEAD
+410 ACL4                   ENDIF
+     CL4                   EXSR ZRTOTL
+     CL4                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Batch totals
+     C*
+     CLR                   Z-ADD5         L
+     C*
+     CLR         RECK,L    IFGT 0
+410 ACLR         *IN90     IFEQ *ON
+410 ACLR                   EXSR ZRHEAD
+410 ACLR                   ENDIF
+     CLR                   EXSR ZRTOTL
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD1         L       10
+     C                     EXSR ZRZERO
+417cAC                     EXSR ZZINZ
+415 AC*
+415 AC*  Variables and constants.
+415 AC*
+415 ACSR         *LIKE     DEFN $WHSE     LSTWHS
+415 ACSR         *LIKE     DEFN $DEV      LSTDEV
+415 ACSR         *LIKE     DEFN $FORM     LSTFRM
+CBIfACSR         *LIKE     DEFN CUST#     SCUST#
+CBIfACSR                   MOVE *BLANKS   SCUST#
+     C*
+     C                     ENDSR
+415 AC*----------------------------------------------------------------
+415 AC*
+415 AC*  OPNPRT  Open printer file.
+415 AC*
+415 ACSR         OPNPRT    BEGSR
+     C*
+     C*   Get device and form type for department.
+     C*
+     CSR         PSWHSE    IFNE LSTWHS
+X 7b C*R         $DEV      ANDEQ'*JOB'
+     CSR                   CALL 'GETRPT'
+     CSR                   PARM '*DEVFORM'$CMD    8
+     CSR                   PARM 'OR664PR' $LRPT  10
+     CSR                   PARM PSWHSE    $WHSE   30
+     CSR                   PARM ' '       $STYP   1
+     CSR                   PARM ' '       $WHDP   5
+     CSR                   PARM           $DESC  50
+     CSR                   PARM           $DEV   10
+     CSR                   PARM           $FORM  10
+     CSR                   Z-ADD$WHSE     LSTWHS
+     CSR                   ENDIF
+     C*
+     C*   Open printer file for department.
+     C*
+     CSR         OPENED    IFNE *ON
+     CSR         $DEV      ORNE LSTDEV
+     CSR         $FORM     ORNE LSTFRM
+     C*
+     C*      If printer already open then close it.
+     C*
+     CSR         OPENED    IFEQ *ON
+x    C*R                   CLOSEOR664PR
+     CSR                   ENDIF
+     C*
+     C*      Override printer file.
+     C*
+     C*          OVRPRTF FILE(OR664PR) OUTQ(*DEV) DEV($dev)
+     C*                  FORMTYPE($form)
+     C*
+x    C*R                   MOVEAOVRPRT,1  A80
+x    C*R                   MOVEA$DEV      A80,38
+x    C*R                   MOVEA$FORM     A80,59
+x    C*R                   MOVEAA80       QCMD1  80
+x    C*R                   MOVEAA80       QCMD
+     C*
+x    C*R                   MOVEAOVRPRT,2  A80
+xBIb C*R                   MOVEAA80       QCMD2  80
+     C*
+x    C*R         QCMD1     CAT  QCMD2:1   QCMD
+     C*
+x    C*R                   CALL 'QCMDEXC'
+CBIb C*R                   PARM           QCMD   80
+xBIb C*R                   PARM           QCMD  160
+xBIb C*R                   PARM 160       QLEN   155
+CBIb C*R                   PARM 80        QLEN   155
+     C*
+     C*      Open printer file.
+     C*
+x    C*R                   OPEN OR664PR
+     CSR                   MOVE *ON       OPENED  1
+     CSR                   MOVE $DEV      LSTDEV
+     CSR                   MOVE $FORM     LSTFRM
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     C           $RTYPE    IFEQ '*SUMMARY'
+     C                     MOVE TTL,1     TITLE
+     C                     ELSE
+     C                     MOVE TTL,2     TITLE
+     C                     ENDIF
+     C                     MOVELTITLE     $PSTR  60
+     C                     Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     TITLE
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           LBWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*                    MOVE *BLANKS   $CSTR
+     C*                    MOVE *BLANKS   LBBAT
+     C*                    MOVE LBPBAT    $CSTR
+     C                     CALL 'ADJUST'
+     C                     PARM '*LEFT   '$CCMD   8
+     C                     PARM           $CSTR  30
+     C                     MOVEL$CSTR     LBBAT   7
+     C*
+     C*   Format Route number.
+     C*
+     C           RTKEY     KLIST
+     C                     KFLD           PSWHSE
+     C                     KFLD           PSRTID
+     C           RTKEY     CHAINRTEHED               79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   RHRTE
+     C                     ENDIF
+     C                     MOVE *BLANKS   BATCH
+     C                     MOVE *BLANKS   $PSTR
+     C           BATCH     CAT  'Route:':1BATCH
+     C           BATCH     CAT  RHRTE:1   BATCH
+     C                     MOVELBATCH     $PSTR  60
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center batch/route description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR  60
+     C                     PARM           $PLEN   30
+     C                     MOVEL$PSTR     BATCH
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C           *INL4     IFEQ *OFF
+     C                     MOVE *ON       *IN94
+     C                     END
+     C*
+     C           *INL3     IFEQ *OFF
+     C                     MOVE *ON       *IN93
+     C                     END
+     C*
+     C           *INL2     IFEQ *OFF
+     C                     MOVE *ON       *IN92
+     C                     END
+     C*
+     C           *INL1     IFEQ *OFF
+     C                     MOVE *ON       *IN91
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+CBIf C           $RTYPE    IFNE '*DETAIL '
+     C                     WRITECOLUMNS
+CBIf C                     ELSE
+CBIf C*          CUST#     IFNE SCUST#
+CBIf C           CUST#     IFEQ *BLANKS
+CBIf C                     MOVE *BLANKS   $CSTR
+CBIg C                     MOVE OHCUST    CUST2
+CBIg C                     MOVELOHCUST    CUST9
+CBIf C                     MOVE CUST9     $CSTR
+CBIf C                     CALL 'ADJUST'
+CBIf C                     PARM '*LEFT   '$CCMD   8
+CBIf C                     PARM           $CSTR  30
+CBIf C                     MOVEL$CSTR     CUST6
+CBIg C                     MOVE *BLANKS   CUST#
+CBIg C           CUST#     CAT  CUST6:1   CUST#
+CBIg C           CUST#     CAT  '/':1     CUST#
+CBIg C           CUST#     CAT  CUST2:1   CUST#
+CBIf C                     MOVELOHCNAM    CSNAME
+CBIf C                     ENDIF
+CBIf C                     WRITEDETAIL1
+CBIf C                     WRITECOLUMND
+CBIf C                     MOVE CUST#     SCUST#
+CBIf C                     ENDIF
+CBIf C*                    ENDIF
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ADD  QPCK,L    QPCK,M
+     C                     ADD  CUBE,L    CUBE,M
+     C                     ADD  WGHT,L    WGHT,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C                     Z-ADDQPCK,L    T#QPCK
+     C                     Z-ADDCUBE,L    T#CUBE
+     C                     Z-ADDWGHT,L    T#WGHT
+     C*
+     C                     MOVE RPD,L     $RPD
+     C*
+     C           L         IFEQ 1
+     C           $RTYPE    IFEQ '*DETAIL '
+417c C                     EXSR ZZGETI
+417cDC*                    MOVELITDESC    DESCIT
+CBIcAC           ITCWGT    IFEQ 'Y'
+CBIcAC                     MOVE '#'       CWFLAG  1
+CBIcAC                     ELSE
+CBIcAC                     MOVE *BLANKS   CWFLAG
+CBIcAC                     ENDIF
+CBIgAC                     Z-ADD0         PAL#
+CBIgAC                     MOVE *BLANKS   ITEM#
+CBIgAC                     Z-ADDPSPAL#    PAL#
+CBIgAC                     MOVELLBITEM    ITEM#
+     C*
+     C                     WRITEDETAIL2
+404 AC                     WRITEDETAIL3
+CBIdAC           ITCWGT    IFEQ 'Y'
+CBIdAC                     EXSR ZZCWLN
+CBIdAC                     ENDIF
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C           L         IFEQ 2
+     C           $RTYPE    IFEQ '*DETAIL '
+     C                     WRITESKIP1
+CBIfDC**                   WRITETOTALD
+     C                     ELSE
+     C                     WRITETOTAL1
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C           L         IFEQ 3
+     C                     WRITESKIP1
+     C                     WRITETOTAL2
+     C                     END
+     C*
+     C           L         IFEQ 4
+     C                     WRITESKIP1
+     C                     WRITETOTAL3
+     C                     END
+     C*
+     C           L         IFEQ 5
+     C                     WRITESKIP1
+     C                     WRITETOTAL4
+     C                     END
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C*                    Z-ADD0         CLS,L
+     C                     Z-ADD0         QPCK,L
+     C                     Z-ADD0         CUBE,L
+     C                     Z-ADD0         WGHT,L
+     C*
+     C                     ENDSR
+CBId C*----------------------------------------------------------------
+CBId C*
+CBIdaC           ZZCWLN    BEGSR
+CBId C*
+CBId CSR                   Z-ADDT#QPCK    CWLFT   70
+CBId CSR         CWLFT     DOUEQ0
+CBId CSR                   Z-ADD0         CWCTR   70
+CBId CSR                   MOVEL*BLANKS   CWLN1   8
+CBId CSR                   MOVEL*BLANKS   CWLN2   8
+CBId CSR                   MOVEL*BLANKS   CWLN3   8
+CBId CSR                   MOVEL*BLANKS   CWLN4   8
+CBId CSR                   MOVEL*BLANKS   CWLN5   8
+CBId CSR                   MOVEL*BLANKS   CWLN6   8
+CBId CSR                   MOVEL*BLANKS   CWLN7   8
+CBId CSR                   MOVEL*BLANKS   CWLN8   8
+CBId CSR                   MOVEL*BLANKS   CWLN9   8
+CBId CSR         CWLFT     IFGE 1
+CBId CSR                   MOVELCWLN,1    CWLN1
+CBId CSR                   ADD  1         CWCTR
+CBId C                     ENDIF
+CBId CSR         CWLFT     IFGE 2
+CBId CSR                   MOVELCWLN,1    CWLN2
+CBId CSR                   ADD  1         CWCTR
+CBId C                     ENDIF
+CBId CSR         CWLFT     IFGE 3
+CBId CSR                   MOVELCWLN,1    CWLN3
+CBId CSR                   ADD  1         CWCTR
+CBId C                     ENDIF
+CBId CSR         CWLFT     IFGE 4
+CBId CSR                   MOVELCWLN,1    CWLN4
+CBId CSR                   ADD  1         CWCTR
+CBId C                     ENDIF
+CBId CSR         CWLFT     IFGE 5
+CBId CSR                   MOVELCWLN,1    CWLN5
+CBId CSR                   ADD  1         CWCTR
+CBId C                     ENDIF
+CBId CSR         CWLFT     IFGE 6
+CBId CSR                   MOVELCWLN,1    CWLN6
+CBId CSR                   ADD  1         CWCTR
+CBId C                     ENDIF
+CBId CSR         CWLFT     IFGE 7
+CBId CSR                   MOVELCWLN,1    CWLN7
+CBId CSR                   ADD  1         CWCTR
+CBId C                     ENDIF
+CBId C**         CWLFT     IFGE 8
+CBId C**                   MOVELCWLN,1    CWLN8
+CBId C**                   ADD  1         CWCTR
+CBId C**                   ENDIF
+CBId C**         CWLFT     IFGE 9
+CBId C**                   MOVELCWLN,1    CWLN9
+CBId C**                   ADD  1         CWCTR
+CBId C**                   ENDIF
+CBId C                     WRITECWLIN
+CBId CSR         CWLFT     SUB  CWCTR     CWLFT
+CBId C                     ITER
+CBId C                     ENDDO
+CBId C*
+CBId C                     ENDSR
+     C*----------------------------------------------------------------
+417c C*
+417c C           ZZGETI    BEGSR
+417c C*
+417cACSR                   MOVE *BLANKS   DESCI1
+417cACSR                   MOVE *BLANKS   DESCI2
+417cACSR                   MOVE '*ITEMMNT'OCODE   8
+417cACSR         OPKEY     CHAINOPTIONS              79
+417cACSR         *IN79     IFEQ *ON
+417cACSR                   MOVE 'N'       OPXDSC
+417cACSR                   ENDIF
+     C*
+417cACSR         OPXDSC    IFEQ 'Y'
+417cACSR         IDKEY     CHAINITEMDSC              79
+417cACSR         *IN79     IFEQ *OFF
+417cACSR                   MOVELIXDSC1    DESCI1
+417cACSR                   MOVELIXDSC2    DESCI2
+417cACSR                   ENDIF
+417cACSR                   ELSE
+417cACSR                   MOVELITDESC    DESCI1
+417cACSR                   ENDIF
+     C*
+417c C           IDKEY     CHAINITEMMSC              79
+417c C           *IN79     IFEQ *ON
+417c C                     MOVE *BLANKS   BRAND
+417c C                     ELSE
+417c C                     MOVE IMBRND    BRAND
+417c C                     ENDIF
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     C*
+417cAC*     OPTIONS
+417cAC*
+417cAC           OPKEY     KLIST
+417cAC                     KFLD           LBWHSE
+417cAC                     KFLD           OCODE
+417cAC*
+417cAC*     EXTENDED ITEM DESCRIPTION
+417cAC*
+417bAC           IDKEY     KLIST
+417cAC                     KFLD           LBWHSE
+417cAC                     KFLD           LBITEM
+     C*
+     CSR                   ENDSR
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**      TTL   Report title descriptions
+Truck Pallet Summary Report
+Truck Pallet Detail Report
+**      RPD   Report level descriptions
+
+ * Stop totals *
+ ** Pallet totals **
+ *** Compartment totals ***
+ **** Totals ****
+**      CWLN  Catch weight entry line
+ ____/___

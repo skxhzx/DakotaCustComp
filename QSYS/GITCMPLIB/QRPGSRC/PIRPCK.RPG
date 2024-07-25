@@ -1,0 +1,477 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  PIRPCK    Create PIR picking slot number for PIR slot.
+     F*  04 August 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+214 AF*    07/26/96  DAS
+     F*      - Revised to use LHSNUM as the starting picking sequence
+     F*        number.
+     F*
+414 AF*    10/04/00  DAS  4.14
+     F*      - Recompiled because file LAYOUTH changed.
+     F*      - Revised to use new increment value LHSINC instead of
+     F*        using a hard-coded 2.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FLAYOUTH IF  E           K        DISK
+     FRACKS   IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  Error message parameter
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Not used.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PWHSE  Warehouse for FA-PIR location.
+     C*      $PWHDP  Department for FA-PIR location.
+     C*      $PAISL  Aisle for FA-PIR location.
+     C*      $PLOC   Aisle location number for FA-PIR location.
+     C*      $PRLVL  Level for FA-PIR location.
+     C*
+     C*    Returned Parameters
+     C*      $PPSEQ  Pick seq aisle location.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PAISL  3
+     C                     PARM           $PLOC   30
+     C                     PARM           $PRLVL  20
+     C                     PARM           $PPSEQ  50
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE '0'       ERROR
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C                     Z-ADD0         $PPSEQ
+     C*
+     C*  Get aisle definition if it has changed.
+     C*
+     C           $PWHSE    IFNE SVWHSE
+     C           $PWHDP    ORNE SVWHDP
+     C           $PAISL    ORNE SVAISL
+     C*
+     C           KEYLH     CHAINLAYOUTH              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR   1
+     C                     MOVE '*PGMQ   '$PRTN
+     C                     EXSR ZM73
+     C                     GOTO OUT
+     C                     ENDIF
+     C*
+     C                     Z-ADD$PWHSE    SVWHSE
+     C                     MOVE $PWHDP    SVWHDP
+     C                     MOVE $PAISL    SVAISL
+     C                     ENDIF
+     C*
+     C*  Get rack definition if it has changed.
+     C*
+     C           $PWHSE    IFNE SVWHSE
+     C           LHRACK    ORNE SVRACK
+     C*
+     C           KEYRK     CHAINRACKS                79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE '*PGMQ   '$PRTN
+     C                     EXSR ZM73
+     C                     GOTO OUT
+     C                     ENDIF
+     C*
+     C                     MOVE LHRACK    SVRACK
+     C                     ENDIF
+     C*
+     C*  Calculate number of slot locations on one level.
+     C*
+     C           LHRCKS    MULT RKSLTS    SLOTS
+414 DC**                   MULT 2         SLOTS
+414 MC                     MULT LHSINC    SLOTS
+     C*
+     C*  Is slot on left or right side of aisle?
+     C*
+     C           $PLOC     DIV  2         TEMP3N  30
+     C                     MVR            REMAIN  10
+     C           REMAIN    IFEQ 1
+     C                     MOVE '*LEFT   'RGTLFT  8
+     C                     ELSE
+     C                     MOVE '*RIGHT  'RGTLFT
+     C                     ENDIF
+     C*
+     C*  Is slot on top or bottom section of rack?
+     C*
+     C                     SELEC
+     C*
+     C*  Slot is on top section.
+     C*
+     C           $PRLVL    WHGE LHSLVL
+     C                     MOVE '*TOP    'TOPBOT  8
+414 DC**                   Z-ADD2         INCR1   10
+414 MC                     Z-ADDLHSINC    INCR1   20
+     C*
+     C*     Set starting and ending levels.
+     C*
+     C                     Z-ADDLHSLVL    STRLVL
+     C                     Z-ADDLHFLVL    ENDLVL
+     C*
+     C*     Calculate starting slot# and Seq#.
+     C*
+     C           RGTLFT    IFEQ '*LEFT   '
+     C                     Z-ADDLHSNUM    STRLOC
+     C                     Z-SUB1         $PPSEQ
+     C                     ELSE
+     C           LHSNUM    ADD  1         STRLOC
+     C                     Z-SUB2         $PPSEQ
+     C                     ENDIF
+     C*
+     C*  Slot is on bottom section.
+     C*
+     C                     OTHER
+     C                     MOVE '*BOTTOM 'TOPBOT
+414 DC**                   Z-SUB2         INCR1   10
+414 MC                     Z-SUBLHSINC    INCR1
+     C                     Z-ADDLHSLVL    STRLVL
+     C                     Z-ADDLHFLVL    ENDLVL
+     C*
+     C*     Set starting and ending levels.
+     C*
+     C                     Z-ADD1         STRLVL
+     C           LHSLVL    SUB  1         ENDLVL
+     C*
+     C*     Calculate starting slot# and Seq#.
+     C*
+     C           RGTLFT    IFEQ '*LEFT   '
+     C           LHSNUM    ADD  SLOTS     STRLOC
+414 DC**                   SUB  2         STRLOC
+414 AC                     SUB  LHSINC    STRLOC
+     C                     EXSR BOTSEQ
+     C                     SUB  1         $PPSEQ
+     C                     ELSE
+     C           LHSNUM    ADD  SLOTS     STRLOC
+414 DC**                   SUB  1         STRLOC
+414 AC                     SUB  LHSINC    STRLOC
+414 AC                     ADD  1         STRLOC
+     C                     EXSR BOTSEQ
+     C                     SUB  2         $PPSEQ
+     C                     ENDIF
+     C*
+     C                     ENDSL
+     C*
+     C                     EXSR GETSEQ
+214 AC*
+214 AC*  Adjust picking sequence number by user enter starting number.
+214 AC*
+214 AC                     ADD  LHSNUM    $PPSEQ
+214 AC                     SUB  1         $PPSEQ
+     C*
+     C*  Do some clean up before leaving.
+     C*
+     C           OUT       TAG
+     C                     EXSR ZSCLR
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define file keys
+     C*
+     C*    Warehouse layout header (LAYOUTH)
+     C*
+     C*
+     CSR         KEYLH     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           $PAISL
+     C*
+     C*    Rack definition (RACKS)
+     C*
+     CSR         KEYRK     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           LHRACK
+     C*
+     C*  Define variables
+     C*
+     CSR         *LIKE     DEFN $PWHSE    SVWHSE
+     CSR         *LIKE     DEFN $PWHDP    SVWHDP
+     CSR         *LIKE     DEFN $PAISL    SVAISL
+     CSR         *LIKE     DEFN RKCODE    SVRACK
+     C*
+     CSR         *LIKE     DEFN $PPSEQ    STRSEQ
+414 DC**         *LIKE     DEFN $PLOC     STRLOC
+414 MCSR         *LIKE     DEFN $PPSEQ    STRLOC
+414 DC**         *LIKE     DEFN $PLOC     CURLOC
+414 MCSR         *LIKE     DEFN $PPSEQ    CURLOC
+414 DC**         *LIKE     DEFN $PLOC     SLOTS
+414 MCSR         *LIKE     DEFN $PPSEQ    SLOTS
+     CSR         *LIKE     DEFN $PRLVL    STRLVL
+     CSR         *LIKE     DEFN $PRLVL    ENDLVL
+     CSR         *LIKE     DEFN $PRLVL    CURLVL
+     CSR         *LIKE     DEFN $PRLVL    STPLVL
+     CSR         *LIKE     DEFN $PRLVL    LEVELS
+     C*
+     C*  Initialize message handling
+     C*
+     CSR                   EXSR ZMIMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BOTSEQ  Calculate starting bottom seq#.
+     C*
+     CSR         BOTSEQ    BEGSR
+     C*
+     C*   Initialize variables.
+     C*
+     CSR                   MOVE *OFF      FLAG2
+     CSR                   Z-ADD0         $PPSEQ
+     C*
+     CSR         1         DO   2
+     CSR         LHSLVL    DO   LHFLVL
+     C*
+     CSR         FLAG2     IFEQ *OFF
+     CSR                   ADD  2         $PPSEQ
+     CSR                   MOVE *ON       FLAG2
+     CSR                   ELSE
+     CSR                   ADD  4         $PPSEQ
+     CSR                   MOVE *OFF      FLAG2
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     CSR                   ENDDO
+     C*
+     CSR         SLOTS     DIV  4         TEMP3N
+     CSR         $PPSEQ    MULT TEMP3N    $PPSEQ
+     CSR         $PPSEQ    DIV  100       TEMP3N
+     CSR                   ADD  1         TEMP3N
+     CSR         TEMP3N    MULT 100       $PPSEQ
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETSEQ  Get PIR picking sequence number.
+     C*
+     CSR         GETSEQ    BEGSR
+     C*
+     C*   Initialize variables.
+     C*
+     CSR                   MOVE *OFF      FLAG1   1
+     CSR         RGTLFT    IFEQ '*LEFT   '
+     CSR                   MOVE *OFF      FLAG2   1
+     CSR                   ELSE
+     CSR                   MOVE *ON       FLAG2
+     CSR                   ENDIF
+     C*
+     C*   Start at beginning slot to find correct picking seq#.
+     C*
+     CSR                   Z-ADDSTRLOC    CURLOC
+     CSR                   MOVE *OFF      STOP1   1
+     CSR         STOP1     DOUEQ*ON
+     C*
+     C*      Go through each level for slot and increment seq#.
+     C*
+     CSR         FLAG1     IFEQ *OFF
+     CSR                   Z-ADDSTRLVL    CURLVL
+     CSR                   Z-ADDENDLVL    STPLVL
+     CSR                   Z-ADD1         INCR2   10
+     CSR                   MOVE *ON       FLAG1
+     CSR                   ELSE
+     CSR                   Z-ADDENDLVL    CURLVL
+     CSR                   Z-ADDSTRLVL    STPLVL
+     CSR                   Z-SUB1         INCR2
+     CSR                   MOVE *OFF      FLAG1
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE *OFF      STOP2   1
+     CSR         STOP2     DOUEQ*ON
+     C*
+     CSR         FLAG2     IFEQ *OFF
+     CSR                   ADD  2         $PPSEQ
+     CSR                   MOVE *ON       FLAG2
+     CSR                   ELSE
+     CSR                   ADD  4         $PPSEQ
+     CSR                   MOVE *OFF      FLAG2
+     CSR                   ENDIF
+     C*
+     C*      Stop looping through levels until ...
+     C*
+     C*           - All levels have been done.
+     C*                   -OR-
+     C*           - Slot location has been reached.
+     C*
+     CSR         CURLVL    IFEQ STPLVL
+     CSR         CURLOC    OREQ $PLOC
+     CSR         CURLVL    ANDEQ$PRLVL
+     CSR                   MOVE *ON       STOP2
+     CSR                   ELSE
+     CSR                   ADD  INCR2     CURLVL
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*   Stop looping through slots when location has been reached.
+     C*
+     CSR         CURLOC    IFEQ $PLOC
+     CSR                   MOVE *ON       STOP1
+     CSR                   ELSE
+     CSR                   ADD  INCR1     CURLOC
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     C**                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     C*R                   ADD  1         MSGK
+     C*R                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C**                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7973  Record does not exist.
+     C*
+     CSR         ZM73      BEGSR
+     CSR                   MOVE 'PIR7973' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR

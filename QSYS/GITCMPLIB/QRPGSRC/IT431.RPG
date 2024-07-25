@@ -1,0 +1,304 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT431     Fixed items with multiple pick slots.
+     F*  Hemant Kapadia
+     F*  27 August, 1997
+     F*
+     F*  Note: Openquery file in CL program restricts to warehouse/
+     F*        Department/Fixed section and Pick slots records only
+     F*        for SLOT4 file.
+     F*
+     F*
+     F*  Revisions
+     F*
+     F*    08/27/97  HNK 4.04
+     F*      - Created.
+510a F*    01/30/07  RH  5.10a
+     F*      - Enh: Add slot reserved field.  Only print if 'Y'
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPIRITEM1IP  E           K        DISK
+     FITEMDEF IF  E           K        DISK
+     FSLOT4   IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FWHDEPT  IF  E           K        DISK
+     FIT431PR O   E             90     PRINTER
+     I*****************************************************************
+     I**REC
+     I**                                            ITWHDPL1
+     I*****************************************************************
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     I*
+     C*----------------------------------------------------------------
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $WHSE   3
+     C                     PARM           $WHDP   5
+     C                     MOVE $WHSE     $KWHSE  30
+     C*----------------------------------------------------------------
+     C*
+     C*  Key fields
+     C*
+     C           SLKEY     KLIST
+     C                     KFLD           $KWHSE
+     C                     KFLD           ITWHDP
+     C                     KFLD           ITITEM
+     C*
+     C           IDKEY     KLIST
+     C                     KFLD           $KWHSE
+     C                     KFLD           ITITEM
+     C                     KFLD           SLSDEF
+     C*
+     C           WHKEY     KLIST
+     C                     KFLD           $KWHSE
+     C*
+     C           WDKEY     KLIST
+     C                     KFLD           $KWHSE
+     C                     KFLD           W1WHDP
+     C*----------------------------------------------------------------
+     C           ITWHSE    IFNE $KWHSE
+     C           ITSTYP    ORNE 'F'
+     C                     GOTO OUT
+     C                     ENDIF
+     C*
+     C           $WHDP     IFNE '*ALL '
+     C           ITWHDP    CABNE$WHDP     OUT
+     C                     ENDIF
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C* Find out if the item has more than one slot.
+     C*
+     C                     EXSR FIND
+     C*
+     C* Detail Calcs
+     C*
+     C           COUNT     IFGT 1
+     C           SLKEY     SETLLSLOT4                79
+     C                     Z-ADD0         PRTLIN
+     C                     SETON                     61
+     C                     MOVE *IN79     EOF     1
+     C           EOF       DOWEQ*OFF
+510a C                     MOVE *BLANKS   W1RSRV  1
+     C           SLKEY     READESLOT4                    79
+     C                     MOVE *IN79     EOF
+     C           *IN79     IFEQ *OFF
+510a C           SLRSRV    IFEQ 'Y'
+510a C                     MOVE SLRSRV    W1RSRV
+510a C                     ENDIF
+     C                     EXSR $GETID
+     C                     EXSR FRMQTY
+     C                     ADD  1         PRTLIN
+     C*
+     C*  Do not print item info., if more than 1 item found
+     C           PRTLIN    IFGT 1
+     C                     SETOF                     61
+     C                     ENDIF
+     C*
+     C*
+     C*  Start a new page, if change in department.
+     C*
+     C           $WHDP     IFEQ '*ALL '
+     C           SVWHDP    ANDNE*BLANKS
+     C           SLWHDP    ANDNESVWHDP
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C                     MOVE SLWHDP    SVWHDP
+     C*
+     C   61                WRITESKIP1
+     C                     WRITEDETAIL1
+     C*
+     C                     ENDIF
+     C                     ENDDO
+     C                     ENDIF
+     C                     MOVE '0'       FIRST
+     C*
+     C           OUT       TAG
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR         *LIKE     DEFN SLWHDP    SVWHDP
+     CSR         *LIKE     DEFN SLWHDP    W1WHDP
+     CSR                   TIME           TIME
+     CSR                   MOVE '1'       FIRST   1
+     CSR                   Z-ADD0         COUNT   30
+     CSR                   Z-ADD0         PRTLIN  30
+     CSR                   MOVE *BLANKS   SVWHDP
+     CSR                   ENDSR
+     C*****************************************************************
+     C*
+     C*  $GETID
+     C*
+     CSR         $GETID    BEGSR
+     C           IDKEY     CHAINIDREC                10
+     C           *IN10     IFEQ *ON
+     C                     MOVE *ZEROS    IDTIE
+     C                     MOVE *ZEROS    IDHIGH
+     C                     ENDIF
+     CSR                   ENDSR
+     C*****************************************************************
+     C*
+     C*  FIND    Find out if the item has more than one pick slot.
+     C*
+     CSR         FIND      BEGSR
+     C*
+     CSR         SLKEY     SETLLSLOT4                79
+     CSR                   Z-ADD0         COUNT
+     CSR                   SETON                     61
+     CSR                   MOVE *IN79     EOF     1
+     CSR         EOF       DOWEQ*OFF
+     CSR         SLKEY     READESLOT4                    79
+     CSR                   MOVE *IN79     EOF
+     CSR         *IN79     IFEQ *OFF
+     CSR                   ADD  1         COUNT
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*****************************************************************
+     C*
+     C*  FRMQTY  Format quantity.
+     C*
+     CSR         FRMQTY    BEGSR
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           SLSTK1
+     C                     PARM           SLSTK2
+     C                     PARM           SLSTK3
+     C*
+     C                     PARM           SLALC1
+     C                     PARM           SLALC2
+     C                     PARM           SLALC3
+     C*
+     C                     PARM           SLTFR1
+     C                     PARM           SLTFR2
+     C                     PARM           SLTFR3
+     C*
+     C                     PARM           SLPCK1
+     C                     PARM           SLPCK2
+     C                     PARM           SLPCK3
+     C*
+     C                     PARM           SLRCV1
+     C                     PARM           SLRCV2
+     C                     PARM           SLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C*    Create a quantity string to print.
+     C*
+     C                     MOVE '*QTY2STR'$PCMD
+     C                     Z-ADDAVAIL1    $PQTY1
+     C                     Z-ADDAVAIL2    $PQTY2
+     C                     Z-ADDAVAIL3    $PQTY3
+     C                     MOVE *BLANKS   $PQSTR
+     C*
+     C                     CALL 'CVTQTY'
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PQTY1  70
+     C                     PARM           $PQTY2  70
+     C                     PARM           $PQTY3  70
+     C                     PARM           $PUM1   2
+     C                     PARM           $PUM2   2
+     C                     PARM           $PUM3   2
+     C                     PARM           $PQSTR 10
+     C                     PARM           $PUSTR 17
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*
+     C                     MOVE $PQSTR    W1QTY
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C           $WHDP     IFNE '*ALL '
+     C                     MOVE $WHDP     W1WHDP
+     C                     ELSE
+     C                     MOVE ITWHDP    W1WHDP
+     C                     ENDIF
+     C*
+     C*   Section
+     C*
+     C                     MOVE 'FIXED'   W1STYP  5
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WOWHSE
+     C           WHKEY     CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    WOWHSE
+     C                     ELSE
+     C                     MOVE *BLANKS   WOWHSE
+     C                     ENDIF
+     C*
+     C                     MOVE *BLANKS   $PSTR
+     C           WDKEY     CHAINWHDEPT               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWDDESC    SVDESC 30
+     C                     ELSE
+     C                     MOVE *BLANKS   SVDESC
+     C                     ENDIF
+     C           WOWHSE    CAT  '/':0     WOWHSE
+     C           WOWHSE    CAT  SVDESC:0  WOWHSE
+     C           WOWHSE    CAT  '/':0     WOWHSE
+     C           WOWHSE    CAT  W1STYP:0  WOWHSE
+     C*
+     C                     MOVELWOWHSE    $PSTR  60
+     C                     Z-ADD60        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WOWHSE
+     C*
+     C                     ENDSR
+     C*****************************************************************
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR                   MOVE '0'       *IN90
+     CSR                   WRITEHEAD1
+     CSR                   WRITECOLUMNS
+     C*
+     CSR                   ENDSR

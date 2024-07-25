@@ -1,0 +1,654 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  CRTSLT    Create slots for one aisle
+     F*  22 July 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+213 AF*    05/20/96  DAS
+     F*      - Revised to calculate side of aisle for slot.
+     F*
+213 AF*    06/10/96  HNK
+     F*      - Revised to create right number of slots, when we have
+     F*        different number of racks on each side of the aisle.
+     F*
+214 AF*    07/26/96  DAS
+     F*      - Revised to allow a partially defined rack where the
+     F*        slot definitions do not start at the first level.
+410 AF*    09/18/98  RH/DAS
+     F*      - Revised to look for corresponding rack that defines
+     F*        levels 11-20.  These racks have the same code as the
+     F*        one that defines levels 1-10 but the code ends with
+     F*        an '*'.
+     F*
+411 AF*    04/28/99  DAS
+     F*      - Revised to strip ending asterisk from aisle code.
+     F*
+414 AF*    10/04/00  DAS  4.14
+     F*      - Added field LHSINC to file LAYOUTH.
+     F*      - Change length of LAYOUTD field LDSEQ# to 3.0 from 2.0.
+     F*      - Revised ADDSLT to increment slot number by LHSINC
+     F*        instead of a hard-coded 2.
+650aAF*    02/10/14  RH   6.50a
+     F*      - Enh: Add Client code for custom changes.
+     F*----------------------------------------------------------------
+     F*    CLIENT CUSTOM REVISIONS: EUROPEAN IMPORTS
+EIa  F*      02/10/14  RH   EIa
+     F*        -  ENH: Force to number with ODD on right, EVEN on left.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FLAYOUTH IF  E           K        DISK
+     FLAYOUTD IF  E           K        DISK
+     FRACKS   IF  E           K        DISK
+     FSLOT1   O   E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     E                    LTR    27  27  1
+     E                    HND       702  2
+410 DE*                   RSDEF      10  2
+410 DE*                   RHS        10  2 0
+410 AE                    RSD        20  2
+410 ME                    RHS        20  2 0
+     E                    SDEF        2  5
+     E                    LOC         2  3 0
+410 AE                    A5          5  1
+411 AE                    A3          3  1
+650aAI*----------------------------------------------------------------
+650aAI*  Customer ID
+650aAI*
+EIa A /COPY QCOPYSRC,IL#EI
+     I*----------------------------------------------------------------
+     I*  Misc. data structures
+     I*
+     IRKLEVL      DS
+410 DI*                                       1  20 RSDEF
+410 MI                                        1  20 RKL
+     I                                        1   2 RKL01
+     I                                        3   4 RKL02
+     I                                        5   6 RKL03
+     I                                        7   8 RKL04
+     I                                        9  10 RKL05
+     I                                       11  12 RKL06
+     I                                       13  14 RKL07
+     I                                       15  16 RKL08
+     I                                       17  18 RKL09
+     I                                       19  20 RKL10
+     I            DS
+410 DI*                                       1  20 RHS
+     I                                        1   20RKHS01
+     I                                        3   40RKHS02
+     I                                        5   60RKHS03
+     I                                        7   80RKHS04
+     I                                        9  100RKHS05
+     I                                       11  120RKHS06
+     I                                       13  140RKHS07
+     I                                       15  160RKHS08
+     I                                       17  180RKHS09
+     I                                       19  200RKHS10
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  26 $PWHDP
+     I                                       27  29 $PAISL
+     I                                       30  30 $PSTYP
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  26 $LWHDP
+     I                                       27  29 $LAISL
+     I                                       30  30 $LSTYP
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *ADD     - Create new slots.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains unique key for everything but *ADD.
+     C*
+     C*    Returned Parameters
+     C*      $PUKY   Contains new unique key for *ADD.
+     C*              Unchanged for everything else.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C*  File keys
+     C*
+     C*    Warehouse layout header (LAYOUTH)
+     C*
+     C           KEYLH     KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PWHDP
+     C                     KFLD           $PAISL
+     C*
+     C*    Warehouse layout detail (LAYOUTD)
+     C*
+     C           KEYLD     KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PWHDP
+     C                     KFLD           $PAISL
+     C                     KFLD           LDSEQ#
+     C*
+     C*    Rack definition (RACKS)
+     C*
+     C           KEYRK     KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           RKCODE
+     C*
+     C*    Slot file (SLOT1)
+     C*
+     C           KEYSL     KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PWHDP
+     C                     KFLD           $PAISL
+     C                     KFLD           SLLOC
+     C                     KFLD           SLRLVL
+     C                     KFLD           SLHAND
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE '0'       ERROR
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C*
+     C*  Get rack layout header for aisle.
+     C*
+     C                     EXSR GETLH
+     C           ERROR     CABEQ*ON       OUT
+     C                     Z-ADDLHSNUM    LOC,1
+     C           LHSNUM    ADD  1         LOC,2
+     C*
+     C*  Loop through rack detail and create slots.
+     C*
+     C           LHSTYP    IFEQ 'F'
+     C                     EXSR DTLFIX
+     C                     ELSE
+     C                     EXSR DTLPIR
+     C                     ENDIF
+     C*
+     C*  Do some clean up before leaving.
+     C*
+     C           OUT       TAG
+     C                     EXSR ZSCLR
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+650aAC*
+650aAC*  Get client id.
+650aAC*
+650aAC           *NAMVAR   DEFN PIRCLIENT CLIENT 10
+650aAC                     IN   CLIENT
+     C*
+     C*  Initialize special keys
+     C*
+     CSR                   Z-ADD0         ENTER   50
+     CSR                   Z-ADD2         COMAND  50
+     CSR                   Z-ADD01122     ROLLUP  50
+     CSR                   Z-ADD01123     ROLLDN  50
+     CSR                   Z-ADD01124     CLEAR   50
+     CSR                   Z-ADD01125     HELP    50
+     C*
+     C*   Load handstack array with codes (A..Z, AA..AZ, ...)
+     C*
+     CSR                   Z-ADD0         K       30
+     CSR         1         DO   27        I       20
+     CSR         2         DO   27        J       20
+     CSR                   ADD  1         K
+     CSR         LTR,I     CAT  LTR,J     HND,K
+     CSR                   ENDDO
+     CSR                   ENDDO
+     C*
+     C*  Initialize message handling
+     C*
+     CSR                   EXSR ZMIMSG
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ADDSLT  Add record(s) to slot file.
+     C*
+     C*    - One record will be created for each rack bay. Bays are
+     C*      identical within the same rack except for the location
+     C*      number.
+     C*
+     C*    - Ignore any error that occurs during add.
+     C*
+     CSR         ADDSLT    BEGSR
+     CSR         1         DO   RKSLTS    J       20
+     C*
+     C*      Create picking seq#.
+     C*
+     CSR         $PSTYP    IFEQ 'F'
+     CSR                   Z-ADDSLLOC     SLPSEQ
+     CSR                   ELSE
+     CSR                   CALL 'PIRPCK'
+     CSR                   PARM ' '       $LCMD
+     CSR                   PARM           $LPRG
+     CSR                   PARM           SLWHSE
+     CSR                   PARM           SLWHDP
+     CSR                   PARM           SLAISL
+     CSR                   PARM           SLLOC
+     CSR                   PARM           SLRLVL
+     CSR                   PARM 0         SLPSEQ
+     CSR                   PARM           $LRTN
+     CSR                   PARM           $LERM
+     CSR                   ENDIF
+     C*
+     C*      Format display slot.
+     C*
+     CSR                   CALL 'FRMTSL'
+     CSR                   PARM           SLWHSE
+     CSR                   PARM           SLWHDP
+     CSR                   PARM           SLAISL
+     CSR                   PARM           SLLOC
+     CSR                   PARM           SLRLVL
+     CSR                   PARM           SLHAND
+     CSR                   PARM           SLSTYP
+     CSR                   PARM           SLPSEQ
+     CSR                   PARM           SLDISP
+     C*
+     C*      Add record.
+     C*
+213 ACSR         SLLOC     DIV  2         DUMMY   30
+213 ACSR                   MVR            SLSIDE
+     CSR                   WRITESLREC                  77
+414 DC***                  ADD  2         SLLOC
+414 MCSR                   ADD  LHSINC    SLLOC
+     C*
+     CSR                   ENDDO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CRTSLT  Create right and left slots.
+     C*
+     C*          Note: All rack definitions are entered from the front
+     C*                of the warehouse. Therefore, the right and left
+     C*                references are switched when numbering starts
+     C*                at the back of the warehouse.
+     C*
+     CSR         CRTSLT    BEGSR
+     C*
+     C*   Get right and left slot definitions.
+     C*
+     CSR         LHSTRT    IFEQ 'F'
+     CSR                   MOVE LDLEFT    SDEF,1
+     CSR                   MOVE LDRGHT    SDEF,2
+     CSR                   ELSE
+     CSR                   MOVE LDRGHT    SDEF,1
+     CSR                   MOVE LDLEFT    SDEF,2
+     CSR                   ENDIF
+EIa ACSR         CLIENT    IFEQ EI
+EIa ACSR                   MOVE LDRGHT    SDEF,1
+EIa ACSR                   MOVE LDLEFT    SDEF,2
+EIa ACSR                   ENDIF
+     C*
+     C*   Create left (1) and right (2) slots.
+     C*
+     CSR         1         DO   2         SL      10        D01
+     C*
+     C*      Get rack definition record.
+     C*
+     CSR                   MOVE SDEF,SL   RKCODE
+     CSR         KEYRK     CHAINRACKS                78
+     CSR         *IN78     IFEQ *ON
+414 DC**                   ADD  2         LOC,SL
+414 MCSR                   ADD  LHSINC    LOC,SL
+     CSR                   ITER
+     CSR                   ENDIF
+410 AC*
+410 ACSR                   MOVEA*BLANKS   RSD
+410 ACSR                   Z-ADD*ZEROS    RHS
+410 ACSR                   MOVEARKL       RSD,1
+410 ACSR                   Z-ADDRKHS01    RHS,1
+410 ACSR                   Z-ADDRKHS02    RHS,2
+410 ACSR                   Z-ADDRKHS03    RHS,3
+410 ACSR                   Z-ADDRKHS04    RHS,4
+410 ACSR                   Z-ADDRKHS05    RHS,5
+410 ACSR                   Z-ADDRKHS06    RHS,6
+410 ACSR                   Z-ADDRKHS07    RHS,7
+410 ACSR                   Z-ADDRKHS08    RHS,8
+410 ACSR                   Z-ADDRKHS09    RHS,9
+410 ACSR                   Z-ADDRKHS10    RHS,10
+410 AC*
+410 ACSR                   MOVEARKCODE    A5
+410 ACSR                   MOVE *OFF      FLAG    1
+410 ACSR         1         DO   5         I                 D02
+410 ACSR         A5,I      IFEQ *BLANK
+410 ACSR                   MOVE '*'       A5,I
+410 ACSR                   MOVE *ON       FLAG
+410 ACSR                   LEAVE
+410 ACSR                   ENDIF
+410 ACSR                   ENDDO                            E02
+410 AC*
+410 ACSR         FLAG      IFEQ *ON
+410 ACSR                   MOVEAA5        RKCODE
+410 ACSR         KEYRK     CHAINRACKS                78
+410 ACSR         *IN78     IFEQ *OFF
+410 ACSR                   MOVEARKL       RSD,11
+410 ACSR                   Z-ADDRKHS01    RHS,11
+410 ACSR                   Z-ADDRKHS02    RHS,12
+410 ACSR                   Z-ADDRKHS03    RHS,13
+410 ACSR                   Z-ADDRKHS04    RHS,14
+410 ACSR                   Z-ADDRKHS05    RHS,15
+410 ACSR                   Z-ADDRKHS06    RHS,16
+410 ACSR                   Z-ADDRKHS07    RHS,17
+410 ACSR                   Z-ADDRKHS08    RHS,18
+410 ACSR                   Z-ADDRKHS09    RHS,19
+410 ACSR                   Z-ADDRKHS10    RHS,20
+410 ACSR                   ENDIF
+410 ACSR                   ENDIF
+     C*
+     C*      Get maximum defined level for rack.
+     C*
+214 DC*          1         DO   10        I       20
+214 DC*          RSDEF,I   IFEQ *BLANKS
+214 DC*                    LEAVE
+214 DC*                    ENDIF
+214 DC*                    ENDDO
+214 DC*          I         SUB  1         MAXLVL  20
+     C*
+     C*      Initialize slot fields.
+     C*
+     CSR                   Z-ADD$PWHSE    SLWHSE
+     CSR                   MOVE $PWHDP    SLWHDP
+     CSR                   MOVE $PAISL    SLAISL
+411 AC*
+411 AC*  Strip ending asterisk from aisle code.
+411 AC*
+411 AC                     MOVEASLAISL    A3
+411 AC           A3,3      IFEQ '*'
+411 AC                     MOVE A3,2      A3,3
+411 AC                     MOVE A3,1      A3,2
+411 AC                     MOVE ' '       A3,1
+411 AC                     MOVEAA3        SLAISL
+411 AC                     ENDIF
+     CSR                   MOVE $PSTYP    SLSTYP
+     CSR                   MOVE 'I '      SLSTAT
+     CSR                   MOVE 'N'       SLRSRV
+     CSR                   MOVE LHBLD     SLBLD
+     C*
+     C*      Create slot for each level.
+     C*
+214 DC*          1         DO   MAXLVL    L       20
+410 DC*R         1         DO   10        L       20
+410 MCSR         1         DO   20        L       20          D02
+410 DC*R         RSDEF,L   IFEQ *BLANKS
+410 MCSR         RSD,L     IFEQ *BLANKS
+214 ACSR                   ITER
+214 ACSR                   ENDIF
+     CSR                   Z-ADDL         SLRLVL
+410 DC*R                   MOVE RSDEF,L   SLSDEF
+410 MCSR                   MOVE RSD,L     SLSDEF
+     CSR         L         IFLE RKPLVL
+     CSR                   MOVE 'Y'       SLPICK
+     CSR                   ELSE
+     CSR                   MOVE 'N'       SLPICK
+     CSR                   ENDIF
+     C*
+     C*         Create slot for each handstack.
+     C*
+     CSR         RHS,L     IFLE 1
+     CSR                   MOVE *BLANKS   SLHAND
+     CSR                   Z-ADDLOC,SL    SLLOC
+     CSR                   EXSR ADDSLT
+     CSR                   ELSE
+     CSR         1         DO   RHS,L     I       20        D03
+     CSR                   MOVE HND,I     SLHAND
+     CSR                   Z-ADDLOC,SL    SLLOC
+     CSR                   EXSR ADDSLT
+     CSR                   ENDDO                            E03
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO                            E02
+     C*
+     C*         Increment slot number.
+     C*
+     CSR                   Z-ADDSLLOC     LOC,SL
+     C*
+     CSR                   ENDDO                            E01
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  DTLFIX  Create fixed slots from layout detail records.
+     C*
+     C*          Note: All rack definitions are entered from the front
+     C*                of the warehouse. Therefore, if the rack numbers
+     C*                start from the back of the warehouse then we
+     C*                need to read the records in reverse order.
+     C*
+     CSR         DTLFIX    BEGSR
+     C*
+     C*   Position pointer.
+     C*
+     CSR         LHSTRT    IFEQ 'F'
+     CSR         KEYLH     SETLLLAYOUTD
+     CSR                   ELSE
+     CSR         KEYLH     SETGTLAYOUTD
+     CSR                   ENDIF
+     C*
+     C*  Loop through rack detail and create slots.
+     C*
+     CSR         *IN79     DOUEQ*ON
+     C*
+     C*     Read record from detail file.
+     C*
+     CSR         LHSTRT    IFEQ 'F'
+     CSR         KEYLH     READELAYOUTD                  79
+     CSR                   ELSE
+     CSR         KEYLH     REDPELAYOUTD                  79
+     CSR                   ENDIF
+     C*
+     CSR         *IN79     IFEQ *OFF
+     CSR                   EXSR CRTSLT
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  DTLPIR  Create PIR slots.
+     C*
+     CSR         DTLPIR    BEGSR
+     C*
+     C*  There is only one rack type for all PIR slots.
+     C*
+     CSR                   MOVE LHRACK    LDRGHT
+     CSR                   MOVE LHRACK    LDLEFT
+     C*
+     C*  Loop through rack detail and create slots.
+     C*
+     CSR         1         DO   LHRCKS
+     CSR                   EXSR CRTSLT
+     CSR                   ENDDO
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETLH   Get rack layout header for aisle.
+     C*
+     CSR         GETLH     BEGSR
+     C*
+     C*   Get record from main file.
+     C*
+     CSR         KEYLH     CHAINLAYOUTH              79
+     C*
+     C*  Record not found.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR   1
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   EXSR ZM73
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     C**                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     C*R                   ADD  1         MSGK
+     C*R                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C**                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7973  Record does not exist.
+     C*
+     CSR         ZM73      BEGSR
+     CSR                   MOVE 'PIR7973' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+**
+ ABCDEFGHIJKLMNOPQRSTUVWXYZ

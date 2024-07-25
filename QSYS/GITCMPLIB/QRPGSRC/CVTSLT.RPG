@@ -1,0 +1,720 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  CVTSLT    Convert slot number.
+     F*  26 July 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FOPTIONS IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A2          2  1
+     E                    A3          3  1
+     E                    A12        12  1
+     E                    $MD       128  1
+     E                    FMT     1   1 23
+     E                    DESC    1   5 15
+0493 I*----------------------------------------------------------------
+.    I*  Misc. data structures
+0493 I*
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     I*----------------------------------------------------------------
+     I*  *SLOT  -  Slot options.
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPPFMT  -  PIR section shelf label format.
+     I*    OPFFMT  -  Fixed section shelf label format.
+     I*    OPFSEQ  -  Fixed section picking sequence.
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPPFMT
+     I                                        2   2 OPFFMT
+     I                                        3   3 OPFSEQ
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  12 ERDISP
+     I                                       13  27 ERDESC
+     I                                       28  50 ERFMT
+     I*
+     I                                        1   8 ERCMD
+     I                                        9  18 ERPROG
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *LOC2DSP - FA-PIR location to display.
+     C*              *DSP2LOC - Display to FA-PIR location.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PWHSE  Warehouse for FA-PIR location.
+     C*      $PWHDP  Department for FA-PIR location.
+     C*      $PAISL  Aisle for FA-PIR location.
+     C*      $PLOC   Aisle location number for FA-PIR location.
+     C*      $PRLVL  Level for FA-PIR location.
+     C*      $PHAND  Handstack indicator for FA-PIR location.
+     C*      $PSTYP  Section type for FA-PIR location.
+     C*      $PPSEQ  Pick seq aisle location.
+     C*      $PDISP  Display slot number.
+     C*
+     C*    Returned Parameters
+     C*      $PPRG   Program to send messages back to.
+     C*      $PWHSE  Warehouse for FA-PIR location.
+     C*      $PWHDP  Department for FA-PIR location.
+     C*      $PAISL  Aisle for FA-PIR location.
+     C*      $PLOC   Aisle location number for FA-PIR location.
+     C*      $PRLVL  Level for FA-PIR location.
+     C*      $PHAND  Handstack indicator for FA-PIR location.
+     C*      $PSTYP  Section type for FA-PIR location.
+     C*      $PDISP  Display slot number.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PAISL  3
+     C                     PARM           $PLOC   30
+     C                     PARM           $PRLVL  20
+     C                     PARM           $PHAND  2
+     C                     PARM           $PSTYP  1
+     C                     PARM           $PPSEQ  50
+     C                     PARM           $PDISP 12
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*----------------------------------------------------------------
+     C*  Define keys
+     C*
+     C*    OPTIONS file
+     C*
+     C           OPTNKY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           OPCODE
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE '0'       ERROR   1
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C*
+     C*   Get options.
+     C*
+     C           $PWHSE    IFNE SVWHSE
+     C                     Z-ADD$PWHSE    SVWHSE  30
+     C                     MOVE '*SLOT   'OPCODE
+     C           OPTNKY    CHAINOPTIONS              79
+     C           *IN79     IFEQ *ON
+     C                     CLEAROPDATA
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     C*  Display to location.
+     C*
+     C                     SELEC
+     C           $PCMD     WHEQ '*DSP2LOC'
+     C*
+     C                     SELEC
+     C           $PSTYP    WHEQ 'F'
+     C           OPFFMT    CASEQ'1'       D2LNRM
+     C           OPFFMT    CASEQ'2'       D2LCUS
+     C                     ENDCS
+     C*
+     C           $PSTYP    WHEQ 'P'
+     C           OPPFMT    CASEQ'1'       D2LNRM
+     C           OPPFMT    CASEQ'2'       D2LPCK
+     C                     ENDCS
+     C*
+     C                     ENDSL
+     C*
+     C*  Location to display.
+     C*
+     C           $PCMD     WHEQ '*LOC2DSP'
+     C*
+     C                     SELEC
+     C           $PSTYP    WHEQ 'F'
+     C           OPFFMT    CASEQ'1'       L2DNRM
+     C           OPFFMT    CASEQ'2'       L2DCUS
+     C                     ENDCS
+     C*
+     C           $PSTYP    WHEQ 'P'
+     C           OPPFMT    CASEQ'1'       L2DNRM
+     C           OPPFMT    CASEQ'2'       L2DPCK
+     C                     ENDCS
+     C*
+     C                     ENDSL
+     C*
+     C                     ENDSL
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize message handling
+     C*
+     CSR                   EXSR ZMIMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  D2LCUS  Custom display format to FA-PIR location.
+     C*
+     CSR         D2LCUS    BEGSR
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  D2LNRM  Normal FA-PIR display format to FA-PIR location.
+     C*
+     CSR         D2LNRM    BEGSR
+     C*
+     C*   Move display field into array.
+     C*
+     CSR                   MOVEA$PDISP    A12
+     C*
+     C*   Loop backwards through characters to create slot.
+     C*
+     CSR                   MOVE '*HAND   'PART    8
+     CSR                   MOVE *BLANKS   A2
+     CSR                   Z-ADD2         J       20
+     CSR                   Z-ADD12        I       20
+     C*
+     CSR         I         DOUEQ0
+     C*
+     C*  Determine character type.
+     C*
+     CSR                   SELEC
+     CSR         A12,I     WHEQ ' '
+     CSR                   MOVE '*BLANK  'CHRTYP  8
+     C*
+     CSR         A12,I     WHEQ '-'
+     CSR         A12,I     OREQ '.'
+     CSR                   MOVE '*DASH   'CHRTYP
+     C*
+     CSR         A12,I     WHGE 'A'
+     CSR         A12,I     ANDNE'}'
+     CSR         A12,I     ANDNE'\'
+     CSR         A12,I     ANDLE'Z'
+     CSR                   MOVE '*ALPHA  'CHRTYP
+     C*
+     CSR         A12,I     WHGE '0'
+     CSR         A12,I     ANDLE'9'
+     CSR                   MOVE '*NUMBER 'CHRTYP
+     C*
+     CSR                   OTHER
+     CSR                   MOVE '*INVALID'CHRTYP
+     CSR                   ENDSL
+     C*
+     C*  Move character into correct portion of slot number.
+     C*
+     CSR                   SELEC
+     C*
+     C*     Ignore blanks.
+     C*
+     CSR         CHRTYP    WHEQ '*BLANK  '
+     C*
+     C*     Error if invalid character found.
+     C*
+     CSR         CHRTYP    WHEQ '*INVALID'
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,1    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     C*
+     C*     Deciphering handstack portion of slot number.
+     C*
+     C*       Format: Optional.
+     C*               Two character maximum.
+     C*               Only 'A' through 'Z' allowed for each character.
+     C*               Preceded by the level (numeric), not a dash.
+     C*
+     CSR         PART      WHEQ '*HAND   '
+     C*
+     CSR                   SELEC
+     CSR         CHRTYP    WHEQ '*DASH   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,3    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     C*
+     CSR         CHRTYP    WHEQ '*NUMBER '
+     CSR                   MOVEAA2        $PHAND
+     CSR                   MOVE '*LEVEL  'PART
+     CSR                   MOVE '0'       A2
+     CSR                   Z-ADD2         J
+     CSR                   ADD  1         I
+     C*
+     CSR         CHRTYP    WHEQ '*ALPHA  '
+     CSR         J         IFEQ 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,2    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     CSR                   ELSE
+     CSR                   MOVE A12,I     A2,J
+     CSR                   SUB  1         J
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSL
+     C*
+     C*     Deciphering level portion of slot number.
+     C*
+     C*       Format: Two character maximum.
+     C*               Only '0' through '9' allowed for each character.
+     C*               Preceded by a dash.
+     C*
+     CSR         PART      WHEQ '*LEVEL  '
+     C*
+     CSR                   SELEC
+     CSR         CHRTYP    WHEQ '*DASH   '
+     CSR         J         IFEQ 2
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,3    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     CSR                   ELSE
+     CSR                   MOVEAA2        WORK2A
+     CSR                   MOVE WORK2A    $PRLVL
+     CSR                   MOVE '*LOC    'PART
+     CSR                   MOVE '0'       A3
+     CSR                   Z-ADD3         J
+     CSR                   ENDIF
+     C*
+     CSR         CHRTYP    WHEQ '*ALPHA  '
+     CSR         J         OREQ 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,3    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     C*
+     CSR         CHRTYP    WHEQ '*NUMBER '
+     CSR                   MOVE A12,I     A2,J
+     CSR                   SUB  1         J
+     C*
+     CSR                   ENDSL
+     C*
+     C*     Deciphering location portion of slot number.
+     C*
+     C*       Format: Three character maximum.
+     C*               Only '0' through '9' allowed for each character.
+     C*               Preceded by a dash.
+     C*
+     CSR         PART      WHEQ '*LOC    '
+     C*
+     CSR                   SELEC
+     CSR         CHRTYP    WHEQ '*DASH   '
+     CSR         J         IFEQ 3
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,4    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     CSR                   ELSE
+     CSR                   MOVEAA3        WORK3A
+     CSR                   MOVE WORK3A    $PLOC
+     CSR                   MOVE '*AISLE  'PART
+     CSR                   MOVE *BLANKS   A3
+     CSR                   Z-ADD3         J
+     CSR                   ENDIF
+     C*
+     CSR         CHRTYP    WHEQ '*ALPHA  '
+     CSR         J         OREQ 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,4    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     C*
+     CSR         CHRTYP    WHEQ '*NUMBER '
+     CSR                   MOVE A12,I     A3,J
+     CSR                   SUB  1         J
+     C*
+     CSR                   ENDSL
+     C*
+     C*     Deciphering aisle portion of slot number.
+     C*
+     C*       Format: Three character maximum.
+     C*               Only 'A' through 'Z' allowed for each character.
+     C*
+     CSR         PART      WHEQ '*AISLE  '
+     C*
+     CSR                   SELEC
+     CSR         CHRTYP    WHEQ '*DASH   '
+     CSR         CHRTYP    OREQ '*NUMBER '
+     CSR         J         OREQ 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,5    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     C*
+     CSR         CHRTYP    WHEQ '*ALPHA  '
+     CSR                   MOVE A12,I     A3,J
+     CSR                   SUB  1         J
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSL
+     C*
+     CSR         ERROR     IFEQ *ON
+     CSR                   Z-ADD0         I
+     CSR                   ELSE
+     CSR                   SUB  1         I
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     CSR         ERROR     IFEQ *OFF
+     CSR         J         IFEQ 3
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE $PDISP    ERDISP
+     CSR                   MOVE DESC,5    ERDESC
+     CSR                   MOVE FMT,1     ERFMT
+     CSR                   EXSR ZM0010
+     CSR                   ELSE
+     CSR                   MOVEAA3        $PAISL
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  D2LPCK  PIR picking display format to FA-PIR location.
+     C*
+     CSR         D2LPCK    BEGSR
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  L2DCUS  FA-PIR location to custom display format.
+     C*
+     CSR         L2DCUS    BEGSR
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  L2DNRM  FA-PIR location to normal FA-PIR display format.
+     C*
+     CSR         L2DNRM    BEGSR
+     C*
+     CSR                   Z-ADD0         X       20
+     CSR                   MOVE *BLANKS   A12
+     C*
+     C*    Aisle (suppress blanks)
+     C*
+     CSR                   MOVEA$PAISL    A3
+     CSR         1         DO   3         I       20
+     CSR         A3,I      IFNE ' '
+     CSR                   ADD  1         X
+     CSR                   MOVE A3,I      A12,X
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*    Location (do not suppress zeros)
+     C*
+     CSR                   ADD  1         X
+     CSR                   MOVE '-'       A12,X
+     CSR                   ADD  1         X
+     CSR                   MOVE $PLOC     WORK3A  3
+     CSR                   MOVEAWORK3A    A12,X
+     CSR                   ADD  3         X
+     C*
+     C*    Rack level (suppress zeros)
+     C*
+     CSR                   MOVE '-'       A12,X
+     CSR                   MOVE $PRLVL    WORK2A  2
+     CSR                   MOVEAWORK2A    A2
+     CSR                   MOVE *ON       SUPRES  1
+     CSR         1         DO   2         I
+     CSR         SUPRES    IFEQ *OFF
+     CSR                   ADD  1         X
+     CSR                   MOVE A2,I      A12,X
+     CSR                   ELSE
+     CSR         A2,I      IFNE '0'
+     CSR                   ADD  1         X
+     CSR                   MOVE A2,I      A12,X
+     CSR                   MOVE *OFF      SUPRES
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*    Handstack indicator (suppress blanks)
+     C*
+     CSR                   MOVEA$PHAND    A2
+     CSR         1         DO   2         I
+     CSR         A2,I      IFNE ' '
+     CSR                   ADD  1         X
+     CSR                   MOVE A2,I      A12,X
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*    Move display array to output parameter.
+     C*
+     CSR                   MOVEAA12       $PDISP
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  L2DPCK  FA-PIR location to PIR picking display format.
+     C*
+     CSR         L2DPCK    BEGSR
+     C*
+     CSR                   Z-ADD0         X       20
+     CSR                   MOVE *BLANKS   A12
+     C*
+     C*    Aisle (suppress blanks)
+     C*
+     CSR                   MOVEA$PAISL    A3
+     CSR         1         DO   3         I       20
+     CSR         A3,I      IFNE ' '
+     CSR                   ADD  1         X
+     CSR                   MOVE A3,I      A12,X
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*    Picking location (do not suppress zeros)
+     C*
+     CSR                   ADD  1         X
+     CSR                   MOVE '-'       A12,X
+     CSR                   ADD  1         X
+     CSR                   MOVE $PPSEQ    WORK3A  3
+     CSR                   MOVEAWORK3A    A12,X
+     CSR                   ADD  3         X
+     C*
+     C*    Rack level (suppress zeros)
+     C*
+     CSR                   MOVE '-'       A12,X
+     CSR                   MOVE $PRLVL    WORK2A  2
+     CSR                   MOVEAWORK2A    A2
+     CSR                   MOVE *ON       SUPRES  1
+     CSR         1         DO   2         I
+     CSR         SUPRES    IFEQ *OFF
+     CSR                   ADD  1         X
+     CSR                   MOVE A2,I      A12,X
+     CSR                   ELSE
+     CSR         A2,I      IFNE '0'
+     CSR                   ADD  1         X
+     CSR                   MOVE A2,I      A12,X
+     CSR                   MOVE *OFF      SUPRES
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*    Handstack indicator (suppress blanks)
+     C*
+     CSR                   MOVEA$PHAND    A2
+     CSR         1         DO   2         I
+     CSR         A2,I      IFNE ' '
+     CSR                   ADD  1         X
+     CSR                   MOVE A2,I      A12,X
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     C*    Move display array to output parameter.
+     C*
+     CSR                   MOVEAA12       $PDISP
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PARSE   Parse display into slot parts (Aisle,Loc,Level,Hand)
+     C*
+     CSR         PARSE     BEGSR
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     C**                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     C*R                   ADD  1         MSGK
+     C*R                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C**                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7973  Record does not exist.
+     C*
+     CSR         ZM73      BEGSR
+     CSR                   MOVE 'PIR7973' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR7804  Invalid command sent to program.
+     C*
+     CSR         ZM7804    BEGSR
+     CSR                   MOVE 'PIR7804' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE $PCMD     ERCMD
+     CSR                   MOVE #PROG     ERPROG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     CVT0010  Invalid slot entered.
+     C*
+     CSR         ZM0010    BEGSR
+     CSR                   MOVE 'CVT0010' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**  FMT - Example slot format entry
+A-101-1A or A.101.1A
+**  DESC - Descriptions for errors
+character
+handstack
+level
+location
+aisle

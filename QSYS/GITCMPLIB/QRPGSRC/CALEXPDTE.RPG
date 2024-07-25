@@ -1,0 +1,262 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  CALEXPDTE Calculate Exp date using Mfg date and Mfg days.
+     F*  08 November 2001
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions
+     F*
+     F*   11/08/01  HNK  4.16
+     F*     -Created.
+416aAF*    07/02/02  RH   4.16a
+     F*      - Recompiled, ITEMMSC changed.
+417aAF*    04/03/03  RH   4.17a
+     F*      - Recompiled, ITEMMSC file changed.
+500aAF*    01/25/15  RH   5.00a
+     F*      - Add Program Info DS, missed in 417 update.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPOMFR   IP  E           K        DISK
+     FEXPDTE  UF  E           K        DISK                      A
+     FITEMMSC IF  E           K        DISK
+     FSLOT3   IF  E           K        DISK
+     I*----------------------------------------------------------------
+     I*
+     I*  Input parameters
+     I*
+     I*     None
+     I*
+     I*  Output parameters
+     I*
+     I*     None
+     I*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+500a I*  Program info data structure
+     I*
+500a I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C           PMMFGD    CABEQ0         SKIP
+     C*
+     C           IMKEY     CHAINITEMMSC              79
+     C           *IN79     CABEQ*ON       SKIP
+     C*
+     C*  Calculate Expiration date.(Mfg date + Mfg Shelf life days-User days)
+     C*
+     C                     MOVE PMMFGD    $CVD8I
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C           $CVRTN    CABNE' '       SKIP
+     C                     MOVE $CVD6O    G$DATE
+     C*
+     C                     Z-ADD2         DTFRMT  10
+     C                     EXSR GTOJ$
+     C                     Z-ADDG$JD      MFDTJ   50
+     C*
+     C           MFDTJ     ADD  IMMDAY    J$JD    50
+     C           J$JD      SUB  IMUDAY    J$JD
+     C                     EXSR JTOG$
+     C                     MOVE J$DATE    $CVD6O
+     C                     MOVE $CVD6O    W1EXDT  60
+     C                     MOVE W1EXDT    $CVD6I
+     C                     MOVE '*MDYCMD '$CVCMD
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C           $CVRTN    CABNE' '       SKIP
+     C                     MOVE $CVD8O    EXPD    80
+     C*
+     C           EXPD      IFNE PMEXPD
+     C           SL3KEY    SETLLSLOT3
+     C           FOREVR    DOWEQFOREVR
+     C           SL3KEY    READESLOT3                    79
+     C*
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C           SLPICK    IFEQ 'Y'
+     C                     ITER
+     C                     ENDIF
+     C*
+     C           *IN79     IFEQ *OFF
+     C           SLEXPD    ANDEQPMEXPD
+     C                     EXSR ZZUPD1
+     C                     ENDIF
+     C*
+     C                     ENDDO
+     C                     ENDIF
+     C*
+     C           SKIP      TAG
+     CLR                   RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Define key for ITEMMSC File.
+     C*
+     CSR         IMKEY     KLIST
+     CSR                   KFLD           PMWHSE
+     CSR                   KFLD           PMITEM
+     C*
+     C*  Define key for EXPDTE File.
+     C*
+     CSR         EXKEY     KLIST
+     CSR                   KFLD           SLWHSE
+     CSR                   KFLD           SLITEM
+     CSR                   KFLD           SLDISP
+     CSR                   KFLD           PMEXPD
+     C*
+     C*  Define key for SLOT3 File.
+     C*
+     CSR         SL3KEY    KLIST
+     CSR                   KFLD           PMWHSE
+     CSR                   KFLD           PMITEM
+     C*
+     CSR                   MOVE #PROG     $CVPRG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*                                                                   DOC
+     C           GTOJ$     BEGSR
+     C                     MOVE G$DATE    G$DATE  60
+     C* SPLIT DATE INTO MONTH, DAY, YEAR FIELDS
+     C           DTFRMT    IFEQ 1                          BLVL-01
+     C                     MOVELG$DATE    G$YY    20
+     C                     MOVE G$DATE    WORK4   4
+     C                     MOVELWORK4     G$MM    20
+     C                     MOVE WORK4     G$DD    20
+     C                     ELSE                            EELS-01
+     C                     MOVELG$DATE    G$MM
+     C                     MOVE G$DATE    WORK4
+     C                     MOVELWORK4     G$DD
+     C                     MOVE WORK4     G$YY
+     C                     END                             EEND-01
+     C* CREATE 4 DIGIT YEAR
+     C                     MOVE G$YY      G$YYYY  40
+     C           G$YY      IFGE 60                         BLVL-01
+     C                     MOVEL'19'      G$YYYY
+     C                     ELSE                            EELS-01
+     C                     MOVEL'20'      G$YYYY
+     C                     END                             EEND-01
+     C                     Z-ADD0         G$JD
+     C           G$MM      SUB  3         G$MMWK  20
+     C                     Z-ADDG$MMWK    GMWKSV  20
+     C           G$MMWK    IFLT 0                           LVL-01
+     C                     ADD  12        G$MMWK
+     C                     END                              END-01
+     C           GMWKSV    IFNE 0                           LVL-01
+     C           G$MMWK    MULT 30.6      G$JD      H
+     C                     END                              END-01
+     C                     ADD  G$DD      G$JD    50
+     C           G$YYYY    SUB  1900      G$YYWK  30
+     C           G$YYWK    IFNE 0                           LVL-01
+     C           GMWKSV    IFLT 0                           LVL-02
+     C                     SUB  1         G$YYWK
+     C                     END                              END-02
+     C                     END                              END-01
+     C           G$YYWK    MULT 365.25    G$JYD   70
+     C                     ADD  G$JYD     G$JD
+     C           G$JD      DIV  7         G$WK7   70
+     C                     MVR            G$DW    10
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*                                                                   DOC
+     C           JTOG$     BEGSR
+     C           J$JD      DIV  365.25    J$YYWK  30
+     C           J$JD      DIV  365.25    J$TST   99
+     C           J$TST     IFEQ 0                           LVL-01
+     C                     SUB  1         J$YYWK
+     C                     END                              END-01
+     C           J$YYWK    MULT 365.25    J$YD    70
+     C           J$JD      SUB  J$YD      J$YD
+     C           J$YD      IFGT 306                         LVL-01
+     C                     ADD  1         J$YYWK
+     C                     END                              END-01
+     C                     Z-ADD0         J$X     20
+     C           J$YD      DOULEJ$MD                        LVL-01
+     C                     ADD  1         J$X
+     C           J$X       MULT 30.6      J$MD    30H
+     C                     END                              END-01
+     C                     SUB  1         J$X
+     C           J$X       MULT 30.6      J$MD      H
+     C           J$YD      SUB  J$MD      J$DD    20
+     C           J$X       ADD  3         J$MM    20
+     C           J$MM      IFGT 12                          LVL-01
+     C                     SUB  12        J$MM
+     C                     END                              END-01
+     C           J$YYWK    ADD  1900      J$YYYY  40
+     C           DTFRMT    IFEQ 1                          BLVL-01
+     C                     MOVE J$YYYY    WORK2   2
+     C                     MOVELJ$MM      WORK4   4
+     C                     MOVE J$DD      WORK4
+     C                     MOVELWORK2     J$DATE  60
+     C                     MOVE WORK4     J$DATE
+     C                     ELSE                            EELS-01
+     C                     MOVE J$YYYY    WORK2
+     C                     MOVELJ$MM      WORK4
+     C                     MOVE J$DD      WORK4
+     C                     MOVE WORK2     J$DATE
+     C                     MOVELWORK4     J$DATE
+     C                     END                             EEND-01
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD1  Add record to EXPDTE file.
+     C*
+     CSR         ZZUPD1    BEGSR
+     C           EXKEY     CHAINEXPDTE               79
+     C           *IN79     IFEQ *ON
+     C                     Z-ADDSLWHSE    EXWHSE
+     C                     MOVE SLITEM    EXITEM
+     C                     MOVE SLDISP    EXDISP
+     C                     Z-ADDSLEXPD    EXEXPD
+     C                     Z-ADDPMMFGD    EXMFGD
+     C                     Z-ADDIMUDAY    EXUDAY
+     C                     Z-ADDIMDDAY    EXDDAY
+     C                     Z-ADDIMMDAY    EXMDAY
+     C                     Z-ADDEXPD      EXEXPG
+     C                     WRITEEXREC
+     C                     ENDIF
+     C                     ENDSR

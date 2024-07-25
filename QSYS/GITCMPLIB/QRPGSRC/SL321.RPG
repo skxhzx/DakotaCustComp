@@ -1,0 +1,495 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  SL321     Unverified zero slot report
+     F*  01 September, 1994
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions:
+     F*
+404  F*    09/05/97  DAS  4.04
+     F*      - Revised to include cross dock records (STYP='X')
+     F*
+414aAF*    05/25/00  MLB  4.14a
+     F*      - Revised to not include base slot when active virtual
+     F*        slots exist.
+     F*      - Added file SLOT2 to pgm.
+     F*      - Added file VSLOT2 to pgm.
+     F*
+415 AF*    02/26/01  MLB  4.15
+     F*      - Revised pgm to setof LVLCHG at L1 detail time.
+     F*
+416 AF*    11/19/01  DAS  4.16
+     F*      - Removed 414a change. Decided to let report show every
+     F*        zero slot. New option was created for RF zero verify
+     F*        to let client determine if RF users should verify
+     F*        virtual slots or not. If not, a virtual slot would only
+     F*        be verified when slot was physically empty. This report
+     F*        will be able to show if a slot never becomes physically
+     F*        empty and the virtuals are growing. The full screen
+     F*        zero verify program will always allow verification of
+     F*        virtual slots.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSL321   IP  E           K        DISK
+416 DF**OT2   IF  E           K        DISK
+416 DF**LOT2  IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FSL321PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E*                   RPD     1   3 30
+     E                    RECK        3  7 0
+     E*
+     I*----------------------------------------------------------------
+     IOQREC
+     I                                              SLWHDPL1
+     I                                              SLSTYPL1
+416 DI**---------------------------------------------------------------
+416 DI**REC
+416 DI**            SLWHDP                          S2WHDP
+416 DI**            SLSTYP                          S2STYP
+416 DI**            SLDISP                          S2DISP
+     I*----------------------------------------------------------------
+     I*  General Data structure.
+     I*
+     IDS0         DS
+     I                                        1  12 C0SLOT
+     I*  Data structure for column 1.
+     I*
+     IDS1         DS                         50
+     I                                        1  12 C1SLOT
+     I*
+     I*  Data structure for column 2.
+     I*
+     IDS2         DS                         50
+     I                                        1  12 C2SLOT
+     I*
+     I*  Data structure for column 3.
+     I*
+     IDS3         DS                         50
+     I                                        1  12 C3SLOT
+     I*  Data structure for column 4.
+     I*
+     IDS4         DS                         50
+     I                                        1  12 C4SLOT
+     I*
+     I*  Data structure for column 5.
+     I*
+     IDS5         DS                         50
+     I                                        1  12 C5SLOT
+     I*
+     I*  Data structure for column 6.
+     I*
+     IDS6         DS                         50
+     I                                        1  12 C6SLOT
+     I*  Data structure for column 7.
+     I*
+     IDS7         DS                         50
+     I                                        1  12 C7SLOT
+     I*
+     I*  Data structure for column 8.
+     I*
+     IDS8         DS                         50
+     I                                        1  12 C8SLOT
+     I*
+     I*  Data structure for column 9.
+     I*
+     IDS9         DS                         50
+     I                                        1  12 C9SLOT
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*
+416 DC**   Check for active virtual slots.  If any virtual slots are
+416 DC**   active do not put base slot on report.
+416 DC**
+416 DC**                   EXSR CHKVSL
+416 DC**         VSFIND    CABEQ*ON       #SKIP
+416 DC**
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Level break occurred.
+     C*     - Filled page.
+     C*
+     C           *INL1     IFEQ *ON
+     C           COUNT     OREQ RECPAG
+416 DC**         LVLCHG    OREQ *ON
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*
+     C*  Level 1 break - Slot type
+     C*
+     C           *INL1     IFEQ *ON
+416 DC**         LVLCHG    OREQ *ON
+     C                     Z-ADD1         L
+     C                     EXSR ZRZERO
+416 DC**                   MOVE *OFF      LVLCHG
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*
+     C                     MOVE SLDISP    C0SLOT
+     C*
+     C*  Store info. from first 50 records into data structure DS1.
+     C*  Next 50 records into DS2 and then into DS3, and so on to DS9.
+     C*
+     C                     SELEC
+     C           C1        WHLE RECCOL
+     C           C1        OCUR DS1
+     C                     MOVE DS0       DS1
+     C                     ADD  1         C1
+     C*
+     C           C2        WHLE RECCOL
+     C           C2        OCUR DS2
+     C                     MOVE DS0       DS2
+     C                     ADD  1         C2
+     C*
+     C           C3        WHLE RECCOL
+     C           C3        OCUR DS3
+     C                     MOVE DS0       DS3
+     C                     ADD  1         C3
+     C*
+     C           C4        WHLE RECCOL
+     C           C4        OCUR DS4
+     C                     MOVE DS0       DS4
+     C                     ADD  1         C4
+     C*
+     C           C5        WHLE RECCOL
+     C           C5        OCUR DS5
+     C                     MOVE DS0       DS5
+     C                     ADD  1         C5
+     C*
+     C           C6        WHLE RECCOL
+     C           C6        OCUR DS6
+     C                     MOVE DS0       DS6
+     C                     ADD  1         C6
+     C*
+     C           C7        WHLE RECCOL
+     C           C7        OCUR DS7
+     C                     MOVE DS0       DS7
+     C                     ADD  1         C7
+     C*
+     C           C8        WHLE RECCOL
+     C           C8        OCUR DS8
+     C                     MOVE DS0       DS8
+     C                     ADD  1         C8
+     C*
+     C           C9        WHLE RECCOL
+     C           C9        OCUR DS9
+     C                     MOVE DS0       DS9
+     C                     ADD  1         C9
+     C                     ENDSL
+     C*
+416 DC**                   MOVE *ON       ZROSLT
+     C                     ADD  1         COUNT
+     C*
+     C*
+     C*  Accumulate totals
+     C*                    ADD  1         CLS,1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+416 DC**         #SKIP     TAG
+     C*----------------------------------------------------------------
+     C*
+     C* Slot type totals
+     C*
+416 DC**         ZROSLT    IFEQ *ON
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     C*
+     CL1         RECK,L    IFGT 0
+     C**                   WRITESKIP1
+     CL1                   EXSR ZRTOTL
+     CL1                   ENDIF
+416 DC**                   MOVE *OFF      ZROSLT
+416 DC**                   ENDIF
+416 DC**                   MOVE *ON       LVLCHG
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR                   Z-ADD2         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR                   EXSR ZRDETL
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+416 DC**                   MOVE *ON       LVLCHG  1
+416 DC**                   MOVE *ON       FOREVR  1
+416 DC**                   MOVE *OFF      ZROSLT  1
+416 DC**                   MOVE *OFF      VSFIND  1
+     C                     Z-ADD0         COUNT   30
+     C                     Z-ADD3         L       10
+     C                     Z-ADD1         X       30
+     C                     Z-ADD1         C1      30
+     C                     Z-ADD1         C2      30
+     C                     Z-ADD1         C3      30
+     C                     Z-ADD1         C4      30
+     C                     Z-ADD1         C5      30
+     C                     Z-ADD1         C6      30
+     C                     Z-ADD1         C7      30
+     C                     Z-ADD1         C8      30
+     C                     Z-ADD1         C9      30
+     C                     Z-ADD50        RECCOL  30
+     C                     Z-ADD450       RECPAG  30
+416 DC**
+416 DC** Define key for SLOT2 file.
+416 DC**
+416 DC**         KEYS2     KLIST
+416 DC**                   KFLD           VSWHSE
+416 DC**                   KFLD           VSWHDP
+416 DC**                   KFLD           VSDISP
+416 DC**
+416 DC** Define key for VSLOT2 file.
+416 DC**
+416 DC**         KEYV2     KLIST
+416 DC**                   KFLD           SLWHSE
+416 DC**                   KFLD           SLWHDP
+416 DC**                   KFLD           SLDISP
+     C                     EXSR ZRCLER
+     C                     EXSR ZRZERO
+     C                     ENDSR
+416 DC**---------------------------------------------------------------
+416 DC**
+416 DC** CHKVSL  Check if virtual slots exist for normal slot.
+416 DC**
+416 DC**
+416 DC**         CHKVSL    BEGSR
+416 DC**                   MOVE *OFF      VSFIND
+416 DC**         KEYV2     SETLLVSLOT2
+416 DC**         FOREVR    DOWEQFOREVR
+416 DC**         KEYV2     READEVSLOT2                   75
+416 DC**                   SELEC
+416 DC**         *IN75     WHEQ *ON
+416 DC**                   LEAVE
+416 DC**         *IN75     WHEQ *OFF
+416 DC**         KEYS2     CHAINSLOT2                76
+416 DC**         SLSTAT    IFNE 'Z '
+416 DC**                   MOVE *ON       VSFIND
+416 DC**                   LEAVE
+416 DC**                   ENDIF
+416 DC**                   ENDSL
+416 DC**                   ENDDO
+416 DC**         ENDVSL    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           SLWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*  Format department/section.
+     C*
+     C                     MOVE *BLANKS   TYPE
+     C           SLWHDP    CAT  '/':0     TYPE
+404 AC                     SELEC
+404 DC*          SLSTYP    IFEQ 'P'
+404 MC           SLSTYP    WHEQ 'P'
+     C           TYPE      CAT  'PIR':0   TYPE
+404 DC*                    ELSE
+404 MC           SLSTYP    WHEQ 'F'
+     C           TYPE      CAT  'FIXED':0 TYPE
+404 AC           SLSTYP    WHEQ 'X'
+404 AC           TYPE      CAT  'XDOCK':0 TYPE
+404 DC*                    ENDIF
+404 MC                     ENDSL
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C*  Print previous page detail lines.
+     C*
+     C           RECK,L    IFGT 0
+     C                     EXSR ZRDETL
+     C                     Z-ADD0         COUNT
+     C                     ENDIF
+     C*
+     C           *INL1     IFEQ *OFF
+     C                     MOVE *ON       *IN91
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITEHEAD2
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRCLER    BEGSR
+     C*
+     C*   Initialize all data structures.
+     C*
+     C                     CLEARC0SLOT
+     C           1         DO   RECCOL    X
+     C           X         OCUR DS1
+     C                     MOVE DS0       DS1
+     C           X         OCUR DS2
+     C                     MOVE DS0       DS2
+     C           X         OCUR DS3
+     C                     MOVE DS0       DS3
+     C           X         OCUR DS4
+     C                     MOVE DS0       DS4
+     C           X         OCUR DS5
+     C                     MOVE DS0       DS5
+     C           X         OCUR DS6
+     C                     MOVE DS0       DS6
+     C           X         OCUR DS7
+     C                     MOVE DS0       DS7
+     C           X         OCUR DS8
+     C                     MOVE DS0       DS8
+     C           X         OCUR DS9
+     C                     MOVE DS0       DS9
+     C                     ENDDO
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRDETL    BEGSR
+     C*  Print detail line.
+     C                     CLEARC0SLOT
+     C           1         DO   RECCOL    X
+     C           X         OCUR DS1
+     C           X         OCUR DS2
+     C           X         OCUR DS3
+     C           X         OCUR DS4
+     C           X         OCUR DS5
+     C           X         OCUR DS6
+     C           X         OCUR DS7
+     C           X         OCUR DS8
+     C           X         OCUR DS9
+     C                     WRITEDETAIL1
+     C                     MOVE DS0       DS1
+     C                     MOVE DS0       DS2
+     C                     MOVE DS0       DS3
+     C                     MOVE DS0       DS4
+     C                     MOVE DS0       DS5
+     C                     MOVE DS0       DS6
+     C                     MOVE DS0       DS7
+     C                     MOVE DS0       DS8
+     C                     MOVE DS0       DS9
+     C                     ENDDO
+     C*
+     C*  Initialize record counters for each columns.
+     C*
+     C                     Z-ADD1         C1
+     C                     Z-ADD1         C2
+     C                     Z-ADD1         C3
+     C                     Z-ADD1         C4
+     C                     Z-ADD1         C5
+     C                     Z-ADD1         C6
+     C                     Z-ADD1         C7
+     C                     Z-ADD1         C8
+     C                     Z-ADD1         C9
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C*                    ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C*                    ADD  CLS,L     CLS,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C*                    Z-ADDCLS,L     T#CLS
+     C*                    MOVE TYPE      T#DESC
+     C*
+     C*                    MOVE RPD,L     $RPD
+     C           L         IFEQ 1
+     C*                    WRITETOTAL1
+     C                     END
+     C*
+     C           L         IFEQ 2
+     C*                    WRITETOTAL2
+     C                     END
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C*                    Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C*                    Z-ADD0         CLS,L
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O* Compile time tables
+     O*

@@ -1,0 +1,410 @@
+     H NOMAIN
+     *----------------------------------------------------------------
+     *
+     *  BFCLIBL     Library list routines.
+     *  20 March 2007
+     *  Dave Sommerville
+     *
+416  *    03/20/07  DAS  5.10
+     *      - Created
+     *      - Based off of BTSLIBL.
+     *
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     *
+     *  Compile instructions
+     *
+     *    When creating for the first time:
+     *
+     *      CRTRPGMOD MODULE(*) SRCFILE(*) TGTRLS(V5R2M0)
+     *
+     *      CRTSRVPGM SRVPGM(*) SRCFILE(*/QSRVSRC) TGTRLS(V5R2M0)
+     *                ACTGRP(*CALLER) ALWUPD(*YES)
+     *
+     *      ADDBNDDIRE BNDDIR(*/BFCBND) OBJ((*))
+     *
+     *                    --- OR ---
+     *    When updating:
+     *
+     *      CRTRPGMOD MODULE(*) SRCFILE(*) TGTRLS(V5R2M0)
+     *
+     *      UPDSRVPGM SRVPGM(*) MODULE(*) SRCFILE(*/QSRVSRC)
+     *
+     *----------------------------------------------------------------
+
+     *----------------------------------------------------------------
+     * Function prototypes.
+     *----------------------------------------------------------------
+
+      /COPY qcopysrc,p.bfclibl
+
+     *----------------------------------------------------------------
+     * Constants
+     *----------------------------------------------------------------
+
+      ** Maximum libraries allowed on library list
+     D MAXLIBL         C                   Const(250)
+
+     *----------------------------------------------------------------
+     * Variables
+     *----------------------------------------------------------------
+
+      ** Field reference for Library Name (APIs use 11-pos name)
+     D LIBNAME         S             11A
+     D QCmdCmd         s            512    inz
+     D QCmdLength      s             15  5 inz(%size(qcmdcmd))
+
+     D lib             s             10
+     D clientds        ds
+     D   client5n                     5  0
+     D   client5a                     5    overlay(client5n)
+
+     *----------------------------------------------------------------
+     * API Error Data Structure
+     *----------------------------------------------------------------
+
+     D ll_Error        DS                  EXPORT
+     D  ll_DSLen                     10I 0 Inz(%Size(ll_Error))
+     D  ll_ByteRtn                   10I 0 Inz
+     D  ll_cpfmsgid                   7A
+     D  ll_reserved                   1A
+     D  ll_msgdata                  132A
+
+     *----------------------------------------------------------------
+     * API Prototypes
+     *----------------------------------------------------------------
+
+     D QUSRJOBI        PR                  EXTPGM('QUSRJOBI')
+     D  libl                       6000A   OPTIONS(*VARSIZE)
+     D  nLibl                        10I 0 Const
+     D  FmtName                       8A   Const
+     D  Job                          26A   Const
+     D  InternJob                    16A   Const
+     D  Api_Error                    16A
+
+     D QLICHGLL        PR                  EXTPGM('QLICHGLL')
+     D  CurLib                       11A   Const
+     D  ProdLib1                     11A   Const
+     D  ProdLib2                     11A   Const
+     D  UsrLibl                      11A   Const DIM(MAXLIBL)
+     D  nUsrLiblCount                10I 0 Const
+     D  Api_Error                    16A
+
+     * ---------------------------------------------------------------
+     * P U S H L I B  -  Add library to top of list.
+     * ---------------------------------------------------------------
+     * Taken from e-RPG book p.257
+
+     P pushlib         B                   EXPORT
+      ** PUSHLIB - Add library to top of library list.
+      **   Usage:  callp pushlib( library )
+
+      **   Return Value:
+      **     None
+      **   Parameters:
+      **     LIB       - Library to add.
+     D pushlib         PI
+     D  lib                          10    value
+
+     C                   Eval      qcmdcmd = 'ADDLIBLE LIB('
+     C                                     + %trim(lib)
+     C                                     + ') POSITION(*FIRST)'
+
+     C                   call      'QCMDEXC'                            99
+     C                   parm                    qcmdcmd
+     C                   parm                    qcmdlength
+
+     C     *pssr         begsr
+     C                   endsr
+
+     P pushlib         E
+
+     * ---------------------------------------------------------------
+     * P O P L I B  -  Remove library from library list.
+     * ---------------------------------------------------------------
+     * Taken from e-RPG book p.257
+
+     P poplib          B                   EXPORT
+      ** POPLIB - Remove library from library list.
+      **   Usage:  callp poplib( library )
+
+      **   Return Value:
+      **     None
+      **   Parameters:
+      **     LIB       - Library to remove
+     D poplib          PI
+     D  lib                          10    value
+
+     D libptr          s               *
+     D maxlibs         c                   const(25)
+
+     D libdata         ds                  based(libptr)
+     D  #libs                         9b 0
+     D  libarr                       10    dim(maxlibs)
+
+     C***                if        (%parms < 1) or (lib = '*FIRST')
+     C***                Eval      libptr = #rtvlibl('*USER')
+
+     C***                if        (libptr <> *NULL) and (#libs > 0)
+     C***                Eval      lib = libarr(1)
+     C***                endif
+
+     C***                endif
+
+     C                   Eval      qcmdcmd = 'RMVLIBLE LIB('
+     C                                     + %trim(lib)
+     C                                     + ')'
+
+     C                   call      'QCMDEXC'                            99
+     C                   parm                    qcmdcmd
+     C                   parm                    qcmdlength
+
+     C     *pssr         begsr
+     C                   endsr
+
+     P poplib          E
+
+     * ---------------------------------------------------------------
+     * G E T L I B L -- (Get Library List)
+     * ---------------------------------------------------------------
+     * Taken from MC Press 9/11/02 article.
+
+     P GetLibl         B                   EXPORT
+      ** GETLIBL - Retrieve the specified library list
+      **   Usage:  libl = GetLibl( list-type : rtn-Count )
+      **   Note: all parameters are optional.
+
+      **   Return Value:
+      **     LIBL - An array that receives the library list.
+      **   Parameters:
+      **     RTN-COUNT - An optional variable that recieves
+      **                 a count of the number of library returned.
+      **     LIST-TYPE - An optional parameter that controls which
+      **                 library list is to be returned.
+      **                 Use the named constants in the prototype
+      **                 include member for the LIST-TYPE.
+     D GetLibl         PI            11A   DIM(250)
+     D  lType                         5I 0 Const Options(*NOPASS)
+     D  nLiblCount                    5I 0 Options(*NOPASS)
+
+      ** Return value is returned in LIBLARRAY
+     D Libl            DS
+     D* LiblArray                          DIM(LMAXLIBL) LIKE(LIBNAME)
+      ** Due to a bug in the RPG compiler, a global named constant
+      ** cannot be specifed on the DIM keyword. :(
+     D  LiblArray                          DIM(250) LIKE(LIBNAME)
+
+     D nCount          S             10I 0
+     D nSysLSize       S             10I 0
+     D nUsrLSize       S             10I 0
+     D nCurLSize       S             10I 0
+     D nProdLSize      S             10I 0
+
+     DLiblDS           DS                  INZ
+     D nBytesRtn                     10I 0
+     D nBytesAvail                   10I 0
+     D j_Name                        10A
+     D j_User                        10A
+     D j_Nbr                          6A
+     D ij_ID                         16A
+     D j_Status                      10A
+     D j_Type                         1A
+     D j_subtype                      1A
+     D j_Reserved                     2A
+     D nSysLib                       10I 0
+     D nProdLib                      10I 0
+     D nCurLib                       10I 0
+     D nUsrLib                       10I 0
+     D LibLists                    3100A
+
+     D SysLibl         s           2750A   Based(pSysLibl)
+     D ProdLibl        s           2750A   Based(pProdLibL)
+     D CurLib          s           2750A   Based(pCurLib)
+     D UsrLibl         s           2750A   Based(pUsrLibl)
+
+     C                   CALLP     QusRJobI(LiblDS : %Size(LiblDS):
+     C                              'JOBI0700' : '*' : ' ' : ll_Error)
+
+     C                   Eval      nSysLSize  = nSysLib  * %size(LibName)
+     C                   Eval      nProdLSize = nProdLib * %size(LibName)
+     C                   Eval      nCurLSize  = nCurLib  * %size(LibName)
+     C                   Eval      nUsrLSize  = nUsrLib  * %size(LibName)
+
+     C                   Eval      pSysLibl  = %addr(LibLists)
+     C                   Eval      pProdLibl = pSysLibl + nSysLSize
+     C                   Eval      pCurLib   = pProdLibl + nProdLSize
+     C                   Eval      pUsrLibl  = pCurLib + nCurLSize
+
+     C                   Select
+     C                   When      %Parms = 0 or lType = llUsrLibl
+     C                   eval      Libl = %subst(UsrLibl : 1 : nUsrLSize)
+     C                   eval      nCount = nUsrLib
+     C                   When      lType = llCurlib
+     C                   eval      Libl = %subst(CurLib : 1 : nCurLSize)
+     C                   eval      nCount = nCurLib
+     C                   When      lType = LLSysLibl
+     C                   eval      Libl = %subst(SysLibl : 1 : nSysLSize)
+     C                   eval      nCount = nSysLib
+     C                   When      lType = llPRODLIBL
+     C                   eval      Libl = %subst(ProdLibl : 1 : nProdLSize)
+     C                   eval      nCount = nProdLib
+     C                   other
+     C                   eval      Libl = %subst(UsrLibl : 1 : nUsrLSize)
+     C                   eval      nCount = nUsrLib
+     C                   endsl
+     C                   if        %Parms >= 2
+     C                   Eval      nLibLCount = nCount
+     C                   endif
+     C                   return    LiblArray
+     P GetLibl         E
+
+     * ---------------------------------------------------------------
+     * S E T L I B L - Change Library List
+     * ---------------------------------------------------------------
+     * Taken from MC Press 9/11/02 article.
+
+     P SetLibl         B                   EXPORT
+     D SetLibl         PI             1N
+     D  InLibl                       11A   Const DIM(250)
+     D  lType                         5I 0 Const Options(*NOPASS)
+
+     D CurLib          s                   Like(LIBNAME)
+     D ProdLib1        s                   Like(LIBNAME)
+     D ProdLib2        s                   Like(LIBNAME)
+
+     D i               S             10I 0 Inz(0)
+
+     C                   Dow       InLibl(i+1) <> *BLANKS
+     C                   Eval      i = i + 1
+     C                   enddo
+     C                   Select
+     C                   When      %Parms < 2 or lType = llUSRLIBL
+     C                   CallP     QliChgLL('*SAME':'*SAME':'*SAME':
+     C                                      InLibl : i :
+     C                                      ll_Error )
+     C                   When      lType = llCURLIB
+     C                   Eval      CurLib  = InLibl(1)
+     C                   CallP     QliChgLL(CurLib :'*SAME':'*SAME':' ': -1
+     C                                    : ll_Error )
+     C                   When      lType = llPRODLIBL
+     C                   Eval      ProdLib1 = InLibl(1)
+     C                   Eval      ProdLib2 = InLibl(2)
+     C                   If        ProdLib2 = *BLANKS
+     C                   Eval      ProdLib2 = '*SAME'
+     C                   endif
+     C                   CallP     QliChgLL('*SAME':ProdLib1:ProdLib2:' ':-1
+     C                                    : ll_Error )
+     C                   endsl
+     C
+     C                   return    *ON
+     P SetLibl         E
+
+     * ---------------------------------------------------------------
+     * A D D L I B L E  -  Add Library List Entries
+     * ---------------------------------------------------------------
+     * Taken from MC Press 9/11/02 article.
+
+     P AddLiblE        B                   EXPORT
+
+     D AddLiblE        PI            10I 0
+     D  InLibl                     2750A   Const VARYING
+     D  PosLib                       10A   Const VARYING
+     D                                     Options(*NOPASS)
+     D  Pos                           1N   Const
+     D                                     Options(*NOPASS)
+
+     D  AddLibl        S                   DIM(250) LIKE(LIBNAME)
+     D  OrgLibl        S                   DIM(250) LIKE(LIBNAME)
+     D  NewLibl        S                   DIM(250) LIKE(LIBNAME)
+
+      ** *ON = place new lib(s) after otherwise place before
+     D lAfter          S              1N   INZ(*OFF)
+     D PlaceLib        S                   LIKE(LIBNAME) INZ('*FIRST')
+     D i               S             10I 0
+     D x               S             10I 0
+     D nPos            S             10I 0
+     D nStart          S             10I 0
+     D nLiblCount      S              5I 0
+     D nAddLiblCount   S              5I 0
+     C                   if        %Parms >= 3
+     C                   Eval      lAfter = Pos
+     C                   endif
+     C                   if        %Parms >= 2
+     C                   Eval      PlaceLib = PosLib
+     C                   endif
+
+     C                   Eval      nStart = 1
+     C                   Eval      OrgLibl = GetLibl(llUsrLibl: nLiblCount)
+     C                   Eval      nPos = %Scan(' ':InLibl)
+     C                   Dow       nPos > 0 and i < MAXLIBL
+     C                   Eval      i = i + 1
+     C                   Eval      AddLibl(i) = %subst(InLibl : nStart :
+     C                                               (nPos - nStart)+ 1)
+     C                   Eval      nStart = nPos+1
+     C                   Eval      nPos = %Scan(' ':InLibl:nStart)
+     C                   enddo
+     C                   If        %Len(InLibl) > nStart
+     C                   Eval      i = i + 1
+     C                   Eval      AddLibl(i) = %subst(InLibl : nStart :
+     C                                           (%Len(InLibl)- nStart)+ 1)
+     C                   endif
+
+     C                   eval      nAddLiblCount = i
+      ** Insert the new library(s) at the beginning
+      ** of the existing library list
+     C                   if        PlaceLib = '*FIRST'
+     C                   eval      NewLibl = AddLibl
+     C                   Eval      x = nAddLiblCount + 1
+     C*                  eval      NewLibl(x) = OrgLibl
+     C                   MOVEA     OrgLibl       NewLibl(x)
+     C                   Eval      nLiblCount = nAddLiblCount + nLiblCount
+     C                   else
+
+     ** Insert before or after an existing library name
+     C                   Eval      X = 1
+     C                   for       i = 1 TO nLiblCount
+
+      ** Detect match on Placement-Libary name?
+     C                   if        OrgLibl(i) = PlaceLib
+      ** Insert *AFTER
+     C                   if        lAfter
+      ** Copy the Placement Library to the list
+     C                   Eval      NewLibl(x) = OrgLibl(i)
+     C                   Eval      X = X + 1
+      ** Add the new library names after the placement library
+     C                   MOVEA     AddLibl       NewLibl(x)
+      ** Copy the rest of the original library list
+     C                   Eval      X = X + nAddLiblCount
+     C                   Eval      i = i + 1
+     C                   MOVEA     OrgLibl(i)    NewLibl(x)
+
+      ** Insert *BEFORE
+     C                   else
+      ** Add the new library names before the placement library
+     C                   MOVEA     AddLibl       NewLibl(x)
+     C                   Eval      X = X + nAddLiblCount
+      ** Copy the Placement Library to the list
+     C                   Eval      NewLibl(x) = OrgLibl(i)
+      ** Copy the rest of the original library list
+     C                   Eval      X = X + nAddLiblCount
+     C                   Eval      i = i + 1
+     C                   MOVEA     OrgLibl(i)    NewLibl(x)
+     C                   endif
+      ** Done processing the library list
+     C                   LEAVE
+
+      ** NO-match on Placement-Libary name
+     C                   else
+      ** Just copy the library to the new list
+     C                   Eval      NewLibl(x) = OrgLibl(i)
+     C                   Eval      X = X + 1
+     C                   endif
+     C                   endfor
+
+     C                   eval      nLiblCount = X - 1
+     C                   endif
+      ** Now do a Change Library List via the QLICHGLL API
+     C                   CallP     SetLibl(NewLibl)
+     C                   Return    X - 1
+     P AddLiblE        E

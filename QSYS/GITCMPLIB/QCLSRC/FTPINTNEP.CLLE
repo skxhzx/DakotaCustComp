@@ -1,0 +1,77 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2020 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  FTPINT     FTP Interface - NEP Loop                              */
+/*  January 29, 2020                                                 */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*  01/29/20  RTR  7.40                                              */
+/*    - Created from TARGETINT.                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+ FTPINT:     PGM
+
+             DCL        VAR(&RTN)         TYPE(*CHAR) LEN(10)
+             DCL        VAR(&STOP)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&ERRMSG)      TYPE(*CHAR) LEN(200)
+             DCL        VAR(&OIVALT)      TYPE(*CHAR) LEN(1)
+             DCL        VAR(&OIVALN)      TYPE(*DEC)  LEN(15 5)
+             DCL        VAR(&OIVALA)      TYPE(*CHAR) LEN(100)
+             DCL        VAR(&OIRETURN)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&OPTRET)      TYPE(*CHAR) LEN(117)
+             DCL        VAR(&OPTWHSE)     TYPE(*CHAR) LEN(16)
+             DCL        VAR(&DELAY)       TYPE(*DEC)  LEN(6 0)
+             DCL        VAR(&WHSE)        TYPE(*CHAR) LEN(3)
+
+             /* Get warehouse number */
+             CALL       PGM(GETOPTINT) PARM('Interface' 'General +
+                          Options' 'Warehouse Number' &OIVALT +
+                          &OIVALN &OIVALA &OIRETURN)
+             IF         COND(&OIRETURN *EQ '*OK') THEN(DO)
+               CHGVAR     VAR(&OPTWHSE) VALUE(&OIVALN)
+               CHGVAR     VAR(&WHSE) VALUE(%SST(&OPTWHSE 8 3))
+               ENDDO
+             ELSE       CMD(CHGVAR VAR(&WHSE) VALUE('001'))
+
+             CHGDTAARA  DTAARA(FTPINTEND *ALL) VALUE('*GO ')
+             CALL       PGM(WRTLOG) PARM('FTPINT    ' '*START    ' +
+                          'FTP Interface starting.')
+
+ LOOP:       RTVDTAARA  DTAARA(FTPINTEND *ALL) RTNVAR(&STOP)
+             IF         COND(&STOP *EQ '*END') THEN(GOTO NORMEND)
+
+             CALL       PGM(FTPINTR) PARM(&RTN &ERRMSG)
+             IF         COND(&RTN *NE '*OK') THEN(GOTO ABEND)
+
+             RTVDTAARA  DTAARA(FTPINTEND *ALL) RTNVAR(&STOP)
+             IF         COND(&STOP *EQ '*END') THEN(GOTO NORMEND)
+
+             /* Get delay value */
+             CALL       PGM(GETOPTIONS) PARM(&WHSE '*FTPINT' '040' +
+                          '003' &OPTRET)
+             CHGVAR     VAR(&DELAY) VALUE(%SST(&OPTRET 1 3))
+             DLYJOB     DLY(&DELAY)
+
+             GOTO       CMDLBL(LOOP)
+
+ NORMEND:
+             SNDMSG     MSG('FTP Interface ending normally.') +
+                          TOMSGQ(QSYSOPR)
+             CALL       PGM(WRTLOG) PARM('FTPINT  ' '*END      ' +
+                          'FTP Interface ending normally.')
+             GOTO       CMDLBL(DONE)
+ ABEND:
+             SNDMSG     MSG('ERROR: FTP Interface error. See BFCLOG.') +
+                          TOMSGQ(QSYSOPR)
+             SNDMSG     MSG(&ERRMSG) TOMSGQ(QSYSOPR)
+             SNDMSG     MSG('ERROR: FTP Interface error. See BFCLOG.') +
+                          TOMSGQ(BFC)
+             SNDMSG     MSG(&ERRMSG) TOMSGQ(BFC)
+             CALL       PGM(WRTLOG) PARM('FTPINT' '*ERROR' &ERRMSG)
+             GOTO       CMDLBL(LOOP)
+
+ DONE:       ENDPGM

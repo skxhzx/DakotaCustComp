@@ -1,0 +1,578 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  CVTQTY    Convert quantities to/from string.
+     F*  11 August 1994
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FUNMESR  IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+     E                    A11        11  1
+     E                    $MD       128  1
+     E                    P          12  3 0
+     I*----------------------------------------------------------------
+     I*  Error message parameter
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1   1 ERCHAR
+     I                                    P   2   30ERPOS
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *QTY2STR  -  Create string from quantities.
+     C*              *STR2QTY  -  Create quantities from string.
+     C*              *UM2STR   -  Create unit of measure string.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PQTY1  Normal quantity.
+     C*      $PQTY2  Breakdown quantity 1.
+     C*      $PQTY3  Breakdown quantity 2.
+     C*      $PUM1   Normal unit of measure.
+     C*      $PUM2   Breakdown 1 unit of measure.
+     C*      $PUM3   Breakdown 2 unit of measure.
+     C*      $PQSTR  Quantity string.
+     C*
+     C*    Returned Parameters
+     C*      $PQTY1  Normal quantity.
+     C*      $PQTY2  Breakdown quantity 1.
+     C*      $PQTY3  Breakdown quantity 2.
+     C*      $PQSTR  Quantity string.
+     C*      $PUSTR  Unit of measure string.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PQTY1  70
+     C                     PARM           $PQTY2  70
+     C                     PARM           $PQTY3  70
+     C                     PARM           $PUM1   2
+     C                     PARM           $PUM2   2
+     C                     PARM           $PUM3   2
+     C                     PARM           $PQSTR 10
+     C                     PARM           $PUSTR 17
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *OFF      ERROR   1
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C*
+     C*  Execute corresponding routine.
+     C*
+     C           $PCMD     CASEQ'*QTY2STR'QTYSTR
+     C           $PCMD     CASEQ'*STR2QTY'STRQTY
+     C           $PCMD     CASEQ'*UM2STR 'UMSTR
+     C                     ENDCS
+     C*
+     C*  Do some clean up before leaving.
+     C*
+     C           OUT       TAG
+     C                     EXSR ZSCLR
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define file keys
+     C*
+     C*    Unit of measure (UNMESR)
+     C*
+     C*R         KEYUM     KLIST
+     C*R                   KFLD           UMCODE
+     C*
+     C*  Initialize message handling
+     C*
+     CSR                   EXSR ZMIMSG
+     C*
+     CSR         '01234567'CAT  '89.- '   VALID  13
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  EXTRCT  Extract number from string.
+     C*
+     CSR         EXTRCT    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*   When length is zero then there is no quantity entered.
+     C*
+     CSR                   SELEC
+     CSR         LEN       WHLE 0
+     CSR                   Z-ADD0         QTY     70
+     C*
+     C*   Otherwise, extract number and convert to number.
+     C*
+     CSR                   OTHER
+     CSR                   MOVE *BLANKS   TEMP10 10
+     CSR         LEN       SUBST$PQSTR:FRMTEMP10
+     CSR         '-'       SCAN TEMP10    POS
+     CSR         POS       IFEQ 0
+     CSR                   MOVE *ON       POSITV
+     CSR                   ELSE
+     CSR                   MOVE *OFF      POSITV
+     CSR         '-':' '   XLATETEMP10    TEMP10
+     CSR                   ENDIF
+     CSR                   MOVE *BLANKS   $CSTR
+     CSR                   MOVELTEMP10    $CSTR
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$CCMD
+     CSR                   PARM           $CSTR
+     CSR                   MOVEA$CSTR     A10
+     CSR         A10,8     IFNE *BLANK
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM0116
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   $CSTR
+     CSR                   MOVEAA10       $CSTR
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*RIGHT  '$CCMD
+     CSR                   PARM           $CSTR
+     CSR                   MOVE $CSTR     QTY
+     CSR         POSITV    IFEQ *OFF
+     CSR                   Z-SUBQTY       QTY
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  QTYSTR  Create string from quantities.
+     C*
+     CSR         QTYSTR    BEGSR
+     CSR                   MOVE *BLANKS   TEMP11 11
+     CSR                   MOVE *OFF      FLAG    1
+     C*
+     C*  Start with breakdown quantity 3.
+     C*
+     CSR         $PQTY3    IFNE 0
+     C*
+     C*     Quantity is not zero. Determine if positive or negative.
+     C*
+     CSR                   MOVE *BLANKS   $CSTR
+     CSR         $PQTY3    IFGT 0
+     CSR                   MOVE *ON       POSITV  1
+     CSR                   MOVE $PQTY3    $CSTR
+     CSR                   ELSE
+     CSR                   MOVE *OFF      POSITV
+     CSR                   Z-SUB$PQTY3    TEMP7N  70
+     CSR                   MOVE TEMP7N    $CSTR
+     CSR                   ENDIF
+     C*
+     C*     Left justify number. Add minus sign if necessary.
+     C*
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$CCMD   8
+     CSR                   PARM           $CSTR  30
+     CSR         POSITV    IFEQ *ON
+     CSR                   MOVEL$CSTR     WORK8A  8
+     CSR                   ELSE
+     CSR         '-'       CAT  $CSTR     WORK8A
+     CSR                   ENDIF
+     C*
+     C*     Add result to string.
+     C*
+     CSR                   MOVELWORK8A    TEMP11
+     CSR                   MOVE *ON       FLAG
+     CSR                   ENDIF
+     C*
+     C*  Then add breakdown quantity 2.
+     C*
+     C*     Quantity is zero.
+     C*
+     CSR         $PQTY2    IFEQ 0
+     CSR         FLAG      IFEQ *ON
+     CSR         '0.'      CAT  TEMP11    TEMP11
+     CSR                   ENDIF
+     CSR                   ELSE
+     C*
+     C*     Quantity is not zero. Determine if positive or negative.
+     C*
+     CSR                   MOVE *BLANKS   $CSTR
+     CSR         $PQTY2    IFGT 0
+     CSR                   MOVE *ON       POSITV
+     CSR                   MOVE $PQTY2    $CSTR
+     CSR                   ELSE
+     CSR                   MOVE *OFF      POSITV
+     CSR                   Z-SUB$PQTY2    TEMP7N  70
+     CSR                   MOVE TEMP7N    $CSTR
+     CSR                   ENDIF
+     C*
+     C*     Left justify number. Add minus sign if necessary.
+     C*
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$CCMD
+     CSR                   PARM           $CSTR
+     CSR         POSITV    IFEQ *ON
+     CSR                   MOVEL$CSTR     WORK8A
+     CSR                   ELSE
+     CSR         '-'       CAT  $CSTR     WORK8A
+     CSR                   ENDIF
+     C*
+     C*     Add result to string.
+     C*
+     CSR         FLAG      IFEQ *OFF
+     CSR                   MOVELWORK8A    TEMP11
+     CSR                   ELSE
+     CSR         '.'       CAT  TEMP11    TEMP11
+     CSR         WORK8A    CAT  TEMP11:0  TEMP11
+     CSR                   ENDIF
+     CSR                   MOVE *ON       FLAG
+     CSR                   ENDIF
+     C*
+     C*  Then add the normal quantity.
+     C*
+     C*     Quantity is zero.
+     C*
+     CSR         $PQTY1    IFEQ 0
+     CSR         FLAG      IFEQ *ON
+     CSR         '0.'      CAT  TEMP11    TEMP11
+     CSR                   ELSE
+     CSR                   MOVEL'0'       TEMP11
+     CSR                   ENDIF
+     CSR                   ELSE
+     C*
+     C*     Quantity is not zero. Determine if positive or negative.
+     C*
+     CSR                   MOVE *BLANKS   $CSTR
+     CSR         $PQTY1    IFGT 0
+     CSR                   MOVE *ON       POSITV
+     CSR                   MOVE $PQTY1    $CSTR
+     CSR                   ELSE
+     CSR                   MOVE *OFF      POSITV
+     CSR                   Z-SUB$PQTY1    TEMP7N
+     CSR                   MOVE TEMP7N    $CSTR
+     CSR                   ENDIF
+     C*
+     C*     Left justify number. Add minus sign if necessary.
+     C*
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$CCMD
+     CSR                   PARM           $CSTR
+     CSR         POSITV    IFEQ *ON
+     CSR                   MOVEL$CSTR     WORK8A
+     CSR                   ELSE
+     CSR         '-'       CAT  $CSTR     WORK8A
+     CSR                   ENDIF
+     C*
+     C*     Add result to string.
+     C*
+     CSR         FLAG      IFEQ *OFF
+     CSR                   MOVELWORK8A    TEMP11
+     CSR                   ELSE
+     CSR         '.'       CAT  TEMP11    TEMP11
+     CSR         WORK8A    CAT  TEMP11:0  TEMP11
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   If qtys create a string larger than 10 characters
+     C*     then flag it by putting an '*' in the last character.
+     C*
+     CSR                   MOVEATEMP11    A11
+     CSR         A11,11    IFNE *BLANK
+     CSR                   Z-ADD10        X       20
+     CSR                   MOVE '*'       A11,X
+     CSR                   MOVEAA11       TEMP11
+     CSR                   ENDIF
+     CSR                   MOVELTEMP11    $PQSTR
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  STRQTY  Create quantities from string.
+     C*
+     CSR         STRQTY    BEGSR
+     C*
+     CSR                   MOVEA$PQSTR    A10
+     CSR                   Z-ADD0         $PQTY1
+     CSR                   Z-ADD0         $PQTY2
+     CSR                   Z-ADD0         $PQTY3
+     C*
+     C*   Check for valid characters.
+     C*
+     CSR         VALID     CHECK$PQSTR    POS     30
+     CSR         POS       IFNE 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE A10,POS   ERCHAR
+     CSR                   Z-ADDPOS       ERPOS
+     CSR                   EXSR ZM0114
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   GOTO ENDS2Q
+     CSR                   ENDIF
+     C*
+     C*   Check for decimal points.
+     C*
+     CSR                   Z-ADD0         P
+     CSR         '.'       SCAN $PQSTR    P
+     CSR         P,3       IFNE 0
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM0115
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   GOTO ENDS2Q
+     CSR                   ENDIF
+     C*
+     C*   Convert normal quantity.
+     C*
+     CSR                   Z-ADD1         FRM     30
+     CSR         P,1       IFEQ 0
+     CSR                   Z-ADD10        LEN     30
+     CSR                   ELSE
+     CSR         P,1       SUB  1         LEN
+     CSR                   ENDIF
+     CSR                   EXSR EXTRCT
+     CSR         ERROR     CABEQ*ON       ENDS2Q
+     CSR                   Z-ADDQTY       $PQTY1
+     C*
+     C*   Convert breakdown 1 quantity.
+     C*
+     CSR         P,1       IFNE 0
+     CSR         P,1       ADD  1         FRM
+     CSR         P,2       IFEQ 0
+     CSR         10        SUB  P,1       LEN
+     CSR                   ELSE
+     CSR         P,2       SUB  P,1       LEN
+     CSR                   SUB  1         LEN
+     CSR                   ENDIF
+     CSR                   EXSR EXTRCT
+     CSR         ERROR     CABEQ*ON       ENDS2Q
+     CSR                   Z-ADDQTY       $PQTY2
+     CSR                   ENDIF
+     C*
+     C*   Convert breakdown 2 quantity.
+     C*
+     CSR         P,2       IFNE 0
+     CSR         P,2       ADD  1         FRM
+     CSR         11        SUB  FRM       LEN
+     CSR                   EXSR EXTRCT
+     CSR         ERROR     CABEQ*ON       ENDS2Q
+     CSR                   Z-ADDQTY       $PQTY3
+     CSR                   ENDIF
+     C*
+     CSR         ENDS2Q    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UMSTR   Create unit of measure string.
+     C*
+     CSR         UMSTR     BEGSR
+     CSR                   MOVE *OFF      FLAG
+     CSR                   MOVE *BLANKS   $PUSTR
+     C*
+     C*   Start with breakdown 2 unit of measure.
+     C*
+     CSR         $PUM3     IFNE *BLANKS
+     CSR         $PUM3     CHAINUNMESR               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVELUMSHRT    $PUSTR
+     CSR                   MOVE *ON       FLAG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR         FLAG      IFEQ *ON
+     CSR         '.'       CAT  $PUSTR    $PUSTR
+     CSR                   ENDIF
+     C*
+     C*   Add breakdown 1 unit of measure.
+     C*
+     CSR         $PUM2     IFNE *BLANKS
+     CSR         $PUM2     CHAINUNMESR               79
+     CSR         *IN79     IFEQ *OFF
+     CSR         UMSHRT    CAT  $PUSTR:0  $PUSTR
+     CSR                   MOVE *ON       FLAG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR         FLAG      IFEQ *ON
+     CSR         '.'       CAT  $PUSTR    $PUSTR
+     CSR                   ENDIF
+     C*
+     C*   Add normal unit of measure.
+     C*
+     CSR         $PUM1     IFNE *BLANKS
+     CSR         $PUM1     CHAINUNMESR               79
+     CSR         *IN79     IFEQ *OFF
+     CSR         UMSHRT    CAT  $PUSTR:0  $PUSTR
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     C**                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     C**                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     C*R                   ADD  1         MSGK
+     C*R                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     C**                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     C**                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7973  Record does not exist.
+     C*
+     CSR         ZM73      BEGSR
+     CSR                   MOVE 'PIR7973' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR0114  Invalid character used in quantity.
+     C*
+     CSR         ZM0114    BEGSR
+     CSR                   MOVE 'PIR0114' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR0115  Too many decimal points entered in quantity.
+     C*
+     CSR         ZM0115    BEGSR
+     CSR                   MOVE 'PIR0115' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR0116  Number is too large.
+     C*
+     CSR         ZM0116    BEGSR
+     CSR                   MOVE 'PIR0116' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR

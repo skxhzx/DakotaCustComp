@@ -1,0 +1,247 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2005 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  RH158     Export Catchweights for Route
+     F*  27 April 2005
+     F*  Max Blacknik
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+500 AF*    04/27/05  MLB  5.00
+     F*      - Created.
+     F*
+530 AF*    08/19/10  MLB  5.30
+     F*      - Revised program to compute unique sequence number for
+     F*        each catchwgt record written into EXPFORDC linked to
+     F*        a line item on the customer order.  This is being done
+     F*        because a line item on an order ended up split across
+     F*        pallets causing wgts to have duplicate sequence numbers.
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  78        - EOF for ORDH
+     F*  79        - EOF for ORDD
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     FORDH3   IF  E           K        DISK
+     FORDC    IF  E           K        DISK
+     FEXPFORDCUF  E           K        DISK                      A
+     I*----------------------------------------------------------------
+     I*  Constants
+     I*
+     I              '1'                   C         FOREVR
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Not referenced.
+     C*      $PWHSE  Warehouse
+     C*      $PRTID  Route ID
+     C*      $PRTE   Route
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   *OK      - Catchweights written to export file.
+     C*              *ERROR   - Error writing catchweights to export file.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PRTID  5
+     C                     PARM           $PRTE   5
+     C                     PARM           $PRTN   8
+     C* Main line
+     C*
+     C                     MOVE *OFF      ERROR   1
+     C                     MOVEL'*OK     '$PRTN
+     C*
+     C*  Get order header record.
+     C*
+     C           KEYOH     SETLLORDH3
+     C           FOREVR    DOUNEFOREVR
+     C           KEYOH     READEORDH3                    79
+     C*
+     C                     SELEC
+     C           *IN79     WHEQ *ON
+     C                     LEAVE
+     C                     OTHER
+530 AC*
+530 AC*  Delete all entries from EXPFORDC to ensure no duplicate wgts.
+530 AC                     EXSR ZZDELW
+     C*
+     C*  Add order catch weight records to export catch weight file.
+     C*
+530 AC                     MOVE *ZEROS    NEWSEQ
+530 AC                     MOVE *LOVAL    HLDORS
+     C           KEYOD     SETLLORDC
+     C           FOREVR    DOUNEFOREVR
+     C           KEYOD     READEORDC                     78
+     C                     SELEC
+     C           *IN78     WHEQ *ON
+     C                     LEAVE
+     C*
+     C                     OTHER
+     C*
+     C*    Check if catchweight record exists in export file.
+     C           KEYOEC    SETLLEXPFORDC                 76
+     C           *IN76     IFEQ *ON
+     C           KEYOEC    CHAINEXPFORDC             76
+     C           *IN76     IFEQ *OFF
+     C                     Z-ADDOCCWGT    OECWGT
+     C                     UPDATOECREC
+     C*
+     C                     ELSE
+     C*
+     C                     EXSR FILOEC
+     C                     WRITEOECREC
+     C*
+     C                     ENDIF
+     C*
+     C*    Catchweight record not found in export file. Add record.
+     C                     ELSE
+     C*
+     C                     EXSR FILOEC
+     C                     WRITEOECREC
+     C*
+     C                     ENDIF
+     C                     ENDSL
+     C                     ENDDO
+     C*
+     C                     ENDSL
+     C*
+     C                     ENDDO
+     C*
+     C           BOTTOM    TAG
+     C*
+     C                     MOVE *ON       *INLR
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*   Define partial key for ORDC file.
+     C*
+     CSR         KEYOD     KLIST
+     CSR                   KFLD           OHWHSE
+     CSR                   KFLD           OHORD
+     C*
+     C*   Define Full key for EXPFORDC file.
+     C*
+     CSR         KEYOEC    KLIST
+     CSR                   KFLD           OCWHSE
+     CSR                   KFLD           OHCORD
+     CSR                   KFLD           OCSEQ#
+     CSR                   KFLD           OCITEM
+     CSR                   KFLD           OCTRAN
+     CSR                   KFLD           OCSEQ
+530 AC*
+530 AC*   Define Partial key for EXPFORDC file.
+530 AC*
+530 AC           KYOEC2    KLIST
+530 AC                     KFLD           OCWHSE
+530 AC                     KFLD           OHCORD
+     C*
+     C*   Define  key for ORDH3 file.
+     C*
+     CSR         KEYOH     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+530 AC                     MOVE *ZEROS    HLDORS  50
+530 AC                     MOVE *ZEROS    NEWSEQ  50
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILOEC  Fill export detail catch weight fields.
+     C*
+     CSR         FILOEC    BEGSR
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEAROECREC
+     C*
+     C*  Move fields from order file to export file.
+     C*
+     CSR                   Z-ADDOCWHSE    OECWHS
+     C*                    Z-ADDOCORD     OECORD
+     CSR                   Z-ADDOHCORD    OECORD
+     CSR                   Z-ADDOCSEQ#    OECSQ#
+     CSR                   MOVE OCITEM    OECITM
+530 A*
+530 A*      Reset catchwgt sequence counter when order line# changes.
+530 AC           HLDORS    IFNE OCSEQ#
+530 AC                     MOVE *ZEROS    NEWSEQ
+530 AC                     Z-ADDOCSEQ#    HLDORS
+530 AC                     ENDIF
+530 A*
+530 AC           NEWSEQ    ADD  1         NEWSEQ
+530 AC           NEWSEQ    IFGT 999
+530 AC                     Z-ADD999       NEWSEQ
+530 AC                     ENDIF
+530 A*
+530 DC*                    Z-ADDOCSEQ     OECSEQ
+530 AC                     Z-ADDNEWSEQ    OECSEQ
+530 A*
+     CSR                   Z-ADDOCTRAN    OECTRN
+     CSR                   Z-ADDOCCWGT    OECWGT
+     C*
+     CSR                   ENDSR
+530 AC*
+530 AC*----------------------------------------------------------------
+530 AC*
+530 AC*  ZZDELW  Delete any weights left over from previous export found
+530 AC*          in EXPFORDC file.
+530 AC*
+530 AC           ZZDELW    BEGSR
+530 AC*
+530 AC           KYOEC2    SETLLEXPFORDC
+530 AC           FOREVR    DOWEQFOREVR
+530 AC           KYOEC2    READEEXPFORDC                 76
+530 AC           *IN76     IFEQ *ON
+530 AC                     LEAVE
+530 AC                     ENDIF
+530 AC*
+530 AC                     DELETOECREC
+530 AC                     ENDDO
+530 AC                     MOVE '0'       *IN76
+530 AC*
+530 AC                     ENDSR

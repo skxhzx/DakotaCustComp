@@ -1,0 +1,194 @@
+
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  OR330CL   Order Lookup by Item                                   */
+/*  10 March, 2008                                                   */
+/*  Ginger Andrews                                                   */
+/*                                                                   */
+/*  Revisions:                                                       */
+/*                                                                   */
+/*    03/10/08  GJA                                                  */
+/*      - Creation                                                   */
+/*    09/18/17  JCJ 710aA                                            */
+/*      - Renamed OR320CL to OR330CL                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ OR330CL:    PGM        PARM(&WHSE &RETURN &JOBQ &DEV &FORM &FMDT +
+                          &TODT &VP &ITEM)
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR330CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(OR330)
+
+  /* Report program and printer file name. */
+
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) VALUE(OR330PR)
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Order Lookup by Item')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing Order Lookup by Item')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FMDT)       TYPE(*CHAR) LEN(8)
+             DCL        VAR(&TODT)       TYPE(*CHAR) LEN(8)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&ITEM)       TYPE(*CHAR) LEN(15)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MEMBER1)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&SORT)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&VP)         TYPE(*CHAR) LEN(1)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/*  Don't get options, if being run from JOBQ. */
+
+             RTVJOBA    USER(&USER) TYPE(&TYPE)
+             IF (&TYPE = '0') THEN(DO)
+                CALL       PGM(GETUNQMEM) PARM(*REUSE OR330 &MEMBER1)
+                OVRDBF     FILE(OR330) MBR(&MEMBER1) SHARE(*YES)
+                CALL       PGM(OR331) PARM(&WHSE &ITEM &FMDT &TODT &RETURN)
+                GOTO       CMDLBL(REPORT)
+             ENDDO
+
+/*    - Get unique member to use.                     */
+                CALL       PGM(GETUNQMEM) PARM(*REUSE OR330 &MEMBER1)
+             OVRDBF     FILE(OR330) MBR(&MEMBER1) SHARE(*YES)
+
+             IF (&JOBQ = 'X') THEN(DO)
+                CALL       PGM(OR331) PARM(&WHSE &ITEM &FMDT &TODT &RETURN)
+                GOTO       CMDLBL(REPORT)
+               ENDDO
+
+/*  Get report options. */
+
+options:
+             CALL       PGM(&OPTPGM) PARM(&WHSE &RETURN &JOBQ &DEV +
+                          &FORM &FMDT &TODT &VP &ITEM)
+
+/*  See if user wants to proceed. */
+
+             IF (&RETURN = '*EXIT' *OR &RETURN = '*CANCEL') THEN(DO)
+
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) +
+                          MSGTYPE(*INFO)
+               GOTO  CMDLBL(OUT)
+               ENDDO
+
+
+/* See if user wants to put report on jobq. */
+
+             IF (&JOBQ = 'Y') THEN(DO)
+             SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&WHSE &RETURN +
+                          &JOBQ &DEV &FORM &FMDT &TODT &VP &ITEM)) +
+                          JOB(AAOR330CL)
+             GOTO       CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+ REPORT:
+
+
+
+
+
+ VIEW:
+
+             IF (&VP = 'V') THEN(DO)
+             CALL       PGM(OR332) PARM(&WHSE &FMDT &TODT &ITEM +
+                        &return)
+
+             IF         COND(&RETURN = '*CANCEL') THEN(DO)
+               CHGVAR     VAR(&RETURN) VALUE('        ')
+               DLTOVR     FILE(*ALL) LVL(*JOB)
+               RCLRSC     LVL(*CALLER)
+               MONMSG     MSGID(CPF9841)
+               CALL       PGM(GETUNQMEM) PARM(*REUSE OR330 &MEMBER1) +
+
+               GOTO       CMDLBL(OPTIONS)
+             enddo
+             ELSE       CMD(DO)
+               GOTO       CMDLBL(OUT)
+             enddo
+             ENDDO
+
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+
+ /* REPORT:   ( Chg 2.09 ) */
+
+   /* Override printer file. */
+
+             OVRPRTF    FILE(&PRTF) DEV(&DEV) OUTQ(*DEV) +
+                          FORMTYPE(&FORM)
+             CALL       PGM(OR335) PARM(&WHSE &FMDT &TODT &ITEM +
+                          &RETURN &USER)
+
+
+
+             DLTOVR     FILE(OR330)
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ OUT:
+ NOMSG:
+
+   /* Clean up before leaving */
+
+             DLTOVR     FILE(*ALL) LVL(*JOB)                      /* (510 A) */
+             MONMSG     MSGID(CPF9841)                            /* (510 A) */
+             RCLRSC     LVL(*CALLER)
+             IF         COND(&MEMBER > ' ') THEN(DO)              /* (510 A) */
+               RMVM       FILE(OR330) MBR(&MEMBER)               /* (5 10 A) */
+               MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                            CPF3273 CPF7301 CPF7310)              /* (510 A) */
+             ENDDO                                                /* (510 A) */
+             IF         COND(&MEMBER1 > ' ') THEN(DO)             /* (510 A) */
+               RMVM       FILE(OR330)  MBR(&MEMBER1)              /* (510 A) */
+               MONMSG     MSGID(CPF320A CPF320B CPF3203 CPF3220 +
+                            CPF3273 CPF7301 CPF7310)              /* (510 A) */
+             ENDDO                                                /* (510 A) */
+
+             ENDPGM

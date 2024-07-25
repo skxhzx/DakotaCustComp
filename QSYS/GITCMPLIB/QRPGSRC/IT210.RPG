@@ -1,0 +1,869 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT210
+     F*  03 MAY, 1996
+     F*  HEMANT KAPADIA
+     F*
+     F*  SK110 - 1.01
+     F*
+     F*  Revisions
+     F*
+213 AF*    05/20/96  HNK  2.13
+     F*      - When F12 is pressed, delete records from the work option
+     F*        file.
+213 AF*    05/21/96  HNK  2.13
+     F*      - Options file added to get overhang.
+     F*      - Pallet code added to screen 1.
+404 AF*    08/11/97  HNK  4.04
+     F*      - FKEY AND UKEY ARRAY INDEX CHANGED TO 100 FROM 10
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  20        POSITION CURSOR
+     F*  21 - 29   FIELD INPUT ERROR (REVERSE DISPLAY)
+     F*  79        CHAIN INDICATOR
+     F*  90        PROTECT INPUT FIELDS FOR DELETE DISPLAY
+     F*  97        ALWAYS ON (USED FOR SFLEND KEYWORD)
+     F*  98        ERROR ON SCREEN (SOUND BUZZER)
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT210FM CF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        RECNO KSFILE DSPSFL
+     F                                        MSGK  KSFILE MSGREC
+     FWORKOPT UF  E           K        DISK                      A
+     FPIRITEM IF  E           K        DISK
+     FDEPTDEF IF  E           K        DISK
+     FSLOTDEF IF  E           K        DISK
+     FPACKAGE IF  E           K        DISK
+     FPALLET  IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+213 AFOPTIONS IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+404 ME                    FKEY      100 50
+404 ME                    UKEY      100 50
+     E                    $MD       128  1
+     E                    OPTLST     24  2
+     E                    CMDLST     24  2
+     E                    $PODSC      3 63
+     E                    OPTLN   1   1 75
+     E                    CMDLN   1   1 79
+     E                    DESC    1   1 60
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              '*NONE'               C         @CHGPG
+     I              '*NONE'               C         @DELPG
+     I              '*NONE'               C         @PRTPG
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$POSTN      DS
+     I                                        1   8 $POCMD
+     I                                        9  18 $POPRG
+     I                                       19  68 $POFKY
+     I                                       69 118 $POUKY
+     I                                      119 307 $PODSC
+     I                                      308 322 $POPT1
+     I                                      323 335 $POPT2
+     I                                      336 343 $PORTN
+     I                                      344 403 $POERM
+     I                                      336 339 $POMSG
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  26 $PWHDP
+     I                                       27  41 $PITEM
+     I                                       42  440$PCNT
+     I                                       45  45 $PREPL
+     I                                       46  502$PULEN
+     I                                       51  552$PUWDT
+     I                                       56  56 $PSTYP
+213 AI*----------------------------------------------------------------
+213 AI*  *PATTERN  -  Tie pattern options.
+213 AI*----------------------------------------------------------------
+213 AI*
+213 AI* Fields
+213 AI*
+213 AI*    OPHANG  -  Pallet overhang.
+213 AI*    OPDINC  -  Dimension increment.
+213 AI*
+213 AI* Data structure
+213 AI*
+213 AIOPDATA      DS
+213 AI                                        1   32OPHANG
+213 AI                                        4   62OPDINC
+213 AI                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Data structure for FKEY and UKEY
+     I*
+     I            DS
+     I                                        1  50 DSFKEY
+     I                                        1  50 DSUKEY
+     I                                        1   2 W1SDEF
+     I I            0                         3   60W1TIE
+     I I            0                         7   80W1HIGH
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PARMS
+     C*
+     C*    Returned Parameters
+     C*      $RTNCD  *EXIT    - CMD3 was entered
+     C*              *CANCEL  - CMD12 was entered
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE '1'       *IN97
+     C                     MOVE *BLANKS   $RTNCD  8
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ2
+     C*
+     C           NXTSCR    DOWNE'EOJ'
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+     C           NXTSCR    CASEQ'02 '     SC2
+     C                     END
+     C                     END
+     C*
+     C           $RTNCD    IFEQ '*EXIT   '
+     C           $RTNCD    OREQ '*CANCEL '
+     C                     SETON                     LR
+     C                     END
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ '1'
+     CSR                   MOVE '1'       *IN98
+     CSR                   END
+     C*
+     C*   Set OFF command key indicators
+     C*
+     CSR                   SETOF                     KCKEKF
+     CSR                   SETOF                     KL
+     C*
+     C*   Overlay screen with title
+     C*
+     CSR                   WRITETITLE
+     C*
+     C*   Overlay screen with error messages
+     C*
+     CSR                   EXSR ZMDMSG
+     C*
+     C*   Overlay screen with subfile screen
+     C*
+     CSR         NXTSCR    IFEQ '01 '
+     CSR                   EXSR SFLDSP
+     CSR                   READ POSTNREC                 50
+     CSR                   END
+     CSR         NXTSCR    IFEQ '02 '
+     CSR                   EXFMTSCREEN2                50
+     CSR                   END
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     2021
+     CSR                   SETOF                     98
+     CSR                   MOVE '0'       WARN    1
+     CSR                   MOVE '0'       ERROR   1
+     CSR                   MOVE '0'       CANCEL  1
+     CSR                   MOVE *OFF      CMDTKN  1
+     CSR                   Z-ADD0         E       20
+     C*
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+     CSR         NXTSCR    IFEQ '01 '
+     CSR                   READ DSPSFC                   50
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     Screen initialization and wrap-up routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 01 initialization
+     C*
+     CSR         SCR01I    BEGSR
+     CSR                   MOVE '01 '     NXTSCR  3
+     CSR                   WRITECLR0306
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 02 initialization
+     C*
+     CSR         SCR02I    BEGSR
+     CSR                   MOVE '02 '     NXTSCR
+     CSR                   MOVE 'N'       W2REPL
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen 1
+     C*
+     CSR         SC1       BEGSR
+     CSR         STATUS    CASEQCOMAND    CMD01
+     CSR                   CAS            ENT01
+     CSR                   END
+     CSR         ENDSC1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SC2  -  Screen 2
+     C*
+     CSR         SC2       BEGSR
+     CSR                   EXSR CMD02
+     CSR         CMDTKN    CABEQ*ON       ENDSC2
+     CSR                   EXSR ENT02
+     CSR         ENDSC2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define keys
+     C*
+     C*     WORKOPT  (Unique key)
+     C*
+     C           WKOUNQ    KLIST
+     C                     KFLD           #USER
+     C                     KFLD           #PROG
+     C                     KFLD           WKOKYF
+     C                     KFLD           WKOKYU
+     C*
+     C*     WORKOPT  (Partial key)
+     C*
+     C           WKOPRT    KLIST
+     C                     KFLD           #USER
+     C                     KFLD           #PROG
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+213 DC*                    Z-ADD1         $PHANG  32
+     C*
+     C*  Define key for PACKAGE file.
+     C*
+     C           PKKEY     KLIST
+     C                     KFLD           SDPAL
+213 MC                     KFLD           OPHANG
+     C                     KFLD           $PULEN
+     C                     KFLD           $PUWDT
+     C*
+     C*  Define key for DEPTDEF file.
+     C*
+     C           DDKEY     KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PWHDP
+     C                     KFLD           $PSTYP
+     C                     KFLD           SDCODE
+     C*
+     C*  Define key for SLOTDEF file.
+     C*
+     C           SDKEY     KLIST
+     C                     KFLD           $PWHSE
+     C*
+     C*  Define key for PALLET file.
+     C*
+     C           PLKEY     KLIST
+     C                     KFLD           SDPAL
+     C*
+     C*  Define key for PIRITEM file.
+     C*
+     C           ITKEY     KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PITEM
+     C*
+     C*  Define key for WAREHOUSE file.
+     C*
+     C           WHKEY     KLIST
+     C                     KFLD           $PWHSE
+213 AC*
+213 AC*  Define key for options file.
+213 AC*
+213 ACSR                   Z-ADD0         WHSE
+213 ACSR         OPTNKY    KLIST
+213 ACSR                   KFLD           WHSE    30
+213 ACSR                   KFLD           OPCODE
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CLRSCH   Clear everything out of work file
+     C*
+     CSR         CLRSCH    BEGSR
+     CSR         WKOPRT    SETLLWORKOPT
+     CSR         WKOPRT    READEWORKOPT                7979
+     CSR         *IN79     DOWEQ'0'
+     CSR                   DELETWKOREC
+     CSR         WKOPRT    READEWORKOPT                7979
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CMD01    Screen 1 command key routine
+     C*
+     CSR         CMD01     BEGSR
+     C*
+     C*  TEST FOR F3 - EXIT
+     C*
+     CSR         *INKC     IFEQ '1'
+213 ACSR                   EXSR ZZDEL
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$RTNCD
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  TEST FOR F12 - PREVIOUS
+     C*
+     CSR         *INKL     IFEQ '1'
+213 ACSR                   EXSR ZZDEL
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$RTNCD
+     CSR                   GOTO CMD01E
+     CSR                   END
+     C*
+     C*  EXECUTE COMMAND KEYS THAT DON'T NEED THE OPTIONS VERIFIED
+     C*
+     C*     TEST FOR CMD5 - REFRESH
+     C*
+     CSR         *INKE     IFEQ '1'
+     CSR                   EXSR CLRSCH
+213 ACSR                   MOVE *OFF      NOMORE
+213 ACSR                   Z-ADD1         X       50
+213 ACSR         NOMORE    DOUEQ*ON
+     CSR         X         CHAINDSPSFL               79
+213 ACSR                   ADD  1         X
+213 MCSR         *IN79     IFEQ *OFF
+     CSR                   MOVE '  '      OPTION
+     CSR                   UPDATDSPSFL
+213 ACSR                   ELSE
+213 ACSR                   LEAVE
+213 MCSR                   ENDIF
+213 MCSR                   ENDDO
+     CSR                   GOTO CMD01E
+213 MCSR                   ENDIF
+     C*
+     C*   Process non-standard function keys.
+     C*
+     CSR                   EXSR ZZCMD
+     CSR         CMD01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  CMD02    Screen 2 command key routine
+     C*
+     CSR         CMD02     BEGSR
+     C*
+     C*  TEST FOR F12 - PREVIOUS
+     C*
+     CSR         *INKL     IFEQ '1'
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   MOVE '1'       CANCEL
+     CSR                   MOVE 'N'       W2REPL
+     CSR                   EXSR SCR01I
+     CSR                   GOTO CMD02E
+     CSR                   END
+     C*
+     C*  TEST FOR F3  - EXIT
+     C*
+     CSR         *INKC     IFEQ '1'
+     CSR                   MOVE '1'       CANCEL
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   GOTO CMD02E
+     CSR                   END
+     CSR         CMD02E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ENT01    Screen 1 enter key routine
+     C*
+     CSR         ENT01     BEGSR
+     C*
+     C*  VERIFY AND SAVE OPTIONS
+     C*
+213 ACSR         RECNO     IFGT 0
+     CSR                   EXSR SAVOPT
+213 ACSR                   ENDIF
+     CSR         ERROR     CABEQ'1'       ENT01E
+     C*
+     CSR         N         IFGT 0
+     CSR         $PCNT     IFGT 0
+     CSR                   EXSR SCR02I
+     CSR                   ELSE
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ENT01E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ENT02    Screen 2 enter key routine
+     C*
+     CSR         ENT02     BEGSR
+     C*
+     CSR                   EXSR ZZCHK2
+     CSR         ERROR     CABEQ*ON       ENT02E
+     CSR                   MOVE W2REPL    $PREPL
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR         ENT02E    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SAVOPT   Verify and save options that were entered
+     C*
+     CSR         SAVOPT    BEGSR
+     C*
+     C*  READ ONLY THE CHANGED OPTIONS
+     C*
+     CSR                   Z-ADD0         N       30
+     CSR                   MOVE '0'       NOMORE  1
+     CSR         NOMORE    DOUEQ'1'
+     CSR                   MOVE '0'       *IN21
+     CSR                   READCDSPSFL                   79
+     CSR         *IN79     IFEQ '1'
+     CSR                   MOVE '1'       NOMORE
+     CSR                   GOTO ENDDO1
+     CSR                   ENDIF
+     C*
+     C*  Display error if option is not valid.
+     C*
+     CSR         OPTION    IFNE *BLANKS
+     CSR         OPTION    ANDNE'1'
+     CSR                   MOVE '1'       ERROR
+     CSR                   MOVE '1'       *IN21
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   EXSR ZM0108
+     CSR                   ENDIF
+     C*
+     C*  SAVE OPTION
+     C*
+     CSR                   ADD  1         N
+     CSR                   Z-ADDRECNO     Y       30
+     CSR                   MOVE FKEY,Y    WKOKYF
+     CSR                   MOVE UKEY,Y    WKOKYU
+     CSR         WKOUNQ    CHAINWORKOPT              79
+     CSR         *IN79     IFEQ '0'
+     CSR         OPTION    IFEQ *BLANKS
+     CSR                   DELETWKOREC
+     CSR                   ELSE
+     CSR                   MOVE OPTION    WKOOPT
+     CSR                   MOVE *IN21     WKOERR
+     CSR                   UPDATWKOREC
+     CSR                   ENDIF
+     CSR                   ELSE
+     CSR         OPTION    IFNE *BLANKS
+     CSR                   MOVE #USER     WKOUSR
+     CSR                   MOVE #PROG     WKOPGM
+     CSR                   MOVE FKEY,Y    WKOKYF
+     CSR                   MOVE UKEY,Y    WKOKYU
+     CSR                   MOVE OPTION    WKOOPT
+     CSR                   MOVE *IN21     WKOERR
+     CSR                   WRITEWKOREC                 79
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR         ENDDO1    TAG
+     CSR                   ENDDO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLCLR   Clear display subfile
+     C*
+     CSR         SFLCLR    BEGSR
+     C*
+     C*  CLEAR DISPLAY SUBFILE
+     C*
+     CSR                   MOVE '0'       *IN01
+     CSR                   WRITEDSPSFC
+     CSR                   Z-ADD0         RECNO   40
+213 DC*
+213 DC*  Initialize subfile (DSPSFL) record
+213 DC*
+213 DC*                    Z-ADD1         RECNO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLDSP   Display subfile
+     C*
+     CSR         SFLDSP    BEGSR
+     C*
+     C*  WRITE OPTION AND COMMAND LINES TO DISPLAY
+     C*
+     CSR                   WRITEOPTREC
+     CSR                   WRITECMDREC
+     C*
+     C*  WRITE 'BOTTOM/MORE...' FIELD TO DISPLAY
+     C*
+     CSR                   WRITEMORREC
+     C*
+     C*  WRITE POSITION TO FIELD TO DISPLAY
+     C*
+     CSR                   WRITEPOSTNREC
+213 DC*
+213 DC*  POSITION CURSOR TO FIRST OPTION WHEN NO ERRORS EXIST
+213 DC*
+213 DC*R         ERROR     IFNE '1'
+213 DC*R         1         CHAINDSPSFL               79
+213 DC*R         *IN79     IFEQ '0'
+213 DC*R                   MOVE '1'       *IN20
+213 DC*R                   UPDATDSPSFL
+213 DC*R                   END
+213 DC*R                   END
+     C*
+     C*  WRITE SUBFILE TO DISPLAY
+     C*
+     CSR         RECNO     IFGT 0
+     CSR                   MOVE '1'       *IN01
+     CSR                   ENDIF
+     CSR                   WRITEDSPSFC
+213 DC*                    Z-ADD1         RECNO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM #PROG     #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM '*PREV'   #PGMQ
+     CSR                   PARM           #MSGK
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*      0108  Invalid Option.
+     C*
+     CSR         ZM0108    BEGSR
+     CSR                   MOVE 'PIR0108' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVELOPTION    ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    PIR1001  Invalid option entered.
+     C*
+     CSR         ZM1001    BEGSR
+     CSR                   MOVE 'PIR1001' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  ZZADD   Add records to SUBFILE.
+     C*
+     CSR         ZZADD     BEGSR
+     CSR                   ADD  1         RECNO
+     CSR                   WRITEDSPSFL
+     CSR                   Z-ADDRECNO     Y
+     CSR                   MOVE DSFKEY    FKEY,Y
+     CSR                   MOVE DSUKEY    UKEY,Y
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK2   Screen 2 error checking.
+     C*
+     CSR         ZZCHK2    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  Verify OPTION
+     C*
+     CSR         W2REPL    IFNE 'Y'
+     CSR         W2REPL    ANDNE'N'
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN01
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVELDESC,1    ERRMSG
+     CSR                   EXSR ZM1001
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD    Process non-standard function keys
+     C*
+     CSR         ZZCMD     BEGSR
+     CSR         ENDCM1    ENDSR
+213 AC*---------------------------------------------------------------
+213 AC*
+213 AC*  ZZDEL   Delete work options records.
+213 AC*
+213 ACSR         ZZDEL     BEGSR
+213 ACSR         WKOPRT    SETLLWORKOPT
+213 ACSR         *IN79     DOUEQ*ON
+213 ACSR         WKOPRT    DELETWKOREC               79
+213 ACSR                   ENDDO
+213 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGET   Get all info needed for TIEHIGH record.
+     C*
+     CSR         ZZGET     BEGSR
+     CSR                   MOVE SDCODE    W1SDEF
+213 ACSR                   MOVE SDPAL     W1PAL
+     CSR         PKKEY     SETLLPACKAGE              78
+     CSR         *IN78     IFEQ *ON
+     CSR                   Z-ADD0         W1TIE
+     CSR                   ELSE
+     CSR         PKKEY     READEPACKAGE                  78
+     CSR         *IN78     IFEQ *OFF
+     CSR                   Z-ADDPKTIE     W1TIE
+     CSR                   ELSE
+     CSR                   Z-ADD0         W1TIE
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         PLKEY     CHAINPALLET               78
+     CSR         *IN78     IFEQ *OFF
+     CSR                   Z-ADDPLHGT     PALHGT  30
+     CSR                   ELSE
+     CSR                   Z-ADD0         PALHGT
+     CSR                   ENDIF
+     C*
+     CSR         SDHGT     SUB  PALHGT    T#HGT   30
+     CSR         ITUHGT    IFNE 0
+     CSR         T#HGT     DIV  ITUHGT    W1HIGH
+     CSR                   ELSE
+     CSR                   Z-ADD0         W1HIGH
+     CSR                   ENDIF
+     C*
+     CSR         W1HIGH    IFLT 1
+     CSR                   Z-ADD1         W1HIGH
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Extra program initialization. Called from main line.
+     C*
+     CSR         ZZINZ2    BEGSR
+213 AC*
+213 AC*   Get tie pattern options.
+213 AC*
+213 ACSR                   MOVE '*PATTERN'OPCODE
+213 ACSR         OPTNKY    CHAINOPTIONS              79
+213 ACSR         *IN79     IFEQ *ON
+213 ACSR                   Z-ADD1         OPHANG
+213 ACSR                   Z-ADD.5        OPDINC
+213 ACSR                   ENDIF
+     C*
+     CSR                   EXSR SFLCLR
+     CSR                   MOVE 'N'       W2REPL
+     CSR                   MOVE *BLANKS   OPTION
+     C*
+     C*   Round length and width.
+     C*
+     CSR                   Z-ADD$PULEN    DECMAL  22
+     CSR                   SUB  DECMAL    $PULEN
+     CSR         DECMAL    IFGE .5
+     CSR                   ADD  .5        $PULEN
+     CSR                   ENDIF
+     C*
+     CSR                   Z-ADD$PUWDT    DECMAL  22
+     CSR                   SUB  DECMAL    $PUWDT
+     CSR         DECMAL    IFGE .5
+     CSR                   ADD  .5        $PUWDT
+     CSR                   ENDIF
+     C*
+     CSR         WHKEY     CHAINWAREHS               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   WHDESC
+     CSR                   ENDIF
+     C*
+     CSR         ITKEY     CHAINPIRITEM              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   ITDESC
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE *BLANKS   W1ITEM
+     CSR         $PITEM    CAT  '-':1     W1ITEM
+     CSR         W1ITEM    CAT  ITDESC:1  W1ITEM
+     C*
+     C*  Setup option and command display lines.
+     C*
+     CSR                   MOVE OPTLN,1   OPTLN1
+     CSR                   MOVE CMDLN,1   CMDLN1
+     C*
+     CSR                   MOVE #PROG     $PPRG
+     C*
+     CSR         SDKEY     SETLLSLOTDEF              79
+     CSR                   MOVE *IN79     EOF     1
+     CSR         EOF       DOWEQ*OFF
+     CSR         SDKEY     READESLOTDEF                  79
+     CSR                   MOVE *IN79     EOF
+     CSR         *IN79     IFEQ *OFF
+     CSR         DDKEY     CHAINDEPTDEF              76
+     CSR         *IN76     IFEQ *OFF
+     CSR                   EXSR ZZGET
+     CSR                   EXSR ZZADD
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR                   EXSR CLRSCH
+     CSR                   EXSR SCR01I
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**  OPTLN - Option display line
+  1=Select
+**  CMDLN - Command display line
+F3=Exit  F5=Refresh  F12=Cancel
+**
+Replace value

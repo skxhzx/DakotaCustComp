@@ -1,0 +1,112 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2017 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PI415CL   Import FTP P.O. Smartdock file - Loop                  */
+/*  17 July 2017                                                     */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    07/17/17  RTR  7.10                                            */
+/*     - Created.                                                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions:                                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &WHSE   -  Warehouse                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ PI411CL:    PGM        PARM(&WHSE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(PI411CL)
+
+  /* Name of report program. */
+
+             DCL        VAR(&RPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(PI410)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CUTOFF)     TYPE(*DEC) LEN(4 0) VALUE(2200)
+             DCL        VAR(&DELAYMIN)   TYPE(*DEC) LEN(4 0) VALUE(5)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&NEWTIME)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&NUMHOUR)    TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&NUMMIN)     TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&SEV)        TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&SYSTIME)    TYPE(*CHAR) LEN(6)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Run report program. */
+
+             CALL       PGM(&RPTPGM)
+
+/* Determine next run time and put back on job queue. */
+
+             RTVSYSVAL  SYSVAL(QTIME) RTNVAR(&SYSTIME)
+             CHGVAR     VAR(&NUMHOUR) VALUE(%SST(&SYSTIME 1 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(%SST(&SYSTIME 3 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN + &DELAYMIN)
+             IF         COND(&NUMMIN *GE 60) THEN(DO)
+               CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN - 60)
+               CHGVAR     VAR(&NUMHOUR) VALUE(&NUMHOUR + 1)
+             ENDDO
+             IF         COND(&NUMHOUR *GE 24) THEN(GOTO CMDLBL(GETOUT))
+             IF         COND(((&NUMHOUR * 100) + &NUMMIN) *GE +
+                          &CUTOFF) THEN(GOTO CMDLBL(GETOUT))
+
+             CHGVAR     VAR(%SST(&SYSTIME 1 2)) VALUE(&NUMHOUR)
+             CHGVAR     VAR(%SST(&SYSTIME 3 2)) VALUE(&NUMMIN)
+             CHGVAR     VAR(&NEWTIME) VALUE(%SST(&SYSTIME 1 2) *CAT +
+                          ':' *CAT %SST(&SYSTIME 3 2) *CAT ':00')
+
+             SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&WHSE)) +
+                          JOB(BFCIMPPOSD) LOG(4 0 *NOLIST) +
+                          SCDTIME(&NEWTIME) MSGQ(*NONE)
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

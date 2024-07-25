@@ -1,0 +1,2049 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  WL112     Warehouse rack layout maint - Change
+     F*  21 July 1994
+     F*  Dave Sommerville
+     F*
+     F*  SK112 - 1.02
+     F*
+     F*  Revisions
+     F*
+214 AF*    07/26/96  DAS
+     F*      - Added starting slot number to PIR screen (SCREEN2).
+     F*
+407 AF*    10/17/97  DAS
+     F*      - Revised to force user to enter an odd number for the
+     F*        the Starting Slot Number.  This is because the slot
+     F*        creation program creates slots left to right and assumes
+     F*        that the odd numbered slots are on the left.
+     F*
+409 AF*    07/07/98  HNK
+     F*      - Revised to page up after the subfile page is full.
+     F*
+414 AF*    10/04/00  DAS  4.14
+     F*      - Added field LHSINC to file LAYOUTH.
+     F*      - Change length of LAYOUTD field LDSEQ# to 3.0 from 2.0.
+     F*      - Added error messages WL11222 and WL11223.
+     F*      - Revised ZZCHK3 to make sure that no more than 99
+     F*        rack positions can be added.
+     F*      - Added field W1SINC to display.
+     F*      - Added code to display/verify/save new field.
+     F*      - Added entry to table DESC.
+     F*      - Changed length of W1RCKS from 2.0 to 3.0.
+     F*
+417 AF*    11/18/03  DAS  4.17
+     F*      - Revised to use *LEFTNOZ instead of *LEFT.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  01 - 20   Field position to
+     F*  21 - 40   Field input error (reverse display)
+     F*  81        Display subfile records (SFLDSP)
+     F*  82        Display subfile screen (SFLDSPCTL)
+     F*  83        Clear subfile (SFLCLR)
+     F*  84        Allow subfile to display '+' (SFLEND)
+     F*  85        Manually set subfile change flag (SFLNXTCHG)
+     F*  90        View mode (Protect input fields)
+     F*  91        Change mode (protect key)
+     F*  97        Error message subfile indicator
+     F*  98        Error on screen (sound buzzer)
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FWL112FM CF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        RECNO KSFILE DETAIL1
+     F                                        MSGK  KSFILE MSGREC
+     FLAYOUTH UF  E           K        DISK                      A
+     F            LHREC                             KRENAMERECORD
+     FLAYOUTD UF  E           K        DISK                      A
+     F            LDREC                             KRENAMERECORD2
+     FWAREHS  IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+     E                    $MD       128  1
+414 DE**                  DESC    1   8 50
+414 ME                    DESC    1   9 50
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  26 $PWHDP
+     I                                       27  29 $PAISL
+     I                                       30  30 $PSTYP
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  26 $LWHDP
+     I                                       22  26 $LRACK
+     I*
+     I                                       19  20 $LBLD
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVDOP
+     I                                        9  140$CVDD6
+     I                                       15  220$CVDD8
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  30 ERFLD
+     I                                       31  40 ERFROM
+     I                                       41  50 ERTO
+     I*
+     I                                        1  20 ERFLD1
+     I                                       21  40 ERFLD2
+     I                                    P  41  420ERFLVL
+     I                                    P  43  440ERCLVL
+     I*
+     I                                    P   1   30ERLOC
+     I                                    P   4   50ERINC
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *ADD     - Create new batch.
+     C*              *EDIT    - Edit batch.
+     C*              *DELETE  - Delete batch.
+     C*              *PRINT   - Print batch edit listing.
+     C*              *POST    - Post batch.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains key for everything by *ADD.
+     C*
+     C*    Returned Parameters
+     C*      $PUKY   Contains new batch number for *ADD.
+     C*              Unchanged for everything else.
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *ON       *IN97
+     C                     MOVE *OFF      *IN90
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      ERROR
+     C                     MOVE *BLANKS   $PRTN
+     C                     MOVE *BLANKS   $PERM
+     C                     EXSR ZZINZ2
+     C           ERROR     IFEQ *ON
+     C                     MOVE 'EOJ'     NXTSCR
+     C                     END
+     C*
+     C           NXTSCR    DOWNE'EOJ'
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+     C           NXTSCR    CASEQ'02 '     SC2
+     C           NXTSCR    CASEQ'03 '     SC3
+     C                     END
+     C                     END
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     EXSR ZSCLR
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ *ON
+     CSR                   MOVE *ON       *IN98
+     CSR                   END
+     C*
+     C*   Overlay screen with error messages
+     C*
+     C                     EXSR ZMDMSG
+     C*
+     C*  Overlay screen with screen to be processed.
+     C*
+     CSR                   SELEC
+     C*
+     CSR         NXTSCR    WHEQ '01 '
+     CSR                   EXFMTSCREEN1
+     C*
+     CSR         NXTSCR    WHEQ '02 '
+     CSR                   EXFMTSCREEN2
+     C*
+     CSR         NXTSCR    WHEQ '03 '
+     CSR                   EXSR SFLDSP
+     CSR                   READ HEAD1                    50
+     C*
+     CSR                   ENDSL
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     010203
+     CSR                   SETOF                     040506
+     CSR                   SETOF                     070809
+     CSR                   SETOF                     101112
+     CSR                   SETOF                     131415
+     CSR                   SETOF                     161718
+     CSR                   SETOF                     1920
+     CSR                   SETOF                     212223
+     CSR                   SETOF                     242526
+     CSR                   SETOF                     272829
+     CSR                   SETOF                     303132
+     CSR                   SETOF                     333435
+     CSR                   SETOF                     363738
+     CSR                   SETOF                     3940
+     CSR                   SETOF                     98
+     CSR                   MOVE *OFF      WARN    1
+     CSR                   MOVE *OFF      ERROR   1
+     CSR                   MOVE *OFF      CMDTKN  1
+     CSR                   MOVE *OFF      REDSPL  1
+     CSR                   Z-ADD0         E       20
+     C*
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     Screen initialization and wrap-up routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 01 initialization
+     C*
+     CSR         SCR01I    BEGSR
+     CSR                   MOVE '01 '     NXTSCR  3
+     C*
+     CSR         $PCMD     IFEQ '*VIEW   '
+     CSR                   MOVE *ON       *IN90
+     CSR                   ENDIF
+     C*
+     C*  Get field defaults if this is an add.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   EXSR ZZDFT1
+     CSR                   ELSE
+     C*
+     C*  Otherwise get existing record(s).
+     C*
+     CSR                   MOVE *ON       *IN91
+     CSR                   EXSR ZZGET1
+     CSR                   EXSR ZZFIL1
+     CSR                   END
+     CSR         END01I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 02 initialization
+     C*
+     CSR         SCR02I    BEGSR
+     CSR                   MOVE '02 '     NXTSCR  3
+     C*
+     CSR         $PCMD     IFEQ '*VIEW   '
+     CSR                   MOVE *ON       *IN90
+     CSR                   ENDIF
+     C*
+     C*  Get field defaults if this is an add.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   EXSR ZZDFT2
+     CSR                   ELSE
+     C*
+     C*  Otherwise get existing record(s).
+     C*
+     CSR                   MOVE *ON       *IN91
+     CSR                   EXSR ZZGET2
+     CSR                   EXSR ZZFIL2
+     CSR                   END
+     CSR         END02I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 03 initialization
+     C*
+     CSR         SCR03I    BEGSR
+     CSR                   MOVE '03 '     NXTSCR  3
+     C*
+     CSR         $PCMD     IFEQ '*VIEW   '
+     CSR                   MOVE *ON       *IN90
+     CSR                   ENDIF
+     C*
+     C*  Get field defaults if this is an add.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   EXSR ZZDFT3
+     CSR                   ELSE
+     C*
+     C*  Otherwise get existing record(s).
+     C*
+     CSR                   MOVE *ON       *IN91
+     CSR                   EXSR ZZGET3
+     CSR                   EXSR ZZFIL3
+     CSR                   END
+     CSR         END03I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen 1
+     C*
+     CSR         SC1       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR         $PCMD     IFNE '*VIEW   '
+     CSR                   EXSR SCR01I
+     CSR                   END
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for other command keys BEFORE verification and update.
+     C*
+     CSR                   MOVE '*BEFORE 'CMDCHK  8
+     CSR                   EXSR ZZCMD1
+     CSR         CMDTKN    CABEQ*ON       ENDSC1
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR         $PCMD     OREQ '*CHANGE '
+     CSR                   EXSR ZZCHK1
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR                   EXSR ZZUPD1
+     CSR         REDSPL    CABEQ*ON       ENDSC1
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR                   END
+     C*
+     C*  Test for other command keys AFTER verification and update.
+     C*
+     CSR                   MOVE '*AFTER  'CMDCHK
+     CSR                   EXSR ZZCMD1
+     CSR         CMDTKN    CABEQ*ON       ENDSC1
+     CSR         ENDSC1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SC2  -  Screen 2
+     C*
+     CSR         SC2       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR         $PCMD     IFNE '*VIEW   '
+     CSR                   EXSR SCR02I
+     CSR                   END
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   MOVE '01 '     NXTSCR
+     CSR                   ELSE
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   ENDIF
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for other command keys BEFORE verification and update.
+     C*
+     CSR                   MOVE '*BEFORE 'CMDCHK  8
+     CSR                   EXSR ZZCMD2
+     CSR         CMDTKN    CABEQ*ON       ENDSC2
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR         $PCMD     OREQ '*CHANGE '
+     CSR                   EXSR ZZCHK2
+     CSR         ERROR     CABEQ*ON       ENDSC2
+     CSR                   EXSR ZZUPD2
+     CSR         REDSPL    CABEQ*ON       ENDSC2
+     CSR         ERROR     CABEQ*ON       ENDSC2
+     CSR                   END
+     C*
+     C*  Test for other command keys AFTER verification and update.
+     C*
+     CSR                   MOVE '*AFTER  'CMDCHK
+     CSR                   EXSR ZZCMD2
+     CSR         CMDTKN    CABEQ*ON       ENDSC2
+     C*
+     C*  Everything went fine so get out of program.
+     C*
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR         ENDSC2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SC3  -  Screen 3
+     C*
+     CSR         SC3       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO ENDSC3
+     CSR                   END
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR         $PCMD     IFNE '*VIEW   '
+     CSR                   EXSR SCR03I
+     CSR                   END
+     CSR                   GOTO ENDSC3
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR         *LOVAL    SETLLRECORD
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   MOVE '01 '     NXTSCR
+     CSR                   ELSE
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   ENDIF
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO ENDSC3
+     CSR                   END
+     C*
+     C*  Test for other command keys BEFORE verification and update.
+     C*
+     CSR                   MOVE '*BEFORE 'CMDCHK  8
+     CSR                   EXSR ZZCMD3
+     CSR         CMDTKN    CABEQ*ON       ENDSC3
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR         $PCMD     OREQ '*CHANGE '
+     CSR                   EXSR ZZCHK3
+     CSR         ERROR     CABEQ*ON       ENDSC3
+     CSR                   EXSR ZZUPD3
+     CSR         REDSPL    CABEQ*ON       ENDSC3
+     CSR         ERROR     CABEQ*ON       ENDSC3
+     CSR                   END
+     C*
+     C*  Test for other command keys AFTER verification and update.
+     C*
+     CSR                   MOVE '*AFTER  'CMDCHK
+     CSR                   EXSR ZZCMD3
+     CSR         CMDTKN    CABEQ*ON       ENDSC3
+     C*
+     C*  Everything went fine so get out of program.
+     C*
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR         ENDSC3    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01122     ROLLUP  50
+     C                     Z-ADD01123     ROLLDN  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*  Initialize subfile values
+     C*
+     C*                    Z-ADD1         RECNO
+     C*                    WRITEDETAIL1                79
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLADD   Add record to subfile
+     C*
+     CSR         SFLADD    BEGSR
+     CSR                   ADD  1         RECCNT
+     CSR                   Z-ADDRECCNT    RECNO
+     CSR                   WRITEDETAIL1
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLCLR   Clear display subfile
+     C*
+     CSR         SFLCLR    BEGSR
+     C*
+     C*  CLEAR DISPLAY SUBFILE
+     C*
+     CSR                   Z-ADD0         RECNO   40
+     CSR                   Z-ADD0         RECCNT  40
+     CSR                   Z-ADD1         POSREC  40
+     C*
+     CSR                   MOVE *OFF      *IN81
+     CSR                   MOVE *OFF      *IN82
+     CSR                   MOVE *ON       *IN83
+     CSR                   MOVE *ON       *IN84
+     CSR                   WRITEHEAD1
+     CSR                   MOVE *ON       *IN82
+     CSR                   MOVE *OFF      *IN83
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SFLDSP   Display subfile
+     C*
+     CSR         SFLDSP    BEGSR
+     C*
+     C*  WRITE OPTION AND COMMAND LINES TO DISPLAY
+     C*
+     C**                   WRITEOPTREC
+     CSR                   WRITECMDREC
+     C*
+     C*  WRITE POSITION TO FIELD TO DISPLAY
+     C*
+     C**                   WRITEPOSTNREC
+     C*
+     C*  WRITE SUBFILE TO DISPLAY
+     C*
+     CSR         RECCNT    IFGT 0
+     CSR                   MOVE *ON       *IN81
+     CSR                   ENDIF
+409 ACSR         RECCNT    IFGT 12
+409 ACSR                   Z-ADDRECCNT    POSREC
+409 ACSR                   ENDIF
+     CSR                   Z-ADDPOSREC    RECNO
+     CSR                   WRITEHEAD1
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE *ON       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     CSR                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*      0105
+     C*
+     CSR         ZM0105    BEGSR
+     CSR                   MOVE 'PIR0105' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR0201  Code must be entered for create.
+     C*
+     CSR         ZM01      BEGSR
+     CSR                   MOVE 'PIR0201' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEADESC      ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR0202  Code already exists.
+     C*
+     CSR         ZM02      BEGSR
+     CSR                   MOVE 'PIR0202' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEADESC      ERRMSG
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7871  Error in writing a record.
+     C*
+     CSR         ZM7871    BEGSR
+     CSR                   MOVE 'PIR7871' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7872  Error in updating a record.
+     C*
+     CSR         ZM7872    BEGSR
+     CSR                   MOVE 'PIR7872' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7971  Error in writing a record.
+     C*
+     CSR         ZM71      BEGSR
+     CSR                   MOVE 'PIR7971' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7972  Error in updating a record.
+     C*
+     CSR         ZM72      BEGSR
+     CSR                   MOVE 'PIR7972' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR7973  Slot record does not exist.
+     C*
+     CSR         ZM73      BEGSR
+     CSR                   MOVE 'PIR7973' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR7974  Slot record is locked.
+     C*
+     CSR         ZM74      BEGSR
+     CSR                   MOVE 'PIR7974' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR9905  Cursor not in correct position for lookup.
+     C*
+     CSR         ZM9905    BEGSR
+     CSR                   MOVE 'PIR9905' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR0112  Invalid range entered.
+     C*
+     CSR         ZM0112    BEGSR
+     CSR                   MOVE 'PIR0112' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR0113  Field 1 must be greater than or equal to field 2.
+     C*
+     CSR         ZM0113    BEGSR
+     CSR                   MOVE 'PIR0113' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR1001  Invalid value entered.
+     C*
+     CSR         ZM1001    BEGSR
+     CSR                   MOVE 'PIR1001' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   IT11021  Invalid item type entered.
+     C*
+     CSR         ZM21      BEGSR
+     CSR                   MOVE 'IT11021' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   WL11221  Starting slot number must be odd.
+     C*
+     CSR         ZMWL21    BEGSR
+     CSR                   MOVE 'WL11221' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+414 AC*----------------------------------------------------------------
+414 AC*   WL11222  Maximum rack positions reached.
+414 AC*
+414 ACSR         ZMWL22    BEGSR
+414 ACSR                   MOVE 'WL11222' #MSGID
+414 ACSR                   MOVE '*DIAG  ' #MSGTP
+414 ACSR                   MOVE *BLANKS   $MD
+414 ACSR                   EXSR ZMPMSG
+414 ACSR                   ENDSR
+414 AC*----------------------------------------------------------------
+414 AC*   WL11223  New rack will create slot location overflow
+414 AC*
+414 ACSR         ZMWL23    BEGSR
+414 ACSR                   MOVE 'WL11223' #MSGID
+414 ACSR                   MOVE '*DIAG  ' #MSGTP
+414 ACSR                   MOVE *BLANKS   $MD
+414 ACSR                   MOVEAERRMSG    $MD
+414 ACSR                   EXSR ZMPMSG
+414 ACSR                   ENDSR
+414 AC*----------------------------------------------------------------
+414 AC*   WL11224  Number of racks on side will create slot loc ovrflw
+414 AC*
+414 ACSR         ZMWL24    BEGSR
+414 ACSR                   MOVE 'WL11224' #MSGID
+414 ACSR                   MOVE '*DIAG  ' #MSGTP
+414 ACSR                   MOVE *BLANKS   $MD
+414 ACSR                   MOVEAERRMSG    $MD
+414 ACSR                   EXSR ZMPMSG
+414 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK1   Screen 1 error checking.
+     C*
+     CSR         ZZCHK1    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  When adding ....
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     C*
+     C*    Make sure valid department was enterd.
+     C*
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1WHDP    $LWHDP
+     CSR                   CALL 'WD900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN31
+     CSR                   MOVE *ON       *IN11
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN31
+     CSR                   MOVE *ON       *IN11
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*    Make sure aisle was entered.
+     C*
+     CSR         W1AISL    IFEQ *BLANKS
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN32
+     CSR                   MOVE *ON       *IN12
+     CSR                   EXSR ZM01
+     CSR                   ENDIF
+     C*
+     C*    Make sure section was entered.
+     C*
+     CSR         W1STYP    IFNE 'F'
+     CSR         W1STYP    ANDNE'P'
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN33
+     CSR                   MOVE *ON       *IN13
+     CSR                   EXSR ZM21
+     CSR                   ENDIF
+     C*
+     C*    Make sure code doesn't already exist.
+     C*
+     CSR         ERROR     IFEQ *OFF
+     CSR                   MOVE W1WHDP    $PWHDP
+     CSR                   MOVE W1AISL    $PAISL
+     CSR         FILEKY    CHAINRECORD               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN31
+     CSR                   MOVE *ON       *IN32
+     CSR                   MOVE *ON       *IN33
+     CSR                   MOVE *ON       *IN11
+     CSR                   EXSR ZM02
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ENDCK1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK2   Screen 1 error checking.
+     C*
+     CSR         ZZCHK2    BEGSR
+     CSR                   MOVE *OFF      ERROR
+214 AC*
+214 AC*  Starting number must be within range.
+214 AC*
+214 ACSR         W1SNUM    IFLT 1
+214 ACSR         W1SNUM    ORGT 999
+214 ACSR                   MOVE *BLANKS   ERRMSG
+214 ACSR                   MOVE *ON       *IN34
+407 DC*                    MOVE *ON       *IN04
+407 MCSR                   MOVE *ON       *IN14
+214 ACSR                   MOVE *ON       ERROR
+214 ACSR                   MOVELDESC,5    ERFLD
+214 ACSR                   MOVEL'1'       ERFROM
+214 ACSR                   MOVEL'999'     ERTO
+214 ACSR                   EXSR ZM0112
+214 ACSR                   ENDIF
+     C*
+407 AC*
+407 AC*  Starting number must be odd.
+407 AC*
+407 ACSR         W1SNUM    DIV  2         TEMP3N  30
+407 ACSR                   MVR            REMAIN  10
+407 ACSR         REMAIN    IFEQ 0
+407 ACSR                   MOVE *BLANKS   ERRMSG
+407 ACSR                   MOVE *ON       *IN34
+407 ACSR                   MOVE *ON       *IN14
+407 ACSR                   MOVE *ON       ERROR
+407 ACSR                   EXSR ZMWL21
+407 ACSR                   ENDIF
+414 AC*
+414 AC*  Side increment must be within range.
+414 AC*
+414 ACSR         W1SINC    IFLT 1
+414 ACSR         W1SINC    ORGT 99
+414 ACSR                   MOVE *BLANKS   ERRMSG
+414 ACSR                   MOVE *ON       *IN31
+414 ACSR                   MOVE *ON       *IN11
+414 ACSR                   MOVE *ON       ERROR
+414 ACSR                   MOVELDESC,9    ERFLD
+414 ACSR                   MOVEL'1'       ERFROM
+414 ACSR                   MOVEL'99'      ERTO
+414 ACSR                   EXSR ZM0112
+414 ACSR                   ENDIF
+     C*
+     C*  Current maximum level must be within range.
+     C*
+     CSR         W1CLVL    IFLT 1
+     CSR         W1CLVL    ORGT 99
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN01
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVELDESC,6    ERFLD
+     CSR                   MOVEL'1'       ERFROM
+     CSR                   MOVEL'99'      ERTO
+     CSR                   EXSR ZM0112
+     CSR                   ENDIF
+     C*
+     C*  Future maximum level must be within range.
+     C*
+     CSR         W1FLVL    IFLT 1
+     CSR         W1FLVL    ORGT 99
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE *ON       *IN22
+     CSR                   MOVE *ON       *IN02
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVELDESC,7    ERFLD
+     CSR                   MOVEL'1'       ERFROM
+     CSR                   MOVEL'99'      ERTO
+     CSR                   EXSR ZM0112
+     CSR                   ENDIF
+     C*
+     C*  Future max level must be greater than or equal to current max.
+     C*
+     CSR         W1FLVL    IFLT W1CLVL
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE *ON       *IN22
+     CSR                   MOVE *ON       *IN02
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVELDESC,7    ERFLD1
+     CSR                   MOVELDESC,6    ERFLD2
+     CSR                   Z-ADDW1FLVL    ERFLVL
+     CSR                   Z-ADDW1CLVL    ERCLVL
+     CSR                   EXSR ZM0113
+     CSR                   ENDIF
+     C*
+     C*   Starting level must be within range.
+     C*
+     CSR         W1SLVL    IFLT 0
+     CSR         W1SLVL    ORGT 9
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE *ON       *IN23
+     CSR                   MOVE *ON       *IN03
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVELDESC,3    ERFLD
+     CSR                   MOVEL'1'       ERFROM
+     CSR                   MOVEL'9'       ERTO
+     CSR                   EXSR ZM0112
+     CSR                   ENDIF
+     C*
+     C*   Verify rack definition.
+     C*
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1RACK    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN24
+     CSR                   MOVE *ON       *IN04
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN24
+     CSR                   MOVE *ON       *IN04
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Racks on one side must be within range.
+     C*
+     CSR         W1RCKS    IFLT 1
+414 MCSR         W1RCKS    ORGT 999
+414 DC**         W1RCKS    ORGT 99
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE *ON       *IN25
+     CSR                   MOVE *ON       *IN05
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVELDESC,8    ERFLD
+     CSR                   MOVEL'1'       ERFROM
+414 DC**                   MOVEL'99'      ERTO
+414 MCSR                   MOVEL'999'     ERTO
+     CSR                   EXSR ZM0112
+     CSR                   ENDIF
+414 AC*
+414 AC*  Check for slot location overflow.
+414 AC*
+414 ACSR                   MOVE *BLANKS   ERRMSG
+414 ACSR         W1RCKS    SUB  1         ERLOC
+414 ACSR                   MULT W1SINC    ERLOC
+414 ACSR                   ADD  W1SNUM    ERLOC
+414 ACSR                   ADD  1         ERLOC
+414 ACSR         ERLOC     IFGT 999
+414 ACSR                   MOVE *ON       *IN25
+414 ACSR                   MOVE *ON       *IN05
+414 ACSR                   MOVE *ON       ERROR
+414 ACSR                   Z-ADDW1SINC    ERINC
+414 ACSR                   EXSR ZMWL24
+414 ACSR                   ENDIF
+     C*
+     C*  Verify build code (optional).
+     C*
+     CSR         W1BLD     IFNE *BLANKS
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   MOVE W1BLD     $LBLD
+     CSR                   CALL 'BC900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN26
+     CSR                   MOVE *ON       *IN06
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN26
+     CSR                   MOVE *ON       *IN06
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ENDCK2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK3   Screen 3 error checking.
+     C*
+     CSR         ZZCHK3    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  Starting number must be within range.
+     C*
+     CSR         W1SNUM    IFLT 1
+     CSR         W1SNUM    ORGT 999
+     CSR                   MOVE *BLANKS   ERRMSG
+     CSR                   MOVE *ON       *IN34
+407 DC*                    MOVE *ON       *IN04
+407 MCSR                   MOVE *ON       *IN14
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVELDESC,5    ERFLD
+     CSR                   MOVEL'1'       ERFROM
+     CSR                   MOVEL'999'     ERTO
+     CSR                   EXSR ZM0112
+     CSR                   ENDIF
+     C*
+407 AC*
+407 AC*  Starting number must be odd.
+407 AC*
+407 ACSR         W1SNUM    DIV  2         TEMP3N  30
+407 ACSR                   MVR            REMAIN  10
+407 ACSR         REMAIN    IFEQ 0
+407 ACSR                   MOVE *BLANKS   ERRMSG
+407 ACSR                   MOVE *ON       *IN34
+407 ACSR                   MOVE *ON       *IN14
+407 ACSR                   MOVE *ON       ERROR
+407 ACSR                   EXSR ZMWL21
+407 ACSR                   ENDIF
+     C*
+414 AC*
+414 AC*  Side increment must be within range.
+414 AC*
+414 ACSR         W1SINC    IFLT 1
+414 ACSR         W1SINC    ORGT 99
+414 ACSR                   MOVE *BLANKS   ERRMSG
+414 ACSR                   MOVE *ON       *IN31
+414 ACSR                   MOVE *ON       *IN11
+414 ACSR                   MOVE *ON       ERROR
+414 ACSR                   MOVELDESC,9    ERFLD
+414 ACSR                   MOVEL'1'       ERFROM
+414 ACSR                   MOVEL'99'      ERTO
+414 ACSR                   EXSR ZM0112
+414 ACSR                   ENDIF
+     C*
+     C*  Verify starting position.
+     C*
+     CSR         W1STRT    IFNE 'F'
+     CSR         W1STRT    ANDNE'B'
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN35
+     CSR                   MOVE *ON       *IN15
+     CSR                   MOVE DESC,2    ERRMSG
+     CSR                   EXSR ZM1001
+     CSR                   ENDIF
+     C*
+     C*  Verify build code (optional).
+     C*
+     CSR         W1BLD     IFNE *BLANKS
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   MOVE W1BLD     $LBLD
+     CSR                   CALL 'BC900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN36
+     CSR                   MOVE *ON       *IN16
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN36
+     CSR                   MOVE *ON       *IN16
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+414 AC*
+414 AC*  Check if we reached maximum positions.
+414 AC*
+414 ACSR         W1ADDL    IFNE *BLANKS
+414 ACSR         W1ADDR    ORNE *BLANKS
+414 ACSR         LSTSEQ    IFEQ 999
+414 ACSR                   MOVE *BLANKS   ERRMSG
+414 ACSR                   MOVE *ON       *IN37
+414 ACSR                   MOVE *ON       *IN17
+414 ACSR                   MOVE *ON       *IN38
+414 ACSR                   MOVE *ON       *IN18
+414 ACSR                   MOVE *ON       ERROR
+414 ACSR                   EXSR ZMWL22
+414 ACSR                   ENDIF
+414 ACSR                   ENDIF
+414 AC*
+414 AC*  Check for slot location overflow.
+414 AC*
+414 ACSR                   MOVE *BLANKS   ERRMSG
+414 ACSR         LSTSEQ    SUB  1         ERLOC
+414 ACSR                   MULT W1SINC    ERLOC
+414 ACSR                   ADD  W1SNUM    ERLOC
+414 ACSR                   ADD  1         ERLOC
+414 ACSR         ERLOC     IFGT 999
+414 ACSR                   MOVE *ON       *IN37
+414 ACSR                   MOVE *ON       *IN17
+414 ACSR                   MOVE *ON       *IN38
+414 ACSR                   MOVE *ON       *IN18
+414 ACSR                   MOVE *ON       ERROR
+414 ACSR                   Z-ADDW1SINC    ERINC
+414 ACSR                   EXSR ZMWL23
+414 ACSR                   ENDIF
+     C*
+     C*   Verify left definition for add.
+     C*
+     CSR         W1ADDL    IFNE *BLANKS
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1ADDL    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN85
+     CSR                   MOVE *ON       *IN37
+     CSR                   MOVE *ON       *IN17
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN85
+     CSR                   MOVE *ON       *IN37
+     CSR                   MOVE *ON       *IN17
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Verify right definition for add.
+     C*
+     CSR         W1ADDR    IFNE *BLANKS
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1ADDR    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN38
+     CSR                   MOVE *ON       *IN18
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN38
+     CSR                   MOVE *ON       *IN18
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Verify changed subfile records.
+     C*
+     CSR         RECCNT    IFGT 0
+     CSR                   Z-ADD0         POSREC
+     CSR                   MOVE *OFF      *IN79
+     CSR         *IN79     DOUEQ*ON
+     CSR                   READCDETAIL1                  79
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE *OFF      *IN19
+     CSR                   MOVE *OFF      *IN20
+     CSR                   MOVE *OFF      *IN39
+     CSR                   MOVE *OFF      *IN40
+     C*
+     C*      Verify left definition.
+     C*
+     CSR         W1LEFT    IFNE *BLANKS
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1LEFT    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN39
+     CSR                   MOVE *ON       *IN19
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN39
+     CSR                   MOVE *ON       *IN19
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*      Verify right definition.
+     C*
+     CSR         W1RGHT    IFNE *BLANKS
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1RGHT    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN40
+     CSR                   MOVE *ON       *IN20
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN40
+     CSR                   MOVE *ON       *IN20
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   MOVE *ON       *IN85
+     CSR                   UPDATDETAIL1
+     CSR         POSREC    IFEQ 0
+     CSR         *IN38     IFEQ *ON
+     CSR         *IN39     OREQ *ON
+     CSR                   Z-ADDRECNO     POSREC
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDDO
+     C*
+     CSR         POSREC    IFEQ 0
+     CSR                   Z-ADD1         POSREC
+     CSR                   ENDIF
+     C*
+     CSR                   ENDIF
+     C*
+     CSR         ENDCK3    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD1   User defined command keys for screen 1.
+     C*
+     CSR         ZZCMD1    BEGSR
+     C*
+     C*  Command keys to check BEFORE verification and update.
+     C*
+     CSR         CMDCHK    IFEQ '*BEFORE '
+     C*
+     C*  Test for F4 - Lookup
+     C*
+     CSR         *INKD     IFEQ *ON
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     C*
+     C*     Warehouse department.
+     C*
+     CSR         ROW#      IFEQ 8
+     CSR                   MOVE *ON       *IN11
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1WHDP    $LWHDP
+     CSR                   CALL 'WD900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LWHDP    W1WHDP
+     CSR                   END
+     CSR                   ELSE
+     C*
+     C*     Cursor not on a valid lookup field.
+     C*
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM9905
+     CSR                   END
+     CSR                   GOTO ENDCM1
+     CSR                   END
+     CSR                   END
+     C*
+     C*  Command keys to check AFTER verification and update.
+     C*
+     CSR         CMDCHK    IFEQ '*AFTER  '
+     CSR                   END
+     CSR         ENDCM1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD2   User defined command keys for screen 2.
+     C*
+     CSR         ZZCMD2    BEGSR
+     C*
+     C*  Command keys to check BEFORE verification and update.
+     C*
+     CSR         CMDCHK    IFEQ '*BEFORE '
+     C*
+     C*  Test for F4 - Lookup
+     C*
+     CSR         *INKD     IFEQ *ON
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     C*
+     C*     Rack definition.
+     C*
+     CSR                   SELEC
+214 DC*          ROW#      WHEQ 15
+214 MCSR         ROW#      WHEQ 16
+     CSR                   MOVE *ON       *IN04
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1RACK    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LRACK    W1RACK
+     CSR                   END
+     C*
+     C*     Build code.
+     C*
+214 DC*          ROW#      WHEQ 17
+214 MCSR         ROW#      WHEQ 18
+     CSR                   MOVE *ON       *IN06
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   MOVE W1BLD     $LBLD
+     CSR                   CALL 'BC900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LBLD     W1BLD
+     CSR                   ENDIF
+     C*
+     CSR                   OTHER
+     C*
+     C*     Cursor not on a valid lookup field.
+     C*
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM9905
+     CSR                   ENDSL
+     CSR                   GOTO ENDCM2
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*  Command keys to check AFTER verification and update.
+     C*
+     CSR         CMDCHK    IFEQ '*AFTER  '
+     CSR                   END
+     CSR         ENDCM2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD3   User defined command keys for screen 1.
+     C*
+     CSR         ZZCMD3    BEGSR
+     C*
+     C*  Command keys to check BEFORE verification and update.
+     C*
+     CSR         CMDCHK    IFEQ '*BEFORE '
+     C*
+     C*  Test for F4 - Lookup
+     C*
+     CSR         *INKD     IFEQ *ON
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     C*
+     C*     Build code.
+     C*
+     CSR                   SELEC
+     CSR         ROW#      WHEQ 12
+     CSR                   MOVE *ON       *IN16
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   MOVE W1BLD     $LBLD
+     CSR                   CALL 'BC900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LBLD     W1BLD
+     CSR                   ENDIF
+     C*
+     C*     Left definition for add.
+     C*
+     CSR         ROW#      WHEQ 15
+     CSR         COL#      ANDGE18
+     CSR         COL#      ANDLE22
+     CSR                   MOVE *ON       *IN17
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1ADDL    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LRACK    W1ADDL
+     CSR                   END
+     C*
+     C*     Right definition for add.
+     C*
+     CSR         ROW#      WHEQ 15
+     CSR         COL#      ANDGE30
+     CSR         COL#      ANDLE34
+     CSR                   MOVE *ON       *IN18
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   Z-ADD$PWHSE    $LWHSE
+     CSR                   MOVE W1ADDR    $LRACK
+     CSR                   CALL 'RK900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LRACK    W1ADDR
+     CSR                   END
+     C*
+     CSR                   OTHER
+     C*
+     C*     Cursor not on a valid lookup field.
+     C*
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM9905
+     CSR                   ENDSL
+     CSR                   GOTO ENDCM3
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*  Command keys to check AFTER verification and update.
+     C*
+     CSR         CMDCHK    IFEQ '*AFTER  '
+     CSR                   END
+     CSR         ENDCM3    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDFT1   Get default values for add.
+     C*
+     CSR         ZZDFT1    BEGSR
+     CSR                   MOVE *BLANKS   W1WHDP
+     CSR                   MOVE *BLANKS   W1AISL
+     CSR                   MOVE *BLANKS   W1STYP
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDFT2   Get default values for add.
+     C*
+     CSR         ZZDFT2    BEGSR
+214 ACSR                   Z-ADD101       W1SNUM
+414 ACSR                   Z-ADD2         W1SINC
+     CSR                   Z-ADD0         W1CLVL
+     CSR                   Z-ADD0         W1FLVL
+     CSR                   Z-ADD0         W1SLVL
+     CSR                   MOVE *BLANKS   W1RACK
+     CSR                   Z-ADD0         W1RCKS
+     CSR                   MOVE *BLANKS   W1BLD
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDFT3   Get default values for add.
+     C*
+     CSR         ZZDFT3    BEGSR
+     CSR                   Z-ADD101       W1SNUM
+414 ACSR                   Z-ADD2         W1SINC
+     CSR                   MOVE 'F'       W1STRT
+     CSR                   MOVE *BLANKS   W1BLD
+     CSR                   MOVE *BLANKS   W1ADDL
+     CSR                   MOVE *BLANKS   W1ADDR
+     CSR         *LIKE     DEFN LDSEQ#    LSTSEQ
+     CSR                   Z-ADD0         LSTSEQ
+     C*
+     CSR                   EXSR SFLCLR
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL1   Fill screen 1 fields with info from file.
+     C*
+     CSR         ZZFIL1    BEGSR
+     CSR                   MOVE LHWHDP    W1WHDP
+     CSR                   CALL 'ADJUST'
+417 MCSR                   PARM '*LEFTNOZ'$TCMD   8
+     CSR                   PARM LHAISL    $TSTR  30
+     CSR                   MOVEL$TSTR     W1AISL
+     CSR                   MOVE LHSTYP    W1STYP
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL2   Fill screen 2 fields with info from file.
+     C*
+     CSR         ZZFIL2    BEGSR
+     CSR                   MOVE LHWHDP    W1WHDP
+     CSR                   CALL 'ADJUST'
+417 MCSR                   PARM '*LEFTNOZ'$TCMD
+     CSR                   PARM LHAISL    $TSTR
+     CSR                   MOVEL$TSTR     W1AISL
+     CSR                   MOVE LHSTYP    W1STYP
+214 ACSR                   Z-ADDLHSNUM    W1SNUM
+414 ACSR                   Z-ADDLHSINC    W1SINC
+     CSR                   Z-ADDLHCLVL    W1CLVL
+     CSR                   Z-ADDLHFLVL    W1FLVL
+     CSR                   Z-ADDLHSLVL    W1SLVL
+     CSR                   MOVE LHRACK    W1RACK
+     CSR                   Z-ADDLHRCKS    W1RCKS
+     CSR                   MOVE LHBLD     W1BLD
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL3   Fill screen 3 fields with info from file.
+     C*
+     CSR         ZZFIL3    BEGSR
+     CSR                   MOVE LHWHDP    W1WHDP
+     CSR                   CALL 'ADJUST'
+417 MCSR                   PARM '*LEFTNOZ'$TCMD
+     CSR                   PARM LHAISL    $TSTR
+     CSR                   MOVEL$TSTR     W1AISL
+     CSR                   MOVE LHSTYP    W1STYP
+     CSR                   MOVE LHBLD     W1BLD
+     CSR                   Z-ADDLHSNUM    W1SNUM
+414 ACSR                   Z-ADDLHSINC    W1SINC
+     CSR                   MOVE LHSTRT    W1STRT
+     CSR                   MOVE *BLANKS   W1ADDL
+     CSR                   MOVE *BLANKS   W1ADDR
+     C*
+     CSR                   EXSR SFLCLR
+     CSR         LDKEYP    SETLLLAYOUTD
+     CSR                   MOVE *OFF      STOP    1
+     CSR         STOP      DOUEQ*ON
+     CSR         LDKEYP    READELAYOUTD             N    79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       STOP
+     CSR                   ELSE
+     CSR                   Z-ADDLDSEQ#    W1SEQ
+     CSR                   MOVE LDLEFT    W1LEFT
+     CSR                   MOVE LDRGHT    W1RGHT
+     CSR                   EXSR SFLADD
+     CSR                   Z-ADDLDSEQ#    LSTSEQ
+     CSR                   ENDIF
+     CSR                   ENDDO
+     CSR                   Z-ADD1         POSREC
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGET1   Get record(s) for screen 1.
+     C*
+     CSR         ZZGET1    BEGSR
+     C*
+     C*   Get record from main file.
+     C*
+     CSR         $PCMD     IFEQ '*VIEW   '
+     CSR         FILEKY    CHAINRECORD              N7978
+     CSR                   ELSE
+     CSR         FILEKY    CHAINRECORD               7978
+     CSR                   ENDIF
+     C*
+     C*  Record locked.
+     C*
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   EXSR ZM74
+     CSR                   GOTO ENDGT1
+     CSR                   END
+     C*
+     C*  Record not found.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE '*PGMQ   '$PRTN
+     CSR                   EXSR ZM73
+     CSR                   GOTO ENDGT1
+     CSR                   END
+     CSR         ENDGT1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGET2   Get record(s) for screen 2.
+     C*
+     CSR         ZZGET2    BEGSR
+     CSR                   EXSR ZZGET1
+     CSR         ENDGT2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZGET3   Get record(s) for screen 3.
+     C*
+     CSR         ZZGET3    BEGSR
+     CSR                   EXSR ZZGET1
+     CSR         ENDGT3    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     C*
+     C*  Define key for main file.
+     C*
+     CSR         FILEKY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           $PAISL
+     C*
+     C*  Define full key for detail file.
+     C*
+     CSR         LDKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           LDWHDP
+     CSR                   KFLD           LDAISL
+     CSR                   KFLD           LDSEQ#
+     C*
+     C*  Define partial key for detail file.
+     C*
+     CSR         LDKEYP    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           LHWHDP
+     CSR                   KFLD           LHAISL
+     C*
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Program initialization. Called from main line.
+     C*
+     CSR         ZZINZ2    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     CSR         $PWHSE    CHAINWAREHS               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   WHDESC
+     CSR                   END
+     C*
+     C*   Select first screen to display.
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   MOVE *BLANKS   $PWHDP
+     CSR                   MOVE *BLANKS   $PAISL
+     CSR                   MOVE *BLANKS   $PSTYP
+     CSR                   EXSR SCR01I
+     CSR                   ELSE
+     CSR         $PSTYP    IFEQ 'P'
+     CSR                   EXSR SCR02I
+     CSR                   ELSE
+     CSR                   EXSR SCR03I
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUSUB   Update using subfile records.
+     C*
+     CSR         ZZUSUB    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*   Loop through changed subfile records and add/update file.
+     C*
+     CSR                   Z-ADD$PWHSE    LDWHSE
+     CSR                   MOVE LHWHDP    LDWHDP
+     CSR                   MOVE LHAISL    LDAISL
+     C*
+     CSR                   MOVE *OFF      *IN77
+     CSR         *IN77     DOUEQ*ON
+     CSR                   READCDETAIL1                  77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Get detail record.
+     C*
+     CSR                   MOVE W1SEQ     LDSEQ#
+     CSR         LDKEY     CHAINRECORD2              7978
+     C*
+     C*     Record locked. Tell user to try again.
+     C*
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN85
+     CSR                   MOVE *ON       *IN39
+     CSR                   MOVE *ON       *IN40
+     CSR                   MOVE *ON       *IN19
+     CSR                   UPDATDETAIL1
+     CSR                   MOVELDESC,4    ERRMSG
+     CSR                   EXSR ZM7872
+     CSR                   EXSR SFLDSP
+     CSR                   LEAVE
+     CSR                   END
+     C*
+     C*     Initialize record fields before trying to add or update.
+     C*
+     CSR                   MOVE W1LEFT    LDLEFT
+     CSR                   MOVE W1RGHT    LDRGHT
+     C*
+     C*     Record not found. Try adding record.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   WRITERECORD2                76
+     CSR         *IN76     IFEQ *OFF
+     CSR                   ITER
+     CSR                   ENDIF
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN85
+     CSR                   MOVE *ON       *IN39
+     CSR                   MOVE *ON       *IN40
+     CSR                   MOVE *ON       *IN19
+     CSR                   UPDATDETAIL1
+     CSR                   MOVELDESC,4    ERRMSG
+     CSR                   EXSR ZM7871
+     CSR                   EXSR SFLDSP
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Record found. Try updating record.
+     C*
+     CSR                   UPDATRECORD2                76
+     CSR         *IN76     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN85
+     CSR                   MOVE *ON       *IN39
+     CSR                   MOVE *ON       *IN40
+     CSR                   MOVE *ON       *IN19
+     CSR                   UPDATDETAIL1
+     CSR                   MOVELDESC,4    ERRMSG
+     CSR                   EXSR ZM7872
+     CSR                   EXSR SFLDSP
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD1   Update record.
+     C*
+     CSR         ZZUPD1    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*   Determine which screen to display next.
+     C*
+     CSR         W1STYP    IFEQ 'P'
+     CSR                   EXSR SCR02I
+     CSR                   ELSE
+     CSR                   EXSR SCR03I
+     CSR                   ENDIF
+     CSR         ENDUP1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD2   Update record.
+     C*
+     CSR         ZZUPD2    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*     Move screen fields to record fields.
+     C*
+     CSR                   CLEARRECORD
+     CSR                   Z-ADD$PWHSE    LHWHSE
+     CSR                   MOVE W1WHDP    LHWHDP
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*RIGHT  '$TCMD
+     CSR                   PARM W1AISL    $TSTR
+     CSR                   MOVE $TSTR     LHAISL
+     CSR                   MOVE W1STYP    LHSTYP
+214 DC*                    Z-ADD101       LHSNUM
+214 MCSR                   Z-ADDW1SNUM    LHSNUM
+414 ACSR                   Z-ADDW1SINC    LHSINC
+     CSR                   MOVE 'F'       LHSTRT
+     CSR                   Z-ADDW1CLVL    LHCLVL
+     CSR                   Z-ADDW1FLVL    LHFLVL
+     CSR                   Z-ADDW1SLVL    LHSLVL
+     CSR                   MOVE W1RACK    LHRACK
+     CSR                   Z-ADDW1RCKS    LHRCKS
+     CSR                   MOVE W1BLD     LHBLD
+     C*
+     C*      Add record
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   WRITERECORD                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM71
+     CSR                   GOTO ENDUP2
+     CSR                   END
+     CSR                   ELSE
+     C*
+     C*      -OR- Update record (it was read and locked in ZZGET2)
+     C*
+     CSR                   UPDATRECORD                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM72
+     CSR                   GOTO ENDUP2
+     CSR                   END
+     CSR                   END
+     C*
+     C*      Move key values to parameters
+     C*
+     CSR                   MOVE LHWHDP    $PWHDP
+     CSR                   MOVE LHAISL    $PAISL
+     CSR                   MOVE LHSTYP    $PSTYP
+     CSR         ENDUP2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD3   Update record.
+     C*
+     CSR         ZZUPD3    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  If user is adding a detail record ...
+     C*    - add it to subfile and return to entry screen
+     C*    - do not update files
+     C*
+     CSR         W1ADDL    IFNE *BLANKS
+     CSR         W1ADDR    ORNE *BLANKS
+     CSR                   ADD  1         LSTSEQ
+     CSR                   Z-ADDLSTSEQ    W1SEQ
+     CSR                   MOVE W1ADDL    W1LEFT
+     CSR                   MOVE W1ADDR    W1RGHT
+     CSR                   MOVE *ON       *IN85
+     CSR                   EXSR SFLADD
+     CSR                   MOVE *BLANKS   W1ADDL
+     CSR                   MOVE *BLANKS   W1ADDR
+     CSR                   MOVE *ON       *IN17
+     CSR                   MOVE *ON       REDSPL
+     CSR                   GOTO ENDUP3
+     CSR                   ENDIF
+     C*
+     C*  Otherwise, update files and return.
+     C*
+     C*     Move screen fields to record fields.
+     C*
+     CSR                   CLEARRECORD
+     CSR                   Z-ADD$PWHSE    LHWHSE
+     CSR                   MOVE W1WHDP    LHWHDP
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*RIGHT  '$TCMD
+     CSR                   PARM W1AISL    $TSTR
+     CSR                   MOVE $TSTR     LHAISL
+     CSR                   MOVE W1STYP    LHSTYP
+     CSR                   MOVE W1BLD     LHBLD
+     CSR                   Z-ADDW1SNUM    LHSNUM
+414 ACSR                   Z-ADDW1SINC    LHSINC
+     CSR                   MOVE W1STRT    LHSTRT
+     C*
+     C*  Update detail first.
+     C*
+     CSR         RECCNT    IFGT 0
+     CSR                   EXSR ZZUSUB
+     CSR         ERROR     CABEQ*ON       ENDUP3
+     CSR                   ENDIF
+     C*
+     C*  Then header.
+     C*
+     C*      Add record
+     C*
+     CSR         $PCMD     IFEQ '*ADD    '
+     CSR                   WRITERECORD                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM71
+     CSR                   GOTO ENDUP3
+     CSR                   END
+     CSR                   ELSE
+     C*
+     C*      -OR- Update record (it was read and locked in ZZGET2)
+     C*
+     CSR                   UPDATRECORD                 79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM72
+     CSR                   GOTO ENDUP3
+     CSR                   END
+     CSR                   END
+     C*
+     C*      Move key values to parameters
+     C*
+     CSR                   MOVE LHWHDP    $PWHDP
+     CSR                   MOVE LHAISL    $PAISL
+     CSR                   MOVE LHSTYP    $PSTYP
+     CSR         ENDUP3    ENDSR
+     C*
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+Aisle
+Start From
+Starting Level
+Detail record
+Starting Number
+Current Maximum Level
+Future Maximum Level
+Racks on One Side
+Side Increment

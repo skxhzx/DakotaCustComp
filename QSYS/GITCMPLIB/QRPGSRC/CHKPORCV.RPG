@@ -1,0 +1,283 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2010 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   24 N. Washington Ave, Suite 203
+     F*   Batavia, IL 60510
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  CHKPORCV  Check/Create PORCV record.
+     F*  03 April 2001
+     F*  Dave Sommerville
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+415 AF*    04/02/01  DAS  4.15
+     F*      - Created
+416aAF*    05/23/02  RH   4.16b
+    AA*      - PORCV file changed, initialize POREDT and PORETI.
+     F*
+530 AF*    03/27/10  MLB  5.30
+     F*      - Fix: Revised program to release record lock on PORCV
+     F*        when record found. Was causing record lock errors in
+     F*        p/o export and other programs.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        CHAIN INDICATOR
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPORCV   UF  E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  Program parameters
+     I*
+     I$PARMS      DS
+     I                                        1   8 $PCMD
+     I                                        9  18 $PPRG
+     I                                       19  68 $PUKY
+     I                                       69  76 $PRTN
+     I                                       77 136 $PERM
+     I                                       77  80 $PMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$PWHSE
+     I                                       22  30 $PPO
+     I                                       31  350$PSEQ
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *CHECK   -  Check if PODTL record has been touched
+     C*              *TOUCH   -  Touch PODTL record.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains unique key for delete.
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*              *OK      - Detail record touched.
+     C*              *YES     - Detail is marked (*CHECK).
+     C*              *NO      - Detail is not marked (*CHECK).
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PARMS
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVEL'*OK'     $PRTN     P
+     C*
+     C                     Z-ADD$PWHSE    KYWHSE
+     C                     MOVE $PPO      KYPO
+     C                     Z-ADD$PSEQ     KYSEQ
+     C*
+     C* Execute appropriate routine.
+     C*
+     C                     SELEC
+     C           $PCMD     WHEQ '*CHECK  '
+     C                     EXSR ZZCHK
+     C           $PCMD     WHEQ '*TOUCH  '
+     C                     EXSR ZZTCH
+     C                     ENDSL
+     C*
+     C           BOTTOM    TAG
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7975  Error while deleting record.
+     C*
+     CSR         ZM75      BEGSR
+     CSR                   MOVE 'PIR7975' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $PMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     CSR                   MOVE *ON       FOREVR  1
+     C*
+     C*  Define full key for PORCV file.
+     C*
+     CSR         *LIKE     DEFN PORWHS    KYWHSE
+     CSR         *LIKE     DEFN PORPO     KYPO
+     CSR         *LIKE     DEFN PORSEQ    KYSEQ
+     CSR         KEYPOR    KLIST
+     CSR                   KFLD           KYWHSE
+     CSR                   KFLD           KYPO
+     CSR                   KFLD           KYSEQ
+     C*
+     C*    Get User's employee number information.
+     C*
+     CSR                   CALL 'GETUSER'
+     CSR                   PARM #USER     $CODE  10
+     CSR                   PARM 0         $WHSE   30
+     CSR                   PARM 0         $EMP#   50
+     CSR                   PARM ' '       $FNAM  15
+     CSR                   PARM ' '       $INIT   1
+     CSR                   PARM ' '       $LNAM  20
+     CSR                   PARM ' '       $WHDP   5
+     CSR                   PARM ' '       $STYP   1
+     CSR                   PARM ' '       $SHFT   6
+     CSR                   PARM ' '       $CREW   6
+     CSR                   PARM 0         $NHRS   31
+     CSR                   PARM ' '       $RTN    8
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK    Check if PO detail line has been touched.
+     C*
+     CSR         ZZCHK     BEGSR
+     C*
+     C*   Otherwise, check to ensure all detail lines have been touched
+     C*
+     CSR         KEYPOR    SETLLPORCV
+     CSR         KEYPOR    READEPORCV                    79
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVEL'*NO'     $PRTN     P
+     CSR                   ELSE
+530 AC                     UNLCKPORCV
+     CSR                   MOVEL'*YES'    $PRTN     P
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZTCH    Touch PO detail line.
+     C*
+     CSR         ZZTCH     BEGSR
+     C*
+     C*   See if PO detail has already been touched.
+     C*
+     C*     If it has, get out.
+     C*
+     CSR                   EXSR ZZCHK
+     CSR         $PRTN     IFEQ '*YES'
+     CSR                   GOTO ENDTCH
+     CSR                   ENDIF
+     C*
+     C*     Otherwise, write a record to PORCV.
+     C*
+     CSR                   Z-ADD$PWHSE    PORWHS
+     CSR                   MOVEL$PPO      PORPO
+     CSR                   Z-ADD$PSEQ     PORSEQ
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    PORDTE
+     C*
+     CSR                   TIME           PORTIM
+     CSR                   MOVEL#USER     PORUSR
+     CSR                   Z-ADD$EMP#     POREMP
+     CSR                   Z-ADD0         PORTRN
+416aDC**                   Z-ADD0         PORLIC
+416aMCSR                   MOVE *BLANKS   PORLIC
+     CSR                   Z-ADD0         PORLBL
+     CSR                   MOVEL'X'       PORACT
+416a CSR                   Z-ADD0         POREDT
+416a CSR                   Z-ADD0         PORETI
+     CSR                   WRITEPORREC
+     C*
+     CSR         ENDTCH    ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*

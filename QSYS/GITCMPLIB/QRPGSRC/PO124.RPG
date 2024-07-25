@@ -1,0 +1,389 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  PO124     PO detail maint. - Delete
+     F*  08 October, 1996
+     F*  Hemant Kapadia
+     F*
+     F*  SK114 - 1.00
+     F*
+     F*  Revisions
+     F*
+401 AF*    07/11/97  HNK  4.01
+     F*      - Error check added. (Cannot delete a line, if some qty
+     F*        received.)
+     F*
+405 AF*    09/17/97  HNK     4.05
+     F*      - UPDXDK subroutine added.
+     *
+770aA*    08/27/22  TDC  770a
+     *      - DockVue: Added update of POSTATUS table when PO detail
+     *        is deleted.
+     *     - Add system option opdckv to control DockVue processing.
+     *     - Converted source from RPG to ILE.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        CHAIN INDICATOR
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPODTL     UF   E           K DISK
+     F                                     RENAME(PDREC:RECORD)
+405 AFCROSSDK3  IF   E           K DISK
+405 AFCROSSDK2  UF   E           K DISK
+405 AFORDD      IF   E           K DISK
+770aA*----------------------------------------------------------------
+770aA*  System options
+770aA*----------------------------------------------------------------
+770aAD sysoptrec     e ds                  extname(options)
+770aA*----------------------------------------------------------------
+770aA*  *SYSTEM   -  System options.
+770aA*----------------------------------------------------------------
+770aA*
+770aA* Data structure
+770aA*
+770aAD sysoptions      ds
+770aAD  opepm                  1      1
+770aAD  oprf                   2      2
+770aAD  opcapc                 3      3
+770aAD  opletd                 4      4
+770aAD  opwrnc                 5      5
+770aAD  oprg1c                 6      8  1
+770aAD  oprg2c                 9     11  1
+770aAD  opimpi                12     12
+770aAD  opicw                 13     13
+770aAD  opmpck                14     14
+770aAD  oprcdy                15     15  0
+770aAD  oppkdy                16     16  0
+770aAD  oprths                17     19  0
+770aAD  opcrhs                20     22  0
+770aAD  oppohs                23     25  0
+770aAD  opiahs                26     28  0
+770aAD  opmshs                29     31  0
+770aAD  optbjq                32     32
+770aAD  opishs                33     35  0
+770aAD  opishsa               33     35
+770aAD  opuci                 36     36
+770aAD  opwrncr               37     37
+770aAD  opicwr                38     38
+770aAD  optrax                39     39
+770aAD  opdckv                50     50
+770aAD  sysoptionsend        117    117
+     *----------------------------------------------------------------
+770aA* Variables
+770aAD dockvue         s               n   inz('0')
+760 AD nostamp         s               z     inz
+770aAD ocode           s              8
+770aAD wkwhse          s              3  0
+770aA*----------------------------------------------------------------
+770aA*  Standard SQL variables and constants
+770aA*----------------------------------------------------------------
+770aA
+770aA /copy qcopysrc,c#stdsql
+770aA
+     D*----------------------------------------------------------------
+     D*  Table and array definitions
+     D*
+     D MSG             S             50    DIM(1) CTDATA PERRCD(1)
+     D*----------------------------------------------------------------
+     D*  Program parameters
+     D*
+     D $PARMS          DS
+     D  $PCMD                  1      8
+     D  $PPRG                  9     18
+     D  $PUKY                 19     68
+     D  $PRTN                 69     76
+     D  $PERM                 77    136
+     D  $PMSG                 77     80
+     D*
+     D*   Redefine key
+     D*
+     D  $PWHSE                19     21  0
+     D  $PPO                  22     30
+     D  $PSEQ                 31     35  0
+     D  $PITEM                36     50
+405 AD*----------------------------------------------------------------
+405 AD*  CONSTANTS
+405 AD*
+     D FOREVR          C                   CONST('1')
+     D*----------------------------------------------------------------
+     D*  Data structure for error message parameters
+     D*
+     D $MDT            DS
+     D  ERRMSG                 1     50
+     D                 DS
+     D  $EC                    1      2P 0
+     D*----------------------------------------------------------------
+     D*  Message control
+     D*
+     D #MSGF           C                   CONST('PIRMSGF   ')
+     D*
+     D                 DS
+     D  #MSGDT                 1    128
+     D  $MD                    1    128
+     D                                     DIM(128)
+     D*----------------------------------------------------------------
+     D*  Program info data structure
+     D*
+     D                SDS
+     D  #PROG            *PROC
+     D  #JOB                 244    253
+     D  #USER                254    263
+     D  #JOBN                264    269
+     D  #JOBDT               276    281  0
+     D  #JOBTM               282    287  0
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Not used
+     C*      $PPRG   Program to send messages back to.
+     C*      $PUKY   Contains unique key for delete.
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*              *OK      - Record deleted successfully.
+     C*                         Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C     *ENTRY        PLIST
+     C                   PARM                    $PARMS
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+401 AC     FILEKY        CHAIN(N)  RECORD                             79
+401 AC     *IN79         IFEQ      *OFF
+401 AC     PDQRC1        IFGT      0
+401 AC     PDQRC2        ORGT      0
+401 AC     PDQRC3        ORGT      0
+401 AC                   EXSR      ZM2401
+401 AC                   MOVE      '*PGMQ   '    $PRTN
+401 AC                   GOTO      OUT
+401 AC                   ENDIF
+401 AC                   ENDIF
+     C*
+     C     FILEKY        CHAIN     RECORD                             79
+     C     *IN79         IFEQ      *OFF
+     C                   EXSR      ZZDEL
+     C     ERROR         IFEQ      *OFF
+405 AC                   EXSR      UPDXDK
+     C                   DELETE    RECORD
+770aA*
+770aA /free
+770aA   // set status for dockvue
+770aA   // check system option for dockvue
+770aA   if dockvue;
+770aA     exec sql insert into postatus
+770aA              values (:pdwhse, :pdpo, 'D',
+770aA                      current_timestamp, :nostamp);
+770a *
+770aA     if sqlstate <> sqlsuccess;
+770aA       exec sql update postatus
+770aA                   set posstat = 'D',
+770aA                       posupdts = current_timestamp
+770aA                 where poswhs = :pdwhse
+770aA                   and pospo = :pdpo;
+770aA     endif;
+770aA   endif;
+770aA /end-free
+     C                   EXSR      ZZOK
+     C                   END
+     C                   ELSE
+     C                   EXSR      ZM75
+     C                   MOVE      '*PGMQ   '    $PRTN
+     C                   END
+401 AC     OUT           TAG
+     C                   RETURN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR   *INZSR        BEGSR
+770aA
+770aA*  Get System option.
+770aA /free
+770aA   ocode = '*SYSTEM ';
+770aA   exec sql select * into :sysoptrec
+770aA        from options
+770aA        where opwhse = 0
+770aA          and opcode = :ocode;
+770aA
+770aA   if sqlstt = sqlsuccess;
+770aA     sysoptions = opdata;
+770aA   else;
+770aA     opdckv = 'N';
+770aA   endif;
+770aA
+770aA   if opdckv = 'Y';
+770aA     dockvue = *on;
+770aA   else;
+770aA     dockvue = *off;
+770aA   endif;
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                   EXSR      ZZINZ
+     C                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR   ZMSMSG        BEGSR
+     CSR   $MSGF         IFEQ      *BLANKS
+     CSR                 MOVE      #MSGF         $MSGF            10
+     CSR                 END
+     CSR                 CALL      'PUTMSG'
+     CSR                 PARM                    $MSGF
+     CSR                 PARM                    #MSGID            7
+     CSR                 PARM                    #MSGTP            7
+     CSR                 PARM                    #MSGDT
+     CSR                 PARM      $PPRG         #PGMQ2           10
+     CSR                 PARM                    #MSGK             4
+     CSR                 MOVE      *BLANKS       #MSGDT
+     CSR                 MOVE      *BLANKS       $MSGF
+     CSR                 ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR7975  Error while deleting record.
+     C*
+     CSR   ZM75          BEGSR
+     CSR                 MOVE      'PIR7975'     #MSGID
+     CSR                 MOVE      '*DIAG  '     #MSGTP
+     CSR                 MOVEA     ERRMSG        $MD(1)
+     CSR                 EXSR      ZMSMSG
+     CSR                 MOVE      #MSGK         $PMSG
+     CSR                 ENDSR
+401 AC*----------------------------------------------------------------
+401 AC*     PO12401  cannot delete a line, if some qty received.
+401 AC*
+401 ACSR   ZM2401        BEGSR
+401 ACSR                 MOVE      'PO12401'     #MSGID
+401 ACSR                 MOVE      '*DIAG  '     #MSGTP
+401 ACSR                 MOVEA     ERRMSG        $MD(1)
+401 ACSR                 EXSR      ZMSMSG
+401 ACSR                 MOVE      #MSGK         $PMSG
+401 ACSR                 ENDSR
+     C*----------------------------------------------------------------
+     C*     PIR9803  Deleted record successfully.
+     C*
+     CSR   ZM9803        BEGSR
+     CSR                 MOVE      'PIR9803'     #MSGID
+     CSR                 MOVE      '*DIAG  '     #MSGTP
+     CSR                 EXSR      ZMSMSG
+     CSR                 MOVE      #MSGK         $PMSG
+     CSR                 ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDEL    Delete corresponding records.
+     C*
+     CSR   ZZDEL         BEGSR
+     CSR                 MOVE      *OFF          ERROR             1
+     CSR                 ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR   ZZINZ         BEGSR
+     C*
+     C*  Define key for main file.
+     C*
+     CSR   FILEKY        KLIST
+     CSR                 KFLD                    $PWHSE
+     CSR                 KFLD                    $PPO
+     CSR                 KFLD                    $PSEQ
+     CSR                 KFLD                    $PITEM
+405 AC*
+405 AC* Cross Dock file
+405 AC*
+405 AC     XDKEY         KLIST
+405 AC                   KFLD                    $PWHSE
+405 AC                   KFLD                    $PPO
+405 AC                   KFLD                    $PSEQ
+405 AC*
+405 AC* Order detail file.
+405 AC*
+405 AC     ODKEY         KLIST
+405 AC                   KFLD                    $PWHSE
+405 AC                   KFLD                    CDORD
+405 AC                   KFLD                    CDORSQ
+405 AC                   KFLD                    SVITEM
+405 AC*
+405 AC* CROSSDK3 file.
+405 AC*
+405 AC     XD3KEY        KLIST
+405 AC                   KFLD                    $PWHSE
+405 AC                   KFLD                    PDPO
+405 AC                   KFLD                    PDSEQ
+     C*
+     CSR                 ENDSR
+405 AC*----------------------------------------------------------------
+405 AC*
+405 AC*  UPDXDK  Zero out PO seq #, when PO detail line is deleted.
+405 AC*
+405 ACSR   UPDXDK        BEGSR
+405 ACSR   XD3KEY        SETLL     CROSSDK3
+405 ACSR   FOREVR        DOWEQ     FOREVR
+405 ACSR   XD3KEY        READE     CROSSDK3                               79
+405 ACSR   *IN79         IFEQ      *ON
+405 ACSR                 LEAVE
+405 ACSR                 ENDIF
+405 ACSR                 MOVEL     ODITEM        SVITEM           15
+405 ACSR   ODITEM        IFEQ      PDITEM
+405 ACSR   XD3KEY        SETLL     CROSSDK2
+405 ACSR   FOREVR        DOWEQ     FOREVR
+405 ACSR   XD3KEY        READE     CROSSDK2                               77
+405 AC*
+405 ACSR   *IN77         IFEQ      *ON
+405 ACSR                 LEAVE
+405 ACSR                 ENDIF
+405 ACSR   ODKEY         CHAIN     ORDD                               75
+405 ACSR   *IN75         IFEQ      *OFF
+405 ACSR                 Z-ADD     0             CDPOSQ
+405 ACSR                 UPDATE    CDREC
+405 ACSR                 LEAVE
+405 ACSR                 ELSE
+405 ACSR                 ITER
+405 ACSR                 ENDIF
+405 ACSR                 ENDDO
+405 AC*
+405 ACSR                 ENDIF
+405 ACSR                 ENDDO
+405 ACSR                 ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZOK     Send back "successful" message.
+     C*
+     CSR   ZZOK          BEGSR
+     CSR                 MOVE      *BLANKS       $MD
+     CSR                 MOVEA     MSG(1)        $MD(1)
+     CSR                 MOVEA     $PITEM        $MD(6)
+     CSR                 EXSR      ZM9803
+     CSR                 MOVE      '*OK     '    $PRTN
+     CSR                 ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**
+Item

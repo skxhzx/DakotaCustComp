@@ -1,0 +1,92 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  BFCTOMCAT2   Start/End Tomcat Servers - Development              */
+/*  03 November 2011                                                 */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*  11/03/11  DAS  6.40                                              */
+/*    - Created                                                      */
+/*  02/24/12  DAS  6.40a                                             */
+/*    - Added PROD2.                                                 */
+/*    - Moved DEV64.                                                 */
+/*  02/22/13  DAS  6.50a                                             */
+/*    - Added new TEST2 parameter.                                   */
+/*    - Revised to be softcoded.                                     */
+/*    - Revised to call GETTOMSRV and pass info to BFCTOMCATQ        */
+/*    - Old code deleted for readability.                            */
+/*      See BFCTOMCA.1 for old code.                                 */
+/*  08/28/15  DAS  7.00a                                             */
+/*    - Added cluster and debug parms for GETTOMSRV                  */
+/*                                                                   */
+/*  12/20/18  MLB  7.20                                              */
+/*    - Enh: Added client custom code support to pgm.                */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Anderson-DuBose                         */
+/*  12/23/18  MLB  ADC                                               */
+/*    - Revised pgm to submit BFCTOMCATQ to jobq BFCMAX running in   */
+/*      sbsd BFCDAKOTA. Per email from Adam Clark dated 12.19.2018.  */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ BFCTOMCAT2: PGM        PARM(&CMD &SERVER)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+/* Client ID's                                                       (720 A) */
+
+             DCL        VAR(&ADC) TYPE(*CHAR) LEN(10) +
+                          VALUE('ANDERSONDU')                     /* (ADC A) */
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CLIENT) TYPE(*CHAR) LEN(10)          /* (720 A) */
+             DCL        VAR(&CLIENTLOC) TYPE(*CHAR) LEN(10)       /* (720 A) */
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(6)
+             DCL        VAR(&CLUSTER)    TYPE(*CHAR)  LEN(1)   /* (700aA) */
+             DCL        VAR(&DEBUG)      TYPE(*CHAR)  LEN(1)   /* (700aA) */
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(10)      /* (ADC A) */
+             DCL        VAR(&JOBQLIB)    TYPE(*CHAR) LEN(10)      /* (ADC A) */
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&TOMPATH)    TYPE(*CHAR) LEN(50)
+             DCL        VAR(&JDKPATH)    TYPE(*CHAR) LEN(100)
+             DCL        VAR(&APPPATH)    TYPE(*CHAR) LEN(100)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&SERVER)     TYPE(*CHAR) LEN(10)
+
+/*-------------------------------------------------------------------*/
+/*  Mainline                                                         */
+/*-------------------------------------------------------------------*/
+
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (710 A) */
+
+             CALL PGM(GETTOMSRV) PARM(&SERVER &USER &TOMPATH +
+                        &JDKPATH &APPPATH &CLUSTER &DEBUG &RETURN)  /* 700aM */
+                    /*  &JDKPATH &APPPATH &RETURN)                     700aD */
+             IF COND(&RETURN = '*ERROR') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('Error +
+                          getting info for server ' *CAT &SERVER) +
+                          TOUSR(*REQUESTER) MSGTYPE(*ESCAPE)
+             ENDDO
+
+             IF         COND(&CLIENT = &ADC) THEN(DO)             /* (ADC A) */
+               CHGVAR     VAR(&JOBQ) VALUE('BFCMAX')              /* (ADC A) */
+               CHGVAR     VAR(&JOBQLIB) VALUE('*LIBL')            /* (ADC A) */
+               SBMJOB     CMD(CALL PGM(BFCTOMCATQ) PARM(&CMD &SERVER)) +
+                            JOB(BFCTOMCAT) JOBQ(&JOBQLIB/&JOBQ) +
+                            USER(&USER) ALWMLTTHD(*YES)           /* (ADC A) */
+             ENDDO                                                /* (ADC A) */
+             ELSE       CMD(DO) /* (ADC A) */
+
+             SBMJOB     CMD(CALL PGM(BFCTOMCATQ) PARM(&CMD &SERVER)) +
+                          JOB(BFCTOMCAT) JOBQ(QSYSNOMAX) +
+                          USER(&USER) ALWMLTTHD(*YES)
+             ENDDO                                                /* (ADC A) */
+
+ ENDPGM:     ENDPGM

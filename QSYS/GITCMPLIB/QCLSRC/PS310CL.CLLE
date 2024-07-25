@@ -1,0 +1,455 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PS310CL   Truck layout with stop range                           */
+/*  23 June,1997                                                     */
+/*  Hemant Kapadia                                                   */
+/*  Note: This program is called from RH130A and hence the option    */
+/*        program is disabled.                                       */
+/*  Revisions                                                        */
+/*                                                                   */
+/*    02/23/01  MLB  4.15                                            */
+/*      - Revised program to remove OVRPRTF for PS311PR since        */
+/*        this is now being handled in PS311.                        */
+/*                                                                   */
+/*    10/23/07  LMC  5.10a                                           */
+/*      - Added client custom code support to program.               */
+/*                                                                   */
+/*    05/11/09  CWM  5.20a                                           */
+/*      -ENH: Report Distribution Print File Override Enhancements   */
+/*                                                                   */
+/*    02/17/11  MLB  6.40                                            */
+/*      - Fix: Revised pgm to add CLOF cmd for &file varianble.      */
+/*                                                                   */
+/*    05/09/18  MLB  7.20                                            */
+/*      - Enh: Revised pgm to retrieve DragDrop2 *dtaara.  If found, */
+/*        then retrieve overrides for PS312 instead of PS311.        */
+/*                                                                   */
+/*    09/20/18  KDE  7.20a                                           */
+/*      - Fix: Revised pgm to determine if Enhanced Truck Builder    */
+/*        and call different Truck Summary printer file              */
+/*                                                                   */
+/*    04/16/20  KDE  7.40a                                           */
+/*      - Fix: Revised pgm to handle GUI print file differently      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Harbor                                  */
+/*                                                                   */
+/*  10/23/07  LMC  HARa                                              */
+/*    - Added ability for harbor to get 5 additional copies during   */
+/*      pick/print process  - setup extra PS311PX record in reports  */
+/*      This is a temporary fix                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: City Wholesale                          */
+/*                                                                   */
+/*  09/01/08  JJ   CTWa                                              */
+/*    - Added ability for an alternate outq for truck summary report.*/
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Anderson Dubose                         */
+/*                                                                   */
+/*  09/20/18  KDE  ADCa                                              */
+/*    - Added ability to have different printer file PS312           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Vitco Foods                             */
+/*                                                                   */
+/*  01/30/20  KDE  VFIa                                              */
+/*    - Added ability to override printer based on parm passed       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Holt Paper                              */
+/*                                                                   */
+/*  04/16/20  KDE  HPCa                                              */
+/*    - Force Truck Map PS311                                        */
+/*  03/21/21  MB   HPCb                                              */
+/*    - Go live with Prime per Fonzi                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Jakes                                   */
+/*                                                                   */
+/*  01/05/22  KDE  JFFa                                              */
+/*    - Force Truck Map PS311                                        */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Presto Foods                            */
+/*                                                                   */
+/*  05/02/21  MLB  PFCa                                              */
+/*    - Force Truck Map PS311. Hopefully, only temporary until PS313 */
+/*      fixed.                                                       */
+/*                                                                   */
+/*  07/09/21  KDE  PFCb                                              */
+/*    - While using PS311 they must use "P" records from PLTSUM      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Cheney                                  */
+/*                                                                   */
+/*    07/10/06  CBIa-JGD                                             */
+/*      Added call to new CLP 'OR667CL' to print Truck Detail        */
+/*      report (Loader Merge compartments only: 1,2,C,H,I,O,X        */
+/*                                                                   */
+/*    10/04/17  CBIb-NLK Upgrade 7.1                                 */
+/*      Added call to PS311CBI instead of PirCBI700/PS311            */
+/*      Added prtf of PS311prCBI from PirCBI700                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions: Panos Foods                             */
+/*                                                                   */
+/*  07/28/21  MLB  PAN                                               */
+/*    - Added ability for Panos to direct Truck Map report to EGV    */
+/*      printer on file in override when &RETURN = 'EGV' using       */
+/*      prtf PS311PREGV.                                             */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+/* PS310CL:    PGM      PARM(&WHSEA &RTID &RETURN &DEV &FORM) 520aD  */
+
+ PS310CL:    PGM        PARM(&WHSEA &RTID &RETURN &POVR)    /* 520aA */
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client ID's.    */                                           /* (510aA) */
+
+             DCL        VAR(&HARBOR) TYPE(*CHAR) LEN(8) +
+                          VALUE('HARBOR') /* 510aA */
+             DCL        VAR(&CITYWH) TYPE(*CHAR) LEN(8) +
+                          VALUE('CITYWHO') /* CTWa  */
+             DCL        VAR(&CHENEY) TYPE(*CHAR) LEN(10) +
+                          VALUE('CHENEYBROS') /* CBIa  */
+/* ADCa */   DCL        VAR(&ADC) TYPE(*CHAR) LEN(10) +
+/* ADCa */                VALUE('ANDERSONDU') /* ADCa  */
+/* HPCa */   DCL        VAR(&HPC) TYPE(*CHAR) LEN(10) +
+/* HPCa */                VALUE('HOLTPAPER ') /* HPCa  */
+/* JFFa */   DCL        VAR(&JFF) TYPE(*CHAR) LEN(10) +
+/* JFFa */                VALUE('JAKESFOODS') /* JFFa  */
+/* PFCa */   DCL        VAR(&PFC) TYPE(*CHAR) LEN(10) +
+/* PFCa */                VALUE('PRESTOFOOD') /* PFCa  */
+/* VFIa */   DCL        VAR(&VFI) TYPE(*CHAR) LEN(10) +
+/* VFIa */                VALUE('VITCOFOOD') /* VFIa  */
+             DCL        VAR(&CHENEYOCL) TYPE(*CHAR) LEN(8) +
+                          VALUE('OCALA') /* CBIa  */
+             DCL        VAR(&CHENEYRIV) TYPE(*CHAR) LEN(8) +
+                          VALUE('RIVIERA') /* CBIa  */
+             DCL        VAR(&PANOS) TYPE(*CHAR) LEN(10) +
+                          VALUE('PANOS     ')                     /* (PAN A) */
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(PS310CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(PS310)
+
+  /* Get override program. CTWa */
+
+             DCL        VAR(&GETPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(GETOVR)
+
+  /* Report program and printer file name. */
+
+             DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) VALUE(PLTSUM)
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) VALUE(PS311PR)
+             DCL        VAR(&PRTFCBI) TYPE(*CHAR) LEN(10) VALUE(PS311PRCBI)
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Truck Summary')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing Truck Summary')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&QUOTE)      TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RTID)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+/* CBI A */  DCL        VAR(&RTYPE)      TYPE(*CHAR) LEN(8)
+             DCL        VAR(&UNQKEY)     TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHSEA)      TYPE(*CHAR) LEN(3)
+             DCL        VAR(&WHSE)       TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&JONAME)     TYPE(*CHAR) LEN(10)      /* HARaA */
+             DCL        VAR(&client)     TYPE(*CHAR) LEN(10)      /* (510aA) */
+             DCL        VAR(&clientloc)  TYPE(*CHAR) LEN(10)      /* (510aA) */
+             DCL        VAR(&DTAARA) TYPE(*CHAR) LEN(10) +
+                          VALUE('TMPOVR') /* CTWa  */
+
+/* PFCb */   DCL        VAR(&PSTYPE) TYPE(*CHAR) LEN(1) VALUE('O')
+/* PFCb */   DCL        VAR(&Q)          TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&CMD)    TYPE(*CHAR) LEN(1024)        /* 520aA */
+             DCL        VAR(&LEN)    TYPE(*DEC)  LEN(15 5) VALUE(1024) /*520aA*/
+             DCL        VAR(&PARMS)  TYPE(*CHAR) LEN(80)              /*520aA*/
+             DCL        VAR(&POVR)   TYPE(*CHAR) LEN(1)               /*520aA*/
+             DCL        VAR(&PRTCTR) TYPE(*DEC)  LEN(15 5) VALUE(1)   /*520aA*/
+             DCL        VAR(&ONETIM) TYPE(*CHAR) LEN(1)               /*520aA*/
+             DCL        VAR(&TBTYPE) TYPE(*CHAR) LEN(1)               /*720aA*/
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Get Client ID */                                               /* (510aA) */
+             CALL       PGM(GETCLIENT) PARM(&CLIENT &CLIENTLOC)   /* (510aA) */
+
+/* Retrieve Truck Builder Enhanced/Standard Flag                  /* (720aA) */
+/* 720a */   CHGVAR     VAR(&WHSE) VALUE(&WHSEA)
+/* 720a */   CALL       PGM(GETTBTYPE) PARM(&WHSE &RTID &TBTYPE) +
+
+/* 720a */    IF         COND(&TBTYPE = "E") THEN(DO)
+/* 720a */      CHGVAR  VAR(&PRTF) VALUE(R30200)
+/* 720a */    ENDDO
+
+/* ADCa */    IF         COND(&CLIENT = &ADC) THEN(DO)
+/* ADCa */      CHGVAR  VAR(&PRTF) VALUE(PS312PR)
+/* ADCa */    ENDDO
+
+/* HPCa */    IF         COND(&CLIENT = &HPC) THEN(DO)
+/* HPCb         CHGVAR  VAR(&PRTF) VALUE(PS311PR)            */
+/* HPCa */    ENDDO
+
+/* JFFa       IF         COND(&CLIENT = &JFF) THEN(DO)     */
+/* JFFa         CHGVAR  VAR(&PRTF) VALUE(PS311PR)          */
+/* JFFb         CHGVAR     VAR(&PSTYPE) VALUE('P')         */
+/* JFFa       ENDDO                                        */
+
+/* PFCa */    IF         COND(&CLIENT = &PFC) THEN(DO)
+/* PFCa */      CHGVAR  VAR(&PRTF) VALUE(PS311PR)
+/* PFCb */      CHGVAR     VAR(&PSTYPE) VALUE('P')
+/* PFCa */    ENDDO
+
+/*  Get report options. */
+
+/*           CALL      PGM(&OPTPGM) PARM(&WHSEA &RTID &RETURN &DEV + */
+/*                        &FORM)                                     */
+
+             IF         COND(&POVR = 'Y') THEN(DO)
+
+             CHGVAR VAR(%SUBSTRING(&PARMS 1 8)) VALUE('*ADD    ')     /* 520aA*/
+             CHGVAR VAR(%SUBSTRING(&PARMS 9 10)) VALUE(&SBMPGM)       /* 520aA*/
+
+
+             CHGVAR VAR(%SUBSTRING(&PARMS 29 3)) VALUE('000')         /* 520aA*/
+             CHGVAR VAR(%SUBSTRING(&PARMS 32 3)) VALUE(&WHSEA)        /* 520aA*/
+             CHGVAR VAR(%SUBSTRING(&PARMS 35 45)) VALUE(' ')          /* 520aA*/
+             CHGVAR VAR(%SUBSTRING(&PARMS 68 1)) VALUE('Y')           /* 520aA*/
+             CHGVAR VAR(%SUBSTRING(&PARMS 19 10)) VALUE('PS311PR   ')
+/* 720a */   IF         COND(&TBTYPE = "E") THEN(DO)
+/* 720a */     CHGVAR VAR(&PRTF) VALUE(PS314PR)
+/* 720a */   ENDDO
+
+/* ADCa */    IF         COND(&CLIENT = &ADC) THEN(DO)
+/* ADCa */      CHGVAR  VAR(&PRTF) VALUE(PS312PR)
+/* ADCa */    ENDDO
+
+/* HPCa */    IF         COND(&CLIENT = &HPC) THEN(DO)
+/* HPCb         CHGVAR  VAR(&PRTF) VALUE(PS311PR)          */
+/* HPCa */    ENDDO
+
+/* PFCa */    IF         COND(&CLIENT = &PFC) THEN(DO)
+/* PFCa */      CHGVAR  VAR(&PRTF) VALUE(PS311PR)
+/* PFCb */      CHGVAR     VAR(&PSTYPE) VALUE('P')
+/* PFCa */    ENDDO
+
+/* JFFa       IF         COND(&CLIENT = &JFF) THEN(DO)         */
+/* JFFa         CHGVAR  VAR(&PRTF) VALUE(PS311PR)              */
+/* JFFb         CHGVAR     VAR(&PSTYPE) VALUE('P')             */
+/* JFFa       ENDDO                                            */
+
+             IF         COND(&CLIENT = &CHENEY) THEN(DO)              /* CBIbA*/
+             CHGVAR VAR(%SUBSTRING(&PARMS 19 10)) VALUE('PS311PRCBI') /* CBIbA*/
+             ENDDO                                                    /* CBIbA*/
+
+             CALL       PGM(RP152) PARM(&PARMS)                       /* 520aA*/
+ /*520AA*/   CHGVAR VAR(&RETURN)  VALUE(%SST(&PARMS 69 8))
+ /*520AA*/   IF         COND(&RETURN *EQ '*CANCEL ') THEN(DO)
+ /*520AA*/   GOTO       CMDLBL(GETOUT)
+ /*520AA*/   ENDDO
+
+             ENDDO                                                    /* 520aA*/
+
+/* VFIa   RH130A and OR605 sends 'S' down in override parm.  It then forces   */
+/* VFIa   PS311PRS as file and that is record in RPTOVRL1.  By default override */
+/* VFI a  statement in file has print file name but I manually overrode to PS311PR */
+/* VFIa */   IF         COND(&POVR = 'S' *AND &CLIENT = &VFI) +
+/* VFIa */                THEN(DO)
+/* VFIa */   CHGVAR     VAR(&PRTF) VALUE('PS311PRS')
+/* VFIa */   ENDDO                                                    /* CBIbA*/
+
+/* PAN    RH130A and OR605 sends 'S' down in override parm.  It then forces   */
+/* PAN    PS311PREGV as file and that is record in RPTOVRL1.  By default override */
+/* PAN    statement in file has print file name but I manually overrode to PS311PR */
+/* PAN  */   IF         COND(&POVR = 'S' *AND &CLIENT = &PANOS) +
+/* PAN  */                THEN(DO)
+/* PAN  */   CHGVAR     VAR(&PRTF) VALUE('PS311PREGV')
+/* PAN  */   ENDDO                                                /* (PAN A) */
+/*                                                                   (PAN A) */
+             DOUNTIL    COND(&PRTCTR *EQ 0)                           /* 520aA*/
+             CALL       PGM(RPT120) PARM(&PRTF &PRTCTR &CMD &ONETIM)  /* 520aA*/
+             IF         COND(&PRTCTR *NE 0) THEN(DO)                  /* 520aA*/
+
+/*  See if user wants to proceed. */
+
+             IF (&RETURN = '*EXIT' *OR &RETURN = '*CANCEL') THEN(DO)
+
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) +
+                          MSGTYPE(*INFO)
+               RETURN
+               ENDDO
+
+/*  Otherwise, run program. */
+
+ REPORT:
+
+   /* Override printer file. */
+
+  /*         OVRPRTF    FILE(&PRTF) DEV(&DEV) OUTQ(*DEV) +
+                          FORMTYPE(&FORM)                  */
+
+/*  Create temp OVRPRTF options file. CTWa */
+
+             IF         COND(&CLIENT = &CITYWH) THEN(DO)
+             CHKOBJ     OBJ(&DTAARA) OBJTYPE(*DTAARA)
+             MONMSG     MSGID(CPF9801) EXEC(DO)
+             CRTDTAARA  DTAARA(QTEMP/&DTAARA) TYPE(*CHAR) LEN(10) +
+                          VALUE(&DEV) TEXT('Auto created') AUT(*ALL)
+             GOTO       CMDLBL(NEXT)
+             ENDDO
+
+             CHGDTAARA  DTAARA(QTEMP/&DTAARA) VALUE(&DEV)
+
+ NEXT:       ENDDO
+
+   /* Create selection criteria string. */
+
+             CHGVAR     VAR(&QRYSLT) VALUE('PSWHSE *EQ ' *CAT &WHSEA)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSRTID +
+                          *EQ ' *CAT &QUOTE *CAT &RTID *CAT &QUOTE)
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSGEN=1')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '(PSTYPE +
+                          *EQ ' *CAT &Q *CAT 'B' *CAT &Q)             /*PFCbA*/
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*OR')       /*PFCbA*/
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'PSTYPE +
+                          *EQ ' *CAT &Q *CAT &PSTYPE *CAT &Q)         /*PFCbM*/
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT ')')         /*PFCbA*/
+
+
+   /* Use OPNQRYF to select and order the records we need */
+
+             OVRDBF     FILE(&FILE) SHARE(*YES)
+             OPNQRYF    FILE((&FILE)) QRYSLT(&QRYSLT) +
+                          KEYFLD((PSWHSE) (PSRTID) (PSROW) (PSCOL))
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+             CHGVAR     VAR(&WHSE) VALUE(&WHSEA)
+
+/* HARaA     CALL       PGM(PS311) PARM(&WHSE &RTID)   */
+
+
+             CHGVAR     VAR(&PRTCTR) VALUE(&PRTCTR + 1)              /* 520aA*/
+             CALL       PGM(QCMDEXC) PARM(&CMD &LEN)                 /* 520aA*/
+             IF         COND(&CLIENT = &CHENEY) THEN(DO)           /*  CBIbA */
+             CALL       PGM(PS311CBI) PARM(&WHSE &RTID ' ')         /* CBIbA */
+             ENDDO                                                /*   CBIbA */
+             ELSE       CMD(DO)                                     /* CBIbA */
+             CALL       PGM(PS311) PARM(&WHSE &RTID ' ') /* HARaA */
+             ENDDO                                                /*   CBIbA */
+             IF         COND(&ONETIM *EQ 'Y') THEN(DO)               /* 520aA*/
+             CHGVAR     VAR(&PRTCTR) VALUE(0)                        /* 520aA*/
+             ENDDO                                                   /* 520aA*/
+             CLOF       OPNID(&FILE)                                 /* 520aA*/
+             DLTOVR     FILE(&PRTF)                                  /* 520aA*/
+             MONMSG     MSGID(CPF9841)                              /* 520aA*/
+             ENDDO                                                  /* 520aA*/
+             ENDDO                                                  /* 520aA*/
+
+/*           ENDDO                                                     520aD*/
+
+             IF         COND(&CLIENT = &HARBOR *AND &WHSE = 1) +
+                          THEN(DO) /* HARaA */
+             RTVJOBA    JOB(&JONAME) /* HARaA */
+             IF         COND(&JONAME = 'OR605CL') THEN(DO) /* HARaA */
+             CLOF       OPNID(&FILE) /* HARaA */
+             OVRDBF     FILE(&FILE) SHARE(*YES) /* HARaA */
+             OPNQRYF    FILE((&FILE)) QRYSLT(&QRYSLT) +
+                          KEYFLD((PSWHSE) (PSRTID) (PSROW) (PSCOL)) +
+                          /* HARaA */
+
+             RMVMSG     CLEAR(*ALL) /* HARaA */
+             MSGBFC     MESSAGE(&WORKINGMSG) /* HARaA */
+
+             CALL       PGM(PS311) PARM(&WHSE &RTID 'Y') /* HARaA */
+             ENDDO      /* HARaA */
+             ENDDO      /* HARaA */
+
+/* CBI A */  IF         COND(&CLIENT = &CHENEY *AND &CLIENTLOC = +
+                          &CHENEYOCL) THEN(DO)
+/* CBI A */  RCLRSC     LVL(*CALLER)
+/* CBI A */  CHGVAR     VAR(&RTYPE) VALUE('*DETAIL ')
+
+/* CBI A */  CALL       PGM(OR667CL) PARM(&CMD &RTYPE &WHSEA &RTID +
+                                          &RETURN)
+/* CBI A */  ENDDO
+
+/* CBI A */  IF         COND(&CLIENT = &CHENEY *AND &CLIENTLOC = +
+                          &CHENEYRIV) THEN(DO)
+/* CBI A */  RCLRSC     LVL(*CALLER)
+/* CBI A */  CHGVAR     VAR(&RTYPE) VALUE('*DETAIL ')
+
+/* CBI A */  CALL       PGM(OR667CL) PARM(&CMD &RTYPE &WHSEA &RTID +
+                                          &RETURN)
+/* CBI A */  ENDDO
+
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+   /* Clean up before leaving */
+
+   /*        DLTOVR     FILE(&PRTF)   */
+             RCLRSC     LVL(*CALLER)
+             CLOF       OPNID(&FILE)                              /* (640 A) */
+             MONMSG     MSGID(CPF4519 CPF4520)                    /* (640 A) */
+
+             ENDPGM

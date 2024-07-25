@@ -1,0 +1,139 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2022 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  INTEXPLOOP  Interface Export Looper                              */
+/*  October 03, 2022                                                 */
+/*  Todd Chopp                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    10/03/22  TDC  7.60                                            */
+/*     - Created.                                                    */
+/*     - Copied from Accardi.                                        */
+/*     - Set timer to 5 minutes.                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions:                                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &TYPE      -  Export type:                                     */
+/*                  *STGPO    - Staging PO Export                    */
+/*                  *STGADJ   - Staging Adjustment Export            */
+/*                  *STGADJ2  - Staging Adjustment Export 2          */
+/*    &WHSE      -  Warehouse                                        */
+/*    &CUTOFFA   - Cutoff time, 11:55pm = '2355'                     */
+/*    &DELAYMINA - Delay Minutes, 5 min = '0005'                     */
+/*    &JOBNAME   - Job name                                          */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ INTEXPLOOP: PGM        PARM(&TYPE &WHSE &DELAYMINA &CUTOFFA &JOBNAME)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+/* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(INTEXPLOOP)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CUTOFF)     TYPE(*DEC)  LEN(4 0) VALUE(2359)
+             DCL        VAR(&CUTOFFA)    TYPE(*CHAR) LEN(4)
+             DCL        VAR(&DELAYMIN)   TYPE(*DEC)  LEN(4 0) VALUE(5)
+             DCL        VAR(&DELAYMINA)  TYPE(*CHAR) LEN(4)
+             DCL        VAR(&EXPPGM)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBNAME)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&NEWTIME)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&NUMHOUR)    TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&NUMMIN)     TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&SYSTIME)    TYPE(*CHAR) LEN(6)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Convert parms. */
+
+             CHGVAR     VAR(&DELAYMIN) VALUE(&DELAYMINA)
+             CHGVAR     VAR(&CUTOFF) VALUE(&CUTOFFA)
+
+/* Determine which program to call. */
+
+             SELECT
+             WHEN       COND(&TYPE *EQ '*STGPO') THEN(CHGVAR +
+                          VAR(&EXPPGM) VALUE('PO726S    '))
+             WHEN       COND(&TYPE *EQ '*STGADJ') THEN(CHGVAR +
+                          VAR(&EXPPGM) VALUE('IT726S    '))
+             WHEN       COND(&TYPE *EQ '*STGADJ2') THEN(CHGVAR +
+                          VAR(&EXPPGM) VALUE('IT726S2   '))
+             OTHERWISE  CMD(GOTO CMDLBL(GETOUT))
+             ENDSELECT
+
+/* Run report program. */
+
+             CALL       PGM(&EXPPGM) PARM(&WHSE)
+
+/* Determine next run time and put back on job queue. */
+
+             RTVSYSVAL  SYSVAL(QTIME) RTNVAR(&SYSTIME)
+             CHGVAR     VAR(&NUMHOUR) VALUE(%SST(&SYSTIME 1 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(%SST(&SYSTIME 3 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN + &DELAYMIN)
+             IF         COND(&NUMMIN *GE 60) THEN(DO)
+               CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN - 60)
+               CHGVAR     VAR(&NUMHOUR) VALUE(&NUMHOUR + 1)
+             ENDDO
+             IF         COND(&NUMHOUR *GE 24) THEN(GOTO CMDLBL(GETOUT))
+             IF         COND(((&NUMHOUR * 100) + &NUMMIN) *GE +
+                               &CUTOFF) THEN(GOTO CMDLBL(GETOUT))
+
+             CHGVAR     VAR(%SST(&SYSTIME 1 2)) VALUE(&NUMHOUR)
+             CHGVAR     VAR(%SST(&SYSTIME 3 2)) VALUE(&NUMMIN)
+             CHGVAR     VAR(&NEWTIME) VALUE(%SST(&SYSTIME 1 2) *CAT +
+                          ':' *CAT %SST(&SYSTIME 3 2) *CAT ':00')
+
+             SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&TYPE &WHSE +
+                          &DELAYMINA &CUTOFFA &JOBNAME)) +
+                          JOB(&JOBNAME) JOBQ(QS36EVOKE) LOG(4 0 +
+                          *NOLIST) SCDTIME(&NEWTIME) MSGQ(*NONE)
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

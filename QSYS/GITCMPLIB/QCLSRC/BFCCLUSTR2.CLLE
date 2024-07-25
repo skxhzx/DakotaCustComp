@@ -1,0 +1,122 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  BFCCLUSTR2   Start/End Tomcat Cluster Servers - Development      */
+/*  26 February 2016                                                 */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*  Revisions:                                                       */
+/*  02/26/16  DAS  7.00                                              */
+/*    - Created                                                      */
+/*                                                                   */
+/*  04/18/16  DAS  7.00a                                             */
+/*    - Revised to use unique user for each node.                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parms                                                            */
+/*                                                                   */
+/*    &CMD     - *START, *END                                        */
+/*    &SERVER  - Sever code                                          */
+/*    &STRNODE - Starting node number                                */
+/*    &NBR     - Number of nodes to start/end                        */
+/*    &LOADBAL - Start/End Apache load balancer (Y,N)                */
+/*    &NOBQ    - Put on Jobq (Y,N)                                   */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ BFCCLUSTR2: PGM        PARM(&CMD &SERVER &STRNODE &NBR &LOADBAL &JOBQ)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&ALPHANODE)  TYPE(*CHAR) LEN(2)
+             DCL        VAR(&ANODE)      TYPE(*CHAR) LEN(2)
+             DCL        VAR(&APPPATH)    TYPE(*CHAR) LEN(100)
+             DCL        VAR(&CMD)        TYPE(*CHAR) LEN(6)
+             DCL        VAR(&CLUSTER)    TYPE(*CHAR) LEN(1)
+             DCL        VAR(&CURNODE)    TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&DEBUG)      TYPE(*CHAR) LEN(1)
+             DCL        VAR(&JDKPATH)    TYPE(*CHAR) LEN(100)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&LOADBAL)    TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MAXNODE)    TYPE(*DEC)  LEN(3 0)
+             DCL        VAR(&NBR)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&SERVER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&STRNODE)    TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TEMP1)      TYPE(*CHAR) LEN(1)
+             DCL        VAR(&TOMPATH)    TYPE(*CHAR) LEN(100)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&USERSBM)    TYPE(*CHAR) LEN(10) /*700aA*/
+
+/*-------------------------------------------------------------------*/
+/*  Mainline                                                         */
+/*-------------------------------------------------------------------*/
+
+             CALL PGM(GETTOMSRV) PARM(&SERVER &USER &TOMPATH +
+                        &JDKPATH &APPPATH &CLUSTER &DEBUG &RETURN)
+             IF COND(&RETURN = '*ERROR') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9897) MSGF(QCPFMSG) MSGDTA('Error +
+                          getting info for server ' *CAT &SERVER) +
+                          TOUSR(*REQUESTER) MSGTYPE(*ESCAPE)
+             ENDDO
+
+/*  If Staring Node is zero, skip node processing */
+
+             IF COND(&STRNODE *EQ 0) THEN(GOTO SKIPNODES)
+
+/*  Loop for number of groups to start */
+
+             CHGVAR     VAR(&CURNODE) VALUE(&STRNODE)
+             CHGVAR     VAR(&MAXNODE) VALUE(&STRNODE + &NBR - 1)
+             IF         COND(&MAXNODE *GT 99) THEN(CHGVAR +
+                          VAR(&MAXNODE) VALUE(99))
+
+TOP:
+
+             IF COND(&CURNODE *LT 10) THEN(DO)
+               CHGVAR  VAR(&TEMP1) VALUE(&CURNODE)
+               CHGVAR  VAR(&ALPHANODE) VALUE(&TEMP1)
+               ENDDO
+             ELSE  CMD(DO)
+               CHGVAR  VAR(&ALPHANODE) VALUE(&CURNODE)
+               ENDDO
+
+             IF (&JOBQ = 'Y') THEN(DO)
+               CHGVAR     VAR(&ANODE) VALUE(&CURNODE)              /*700aA*/
+               CHGVAR     VAR(&USERSBM) VALUE(&USER *TCAT &ANODE)  /*700aA*/
+               CHKOBJ     OBJ(&USERSBM) OBJTYPE(*USRPRF)           /*700aA*/
+               MONMSG     MSGID(CPF9801) EXEC(DO)                  /*700aA*/
+                 CHGVAR     VAR(&USERSBM) VALUE(&USER)             /*700aA*/
+               ENDDO                                               /*700aA*/
+               SBMJOB  CMD(CALL PGM(BFCCLUSTRQ) PARM(&CMD &SERVER +
+                       &ALPHANODE)) JOB(BFCTOMCAT) +
+                       JOBQ(QSYSNOMAX) USER(&USERSBM) ALWMLTTHD(*YES) /*700aM*/
+               ENDDO
+             ELSE CMD(DO)
+               CALL PGM(BFCCLUSTRQ) PARM(&CMD &SERVER &ALPHANODE)
+               ENDDO
+
+      /* Increment current group number and see if we are done */
+
+             CHGVAR     VAR(&CURNODE) VALUE(&CURNODE+1)
+             IF (&CURNODE <= &MAXNODE) THEN(GOTO TOP)
+
+ SKIPNODES:
+
+  /* See if we should call Apache24 Load Balancer */
+
+             IF (&LOADBAL = 'Y') THEN(DO)
+
+               IF (&JOBQ = 'Y') THEN(DO)
+                 SBMJOB     CMD(CALL PGM(BFCAPACHEQ) PARM(&CMD &SERVER)) +
+                            JOB(BFCAPACHE) JOBQ(QSYSNOMAX) +
+                            USER(&USER) ALWMLTTHD(*YES)
+                 ENDDO
+               ELSE  CMD(DO)
+                 CALL PGM(BFCAPACHEQ) PARM(&CMD &SERVER)
+                 ENDDO
+
+             ENDDO
+
+ ENDPGM:     ENDPGM

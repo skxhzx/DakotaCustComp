@@ -1,0 +1,414 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1997 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  RH251     Will call export closed customer orders - Post
+     F*  28 August 1997
+     F*  Dave Sommerville
+     F*  Roxanne Harrison
+     F*
+     F*  Revisions
+409 AF*    04/21/98  RH
+     F*      - Recompiled, files ORDC & EXPORDC changed.
+     F*      - Move transaction # to OECTRN.
+412 AF*    08/23/99  RH
+     F*      - Recompiled, file ORDC changed.
+     F*
+413aAF*    04/06/00  MLB  4.13a
+     F*      - Changed program to update export date/time in the
+     F*        RTEHED file.
+417aAF*    07/08/03  RH   4.17a
+     F*      - Changed to update the emp# and quantity in ORDT and
+     F*        EXPORDT files.
+417bAF*    08/04/03  HNK  4.17b
+     F*      - Fix - There could be more than one label record for a
+     F*        transaction.  Changed to read LABEL90 file.
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  78        - EOF for ORDH
+     F*  79        - EOF for ORDD
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     F*RDH    UP  E           K        DISK
+     FORDH3   UF  E           K        DISK
+     FORDD    IF  E           K        DISK
+     FORDC    IF  E           K        DISK
+417aDF*RDT    IF  E           K        DISK
+417aMFORDT    UF  E           K        DISK
+417bAF**BEL   IF  E           K        DISK
+417aAFPIRTRAN IF  E           K        DISK
+     F*ABEL5  IF  E           K        DISK
+417bAFLABEL90 IF  E           K        DISK
+417BAF            LBREC                             KRENAMELBREC9
+     FRTEHED  UF  E           K        DISK
+     FEXPORDH O   E           K        DISK                      A
+     FEXPORDD O   E           K        DISK                      A
+     FEXPORDC O   E           K        DISK                      A
+213 AFEXPORDT O   E           K        DISK                      A
+     I*----------------------------------------------------------------
+     I*  Level breaks
+     I*
+     I*HREC
+     I*                                             OHWHSEL1
+     I*                                             OHRTE L1
+     I*                                             OHPBATL1
+     I*----------------------------------------------------------------
+     I*  Constants
+     I*
+     I              '1'                   C         FOREVR
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse
+     C*      $PRTID  Route ID
+     C*      $PRTE   Route
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   *EXIT    - CMD3 was entered
+     C*              *CANCEL  - CMD12 was entered
+     C*
+     C*----------------------------------------------------------------
+     C* Level break check
+     C*
+     C*  See if there are any open transactions for the route.
+     C*
+217 AC*    If an open transaction exists, make sure it isn't a letdown.
+     C*
+222 DC*  L1      KEYLB5    SETLLLABEL5                   50
+217 AC*  L1      *IN50     IFEQ *ON
+217 AC*                    MOVE *OFF      *IN50
+217 AC*                    MOVE *OFF      *IN79
+217 AC*          *IN79     DOUEQ*ON
+217 AC*          KEYLB5    READELABEL5                   79
+217 AC*          *IN79     IFEQ *OFF
+217 AC*          P5TASK    ANDNE'REPL'
+217 AC*          P5TASK    ANDNE'REPLBK'
+217 AC*                    MOVE *ON       *IN50
+217 AC*                    LEAVE
+217 AC*                    ENDIF
+217 AC*                    ENDDO
+217 AC*                    ENDIF
+222 DC*  L1                MOVE *IN50     OPNFLG  1
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PRTID  5
+     C                     PARM           $PRTE   5
+     C                     PARM           $PRTN   8
+     C* Main line
+     C*
+     C                     MOVE *OFF      ERROR   1
+     C                     MOVE *BLANKS   $PRTN
+     C*
+     C*  Get order header record.
+     C*
+404 DC*          KEYOH     CHAINORDH3                79
+404 AC           KEYOH     SETLLORDH3
+404 AC           FOREVR    DOUNEFOREVR
+404 AC           KEYOH     READEORDH3                    79
+404 AC*
+     C           *IN79     IFEQ *ON
+404 AC                     LEAVE
+404 DC*                    MOVE '*ERROR  '$PRTN
+404 DC*                    GOTO BOTTOM
+     C                     ENDIF
+     C*
+222 DC*  Skip order if open transactions exist.
+     C*
+222 DC*          OPNFLG    CABEQ*ON       BOTTOM
+     C*
+     C*  Add order header record to export header file.
+     C*
+     C                     EXSR FILOEH
+     C                     WRITEOEHREC
+     C*
+     C*  Add order detail records to export detail file.
+     C*
+     C           KEYOD     SETLLORDD
+     C           FOREVR    DOUNEFOREVR
+     C           KEYOD     READEORDD                     78
+     C           *IN78     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C                     EXSR FILOED
+     C                     WRITEOEDREC
+     C                     ENDDO
+     C*
+     C*  Add order catch weight records to export catch weight file.
+     C*
+     C           KEYOD     SETLLORDC
+     C           FOREVR    DOUNEFOREVR
+     C           KEYOD     READEORDC                     78
+     C           *IN78     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C                     EXSR FILOEC
+     C                     WRITEOECREC
+     C                     ENDDO
+213 AC*
+213 AC*  Add order detail transaction recs to export file.
+213 AC*
+213 AC           KEYOD     SETLLORDT
+213 AC           FOREVR    DOUNEFOREVR
+213 AC           KEYOD     READEORDT                     78
+213 AC           *IN78     IFEQ *ON
+213 AC                     LEAVE
+213 AC                     ENDIF
+417aAC*  Get employee # for ORDT and export file.
+417aAC           OTTRN#    CHAINPIRTRAN              77
+417aAC           *IN77     IFEQ *OFF
+417a C                     Z-ADDPTEMP#    OTEMP#
+417aAC                     ENDIF
+417aAC*  Get quantity for ORDT and export file.
+417bDC**         OTLBL#    CHAINLABEL                77
+     C*
+417bAC           KEYLB9    SETLLLABEL90
+417bAC           FOREVR    DOWEQFOREVR
+417bAC           KEYLB9    READELABEL90                  77
+     C*
+417bAC           *IN77     IFEQ *ON
+417bAC                     LEAVE
+417bAC                     ENDIF
+     C*
+417aAC           *IN77     IFEQ *OFF
+     C*
+417bAC           LBTYPE    IFNE 'O'
+417bAC           LBTYPE    ANDNE'M'
+417bAC                     ITER
+417bAC                     ENDIF
+     C*
+417bAC           LBITEM    IFNE OTITEM
+417bAC           LBORD     ORNE OTORD
+417bAC           LBSEQ     ORNE OTSEQ
+417bAC                     ITER
+417bAC                     ENDIF
+     C*
+417aAC           LBUTYP    IFEQ 'N'
+417bMC                     ADD  LBQPCK    OTPCK1
+417bDC**                   Z-ADDLBQPCK    OTPCK1
+417aAC                     ENDIF
+417aAC           LBUTYP    IFEQ '1'
+417bMC                     ADD  LBQPCK    OTPCK2
+417bDC**                   Z-ADDLBQPCK    OTPCK2
+417aAC                     ENDIF
+417aAC           LBUTYP    IFEQ '2'
+417bMC                     ADD  LBQPCK    OTPCK3
+417bDC**                   Z-ADDLBQPCK    OTPCK3
+417aAC                     ENDIF
+     C*
+417aAC                     ENDIF
+     C*
+417bAC                     ENDDO
+417aAC                     UPDATOTREC
+213 AC                     EXSR FILOET
+213 AC                     WRITEOETREC
+213 AC                     ENDDO
+     C*
+     C           KEYOH     CHAINRTEHED               78
+     C           *IN78     IFEQ *OFF
+     C                     MOVE '6'       RHSTAT
+     C                     MOVE '*CURCMD '$CVCMD
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD8O    RHSTSD
+     C                     TIME           RHSTST
+413aAC                     Z-ADD$CVD8O    RHEXPD
+413aAC                     Z-ADDRHSTST    RHEXPT
+     C                     UPDATRHREC
+     C                     ENDIF
+     C*
+     C*
+     C*  Update order header record with upload date and time.
+     C*
+     C                     MOVE 'C'       OHSTAT
+     C                     Z-ADDTODAY     OHSDTE
+     C                     TIME           OHSTIM
+     C                     Z-ADDOHSDTE    OHUDTE
+     C                     Z-ADDOHSTIM    OHUTIM
+     C                     UPDATOHREC
+     C*
+404 AC                     ENDDO
+404 AC*
+     C           BOTTOM    TAG
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*   Define partial key for ORDD file.
+     C*
+     CSR         KEYOD     KLIST
+     CSR                   KFLD           OHWHSE
+     CSR                   KFLD           OHORD
+     C*
+     C*   Define  key for ORDH3 file.
+     C*
+     CSR         KEYOH     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     C*
+222 DC*   Define partial key for LABEL5 file.
+     C*
+222 DC*R         *LIKE     DEFN L5PO      KYPO
+     C*R                   MOVE *BLANKS   KYPO
+     C*R         KEYLB5    KLIST
+     C*R                   KFLD           OHWHSE
+213 AC*R                   KFLD           OHTYPE
+     C*R                   KFLD           OHRTE
+     C*R                   KFLD           KYPO
+     C*R                   KFLD           OHPBAT
+     C*
+417bAC*   Define partial key for LABEL90 file.
+     C*
+417bACSR         KEYLB9    KLIST
+417bACSR                   KFLD           OTWHSE
+417bACSR                   KFLD           OTTRN#
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILOEC  Fill export detail catch weight fields.
+     C*
+     CSR         FILOEC    BEGSR
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEAROECREC
+     C*
+     C*  Move fields from order file to export file.
+     C*
+     CSR                   Z-ADDOCWHSE    OECWHS
+213 DC*                    Z-ADDOCORD     OECORD
+213 MCSR                   Z-ADDOEHORD    OECORD
+     CSR                   Z-ADDOCSEQ#    OECSQ#
+     CSR                   MOVE OCITEM    OECITM
+     CSR                   Z-ADDOCSEQ     OECSEQ
+409 ACSR                   Z-ADDOCTRAN    OECTRN
+     CSR                   Z-ADDOCCWGT    OECWGT
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILOED  Fill export detail fields.
+     C*
+     CSR         FILOED    BEGSR
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEAROEDREC
+     C*
+     C*  Move fields from order file to export file.
+     C*
+     CSR                   Z-ADDODWHSE    OEDWHS
+213 DC*                    Z-ADDODORD     OEDORD
+213 MCSR                   Z-ADDOEHORD    OEDORD
+     CSR                   Z-ADDODSEQ     OEDSEQ
+     CSR                   MOVE ODITEM    OEDITM
+     CSR                   Z-ADDODQOR1    OEDQ1
+     CSR                   Z-ADDODQOR2    OEDQ2
+     CSR                   Z-ADDODQOR3    OEDQ3
+     CSR                   Z-ADDODWH2     OEDWH2
+     CSR                   Z-ADDODOR2     OEDOR2
+     CSR                   MOVE ODOITM    OEDOIT
+     CSR                   Z-ADDODQPK1    OEDQP1
+     CSR                   Z-ADDODQPK2    OEDQP2
+     CSR                   Z-ADDODQPK3    OEDQP3
+     CSR                   MOVE ODSPCL    OEDSPC
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILOEH   Fill export header fields.
+     C*
+     CSR         FILOEH    BEGSR
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEAROEHREC
+     C*
+     C*  Move fields from order file to export file.
+     C*
+     CSR                   Z-ADDOHWHSE    OEHWHS
+213 DC*                    Z-ADDOHORD     OEHORD
+213 MCSR                   Z-ADDOHCORD    OEHORD
+     CSR                   MOVE OHTYPE    OEHTYP
+     CSR                   MOVE OHCPO     OEHCPO
+     CSR                   Z-ADDOHCUST    OEHCUS
+     CSR                   MOVE OHCNAM    OEHCNM
+     CSR                   MOVE OHCAD1    OEHCA1
+     CSR                   MOVE OHCAD2    OEHCA2
+     CSR                   MOVE OHCCTY    OEHCCT
+     CSR                   MOVE OHCST     OEHCST
+     CSR                   MOVE OHCZIP    OEHCZP
+222 DC*R                   MOVE OHRTE     OEHRTE
+222 MCSR                   MOVE $PRTE     OEHRTE
+     CSR                   Z-ADDOHSTOP    OEHSTP
+     CSR                   MOVE OHTRUK    OEHTRK
+     CSR                   MOVE OHMISC    OEHMIS
+     CSR                   Z-ADDOHPBAT    OEHPBT
+     CSR                   Z-ADDOHSDTE    OEHDTE
+     CSR                   Z-ADDOHSTIM    OEHTIM
+     C*
+     CSR                   ENDSR
+213 AC*----------------------------------------------------------------
+213 AC*
+213 AC*  FILOET  Fill export detail transaction fields.
+213 AC*
+213 ACSR         FILOET    BEGSR
+213 AC*
+213 AC*  Initialize record
+213 AC*
+213 ACSR                   CLEAROETREC
+213 AC*
+213 AC*  Move fields from order file to export file.
+213 AC*
+213 ACSR                   Z-ADDOTWHSE    OETWHS
+213 ACSR                   Z-ADDOEHORD    OETORD
+213 ACSR                   Z-ADDOTSEQ     OETSEQ
+213 ACSR                   MOVE OTITEM    OETITM
+213 ACSR                   Z-ADDOTTRN#    OETTRN
+417aACSR                   Z-ADDOTEMP#    OETEMP
+417aACSR                   Z-ADDOTPCK1    OETPK1
+417aACSR                   Z-ADDOTPCK2    OETPK2
+417aACSR                   Z-ADDOTPCK3    OETPK3
+213 AC*
+213 ACSR                   ENDSR

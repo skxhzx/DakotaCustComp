@@ -1,0 +1,887 @@
+     F********************************************************************
+     F*
+     F* The Julian date routines are good throuh 2/28/2100
+     F*
+     F********************************************************************
+     F*   Copyright (C) 2006 BFC Software, Inc. - All Rights Reserved    *
+     F*   BFC Software, Inc.                                             *
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51                         *
+     F*   West Chicago, IL  60185                                        *
+     F*   (630) 562-0375                                                 *
+     F********************************************************************
+     F*
+     F*  CVTDTE    Convert date routines
+     F*  Dave Sommerville
+     F*
+     F*-------------------------------------------------------------------
+     F*  Revisions
+     F*
+     F*    01/05/93  DAS
+     F*      - Brand new program
+     F*
+     F*    09/16/94  HNK
+     F*      - Error message PIR1002 replaced by PIR1007.
+     F*
+     F*    02/22/95  DAS  2.09
+     F*      - Revised to get current date using TIME instead of UDATE.
+     F*
+     F*    03/08/96  HNK  2.11
+     F*      - MDYCMD subroutine revised.
+     F*
+214 AF*    07/17/96  RH
+     F*      - USE UMONTH,UDAY,UYEAR instead of UDATE.
+     F*
+413aAF*    11/11/99  MLB  4.13a
+     F*      - Revised the following routines: CURCMD, CURYMD, CURMDY and
+     F*        DTEEDT3 to call the following routines: GETFMT, CVTFMT.
+     F*      - Added new routine GETFMT to retrieve system date format.
+     F*      - Added new routine CVTFMT to convert system date
+     F*        to MMDDYY format using TIME opcode.
+413bAF*    12/21/99  MLB  4.13b
+     F*      - Added new function to program: Ability to convert 6 or 8
+     F*        digit date into a day number.  New opcodes will be:
+     F*        *CMDNBR - Convert YYYY/MM/DD into day number.
+     F*        *YMDNBR - Convert YY/MM/DD into day number.
+     F*        *MDYNBR - Convert MM/DD/YY into day number.
+     F*        Result will be passed back to calling program using
+     F*        $CVD6O.
+415 AF*    11/13/00  MLB  4.15
+     F*      - Revised DTEDT3 to reload DTDATE with value from $CVD6I
+     F*        after right justifying date value.
+     F*
+510 AF*    07/06/06  MLB  5.10
+     F*      - Enh: Added support to program to convert date into the
+     F*        the following formats: *CURDMY, *CURDMC, *MDYDMY, *CMDDMY
+     F*
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A5          5  1
+     E                    A6          6  1
+     E                    A9          9  1
+     E                    A40        40  1
+     E                    $MD       128  1
+413bAE                    TABC#   7   7  1 0 TABCR#  1 0 Current day nbr.
+     I*----------------------------------------------------------------
+     I* Program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+510 AI                                       39  42 $CVD8Y
+510 AI                                       43  44 $CVD8M
+510 AI                                       45  46 $CVD8D
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I* Date structure for TIME function.
+     I*
+     I            DS
+     I                                        1  120DSBOTH
+     I                                        1   60DSTIME
+413aAI                                        7   80DSMNTH
+510 AI                                        7   8 DSMN
+413aAI                                        9  100DSDAY
+510 AI                                        9  10 DSDY
+413aAI                                       11  120DSYEAR
+510 AI                                       11  12 DSYR
+     I                                        7  120DSDATE
+413aAI            DS
+413aAI                                        7   80CVFLD1
+413aAI                                        9  100CVFLD2
+413aAI                                       11  120CVFLD3
+413aAI                                        1  120CVDATE
+413aAI            DS
+413aAI                                        1   3 SYSFMT
+510 AI                                        4   9 WRKDT6
+510 AI                                       10  17 WRKDT8
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1   6 ERRDTE
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+413aAI*----------------------------------------------------------------
+413aAI*  Called programs
+413aAI*
+413aAI              'GETDATFMT'           C         @RTVSV
+413aAI*----------------------------------------------------------------
+     I*
+     I*  Input parameters
+     I*
+     I*     $CVCMD   -  Command
+     I*                 *CURCMD   - Put current date into YYYYMMDD
+     I*                 *CURYMD   - Put current date into YYMMDD
+     I*                 *CURMDY   - Put current date into MMDDYY
+510 AI*                 *CURDMC   - Put current date into DDMMYYYY
+510 AI*                 *CURDMY   - Put current date into DDMMYY
+     I*
+     I*                 *CMDYMD   - YYYYMMDD ==> YYMMDD
+     I*                 *CMDMDY   - YYYYMMDD ==> MMDDYY
+     I*
+     I*                 *YMDMDY   - YYMMDD   ==> MMDDYY
+     I*                 *YMDCMD   - YYMMDD   ==> YYYYMMDD
+     I*
+     I*                 *MDYYMD   - MMDDYY   ==> YYMMDD
+     I*                 *MDYCMD   - MMDDYY   ==> YYYYMMDD
+     I*                 *YMDEDT   - Edit YYMMDD date
+     I*                 *MDYEDT   - Edit MMDDYY date
+     I*
+413bAF*                 *CMDNBR   - YYYYMMDD  ==> day number.
+413bAF*                 *YMDNBR   - YYMMDD    ==> day number.
+413bAF*                 *MDYNBR   - MMDDYY    ==> day number.
+     I*
+     I*     $CVPRG   -  Program to send messages back to.
+     I*     $CVD6I   -  6 digit date (alpha)
+     I*     $CVD8I   -  8 digit date (alpha)
+     I*
+     I*  Output parameters
+     I*
+     I*     $CVD6O   -  6 digit date (numeric)
+     I*     $CVD8O   -  8 digit date (numeric)
+     I*     $CVSTO   -  Date in words
+     I*     $CVRTN   blank    - No problem encountered.
+     I*              *CANCEL  - CMD12 was entered
+     I*              *ERROR   - Error occured. Message in $PERM
+     I*              *PGMQ    - Error occured. Message sent to pgmq.
+     I*     $CVERM   Error message or pointer to message in pgmq.
+     I*
+     I*
+     C*
+     C*     **********************
+     C*     *                    *
+     C*     * FIRST TIME THROUGH *
+     C*     *                    *
+     C*     **********************
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $CVTDT
+     C                     Z-ADD0         $CVD6O
+     C                     Z-ADD0         $CVD8O
+     C                     MOVE *BLANKS   $CVSTO
+     C                     MOVE *BLANKS   $CVRTN
+     C                     MOVE *BLANKS   $CVERM
+413aAC                     MOVE *ZEROS    DSBOTH
+413aAC                     MOVE *ZEROS    CVDATE
+     C*
+     C           $CVCMD    CASEQ'*CURCMD 'CURCMD
+     C           $CVCMD    CASEQ'*CURYMD 'CURYMD
+     C           $CVCMD    CASEQ'*CURMDY 'CURMDY
+510 AC           $CVCMD    CASEQ'*CURDMC 'CURDMC
+510 AC           $CVCMD    CASEQ'*CURDMY 'CURDMY
+     C           $CVCMD    CASEQ'*CMDYMD 'CMDYMD
+     C           $CVCMD    CASEQ'*CMDMDY 'CMDMDY
+     C           $CVCMD    CASEQ'*YMDEDT 'YMDEDT
+     C           $CVCMD    CASEQ'*YMDMDY 'YMDMDY
+     C           $CVCMD    CASEQ'*YMDCMD 'YMDCMD
+     C           $CVCMD    CASEQ'*MDYEDT 'MDYEDT
+     C           $CVCMD    CASEQ'*MDYYMD 'MDYYMD
+     C           $CVCMD    CASEQ'*MDYCMD 'MDYCMD
+413bAC           $CVCMD    CASEQ'*CMDNBR 'CMDNBR
+413bAC           $CVCMD    CASEQ'*YMDNBR 'YMDNBR
+413bAC           $CVCMD    CASEQ'*MDYNBR 'MDYNBR
+     C                     END
+     C                     RETRN
+413aAC*                                                                   DOC
+413aAC*     ******************************************                    DOC
+413aAC*     *                                        *                    DOC
+413aAC*     *            SUBROUTINE CVTFMT           *                    DOC
+413aAC*     *                                        *                    DOC
+413aAC*     ******************************************                    DOC
+413aAC*                                                                   DOC
+413aAC*  Convert system date format to MMDDYY format.                     DOC
+413aAC*                                                                   DOC
+413aACSR         CVTFMT    BEGSR
+413aACSR                   TIME           CVDATE
+413aACSR                   SELEC
+413aACSR         SYSFMT    WHEQ 'MDY'
+413aACSR                   Z-ADDCVDATE    DSDATE
+413aAC*
+413aACSR         SYSFMT    WHEQ 'YMD'
+413aACSR                   Z-ADDCVFLD1    DSYEAR
+413aACSR                   Z-ADDCVFLD2    DSMNTH
+413aACSR                   Z-ADDCVFLD3    DSDAY
+413aAC*
+413aACSR         SYSFMT    WHEQ 'DMY'
+413aACSR                   Z-ADDCVFLD1    DSDAY
+413aACSR                   Z-ADDCVFLD2    DSMNTH
+413aACSR                   Z-ADDCVFLD3    DSYEAR
+413aAC*
+413aACSR                   ENDSL
+413aACSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE CURCMD           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  Put current date into YYYYMMDD format.                           DOC
+     C*                                                                   DOC
+     CSR         CURCMD    BEGSR
+413aACSR                   EXSR GETFMT
+413aACSR                   EXSR CVTFMT
+     C*
+413aDC*R         UYEAR     MULT 10000     $CVD8O
+413aMCSR         DSYEAR    MULT 10000     $CVD8O
+     CSR         $CVD8O    IFGE 930000
+     CSR                   ADD  19000000  $CVD8O
+     CSR                   ELSE
+     CSR                   ADD  20000000  $CVD8O
+     CSR                   END
+413aDC*R         UMONTH    MULT 100       WORK4N  40
+413aMCSR         DSMNTH    MULT 100       WORK4N  40
+     CSR                   ADD  WORK4N    $CVD8O
+413aDC*R                   ADD  UDAY      $CVD8O
+413aMCSR                   ADD  DSDAY     $CVD8O
+     CSR                   ENDSR
+510 AC*                                                                   DOC
+510 AC*     ******************************************                    DOC
+510 AC*     *                                        *
+510 AC*     *            SUBROUTINE CURDMC           *
+510 AC*     *                                        *
+510 AC*     ******************************************
+510 AC*
+510 AC*  Put current date into YYYYMMDD format.
+510 AC*
+510 AC           CURDMC    BEGSR
+510 AC                     EXSR GETFMT
+510 AC                     EXSR CVTFMT
+510 AC*
+510 AC           DSYEAR    MULT 10000     $CVD8O
+510 AC           $CVD8O    IFGE 930000
+510 AC                     ADD  19000000  $CVD8O
+510 AC                     ELSE
+510 AC                     ADD  20000000  $CVD8O
+510 AC                     END
+510 AC*
+510 AC           DSMNTH    MULT 100       WORK4N  40
+510 AC                     ADD  WORK4N    $CVD8O
+510 AC                     ADD  DSDAY     $CVD8O
+510 AC*
+510 AC                     MOVE *BLANKS   WRKDT8
+510 AC           $CVD8D    CAT  $CVD8M:0  WRKDT8
+510 AC           WRKDT8    CAT  $CVD8Y:0  WRKDT8
+510 AC                     MOVE WRKDT8    $CVD8O
+510 AC*
+510 AC                     ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE CURYMD           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  Put current date into YYMMDD format.                             DOC
+     C*                                                                   DOC
+     CSR         CURYMD    BEGSR
+413aACSR                   EXSR GETFMT
+413aACSR                   EXSR CVTFMT
+     C*
+413aDC*R         UYEAR     MULT 10000     $CVD6O
+413aMCSR         DSYEAR    MULT 10000     $CVD6O
+413aDC*R         UMONTH    MULT 100       WORK4N
+413aMCSR         DSMNTH    MULT 100       WORK4N
+     CSR                   ADD  WORK4N    $CVD6O
+413aDC*R                   ADD  UDAY      $CVD6O
+413aMCSR                   ADD  DSDAY     $CVD6O
+     CSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE CURMDY           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  Put current date into MMDDYY format.                             DOC
+     C*                                                                   DOC
+     CSR         CURMDY    BEGSR
+413aACSR                   EXSR GETFMT
+413aACSR                   EXSR CVTFMT
+     C*
+413aDC*R         UMONTH    MULT 10000     $CVD6O
+413aMCSR         DSMNTH    MULT 10000     $CVD6O
+413aDC*R         UDAY      MULT 100       WORK4N
+413aMCSR         DSDAY     MULT 100       WORK4N
+     CSR                   ADD  WORK4N    $CVD6O
+413aDC*R                   ADD  UYEAR     $CVD6O
+413aMCSR                   ADD  DSYEAR    $CVD6O
+     CSR                   ENDSR
+510 AC*
+510 AC*     ******************************************
+510 AC*     *                                        *
+510 AC*     *            SUBROUTINE CURDMY           *
+510 AC*     *                                        *
+510 AC*     ******************************************
+510 AC*
+510 AC*  Put current date into DDMMYY format.
+510 AC*
+510 AC           CURDMY    BEGSR
+510 AC                     EXSR GETFMT
+510 AC                     EXSR CVTFMT
+510 AC*
+510 AC                     MOVE *BLANKS   WRKDT6
+510 AC*
+510 AC           DSDY      CAT  DSMN:0    WRKDT6
+510 AC           WRKDT6    CAT  DSYR:0    WRKDT6
+510 AC                     MOVE WRKDT6    $CVD6O
+510 AC*
+510 AC                     ENDSR
+     C*
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE CMDYMD           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  YYYYMMDD ==> YYMMDD                                              DOC
+     C*                                                                   DOC
+     CSR         CMDYMD    BEGSR
+     CSR                   MOVE $CVD8I    $CVD6I
+     CSR                   EXSR YMDEDT
+     CSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE CMDMDY           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  YYYYMMDD ==> MMDDYY                                              DOC
+     C*                                                                   DOC
+     CSR         CMDMDY    BEGSR
+     CSR                   MOVE $CVD8I    $CVD6I
+     CSR                   EXSR YMDMDY
+     CSR                   ENDSR
+413bAC*                                                                   DOC
+413bAC*     ******************************************                    DOC
+413bAC*     *                                        *                    DOC
+413bAC*     *            SUBROUTINE CMDNBR           *                    DOC
+413bAC*     *                                        *                    DOC
+413bAC*     ******************************************                    DOC
+413bAC*                                                                   DOC
+413bAC*  YYYYMMDD ==> day number                                          DOC
+413bAC*                                                                   DOC
+413bACSR         CMDNBR    BEGSR
+413bACSR                   MOVE $CVD8I    $CVD6I
+413bACSR                   EXSR YMDMDY
+413bACSR                   ADD  1         G$DW
+413bACSR         G$DW      LOKUPTABC#     TABCR#         40
+413bACSR                   Z-ADDTABCR#    $CVD6O
+413bACSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE DTEDT3           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*-------------------------------------------------------------------------
+     C* VERIFY DATE ROUTINE
+     C*    THIS ROUTINE WILL TAKE A 6 DIGIT DATE AND VERIFY THAT IT IS  VALID.
+     C*    THE DATE CAN BE IN YYMMDD OR MMDDYY FORMAT. IF THE LAST CHARACTER
+     C*    OF THE DATE IS BLANK EVERYTHING IS SHIFTED 1 CHAR. TO THE RIGHT.
+     C*
+     C*    THIS ROUTINE IS VERY SIMILAR TO DTEDIT. A NEW FEATURE WAS ADDED
+     C*    THAT ALLOWS THE USER TO ENTER 3M, 2W OR 10D FOR 3 MONTHS, 2 WEEKS
+     C*    OR 10 DAYS - OF COURSE THE NUMBER CAN BE ANYTHING. IF THIS ROUTINE
+     C*    FINDS AN 'M', 'W', OR 'D' IT WILL CALCULATE A NEW DATE BASED ON
+     C*    TODAYS DATE. TO MAKE THE CALCULATION A LITTLE EASIER A MONTH ('M')
+     C*    WILL BE EQUAL TO 30 DAYS.
+     C*
+     C* INPUT FIELDS
+     C*    $CVD6I   6    DATE TO BE CHECKED
+     C*    DTFRMT  1.0   FORMAT OF DATE (1-YYMMDD, 2-MMDDYY)
+     C* OUTPUT FIELDS
+     C*    $CVD6O   6.0  VERIFIED, FORMATED DATE
+     C*    G$JD     5.0  JULIAN DATE
+     C* ERRORS
+     C*    IF AN ERROR OCCURS A MESSAGE WILL BE SENT TO THE MSGQ OF THE
+     C*    PROGRAM THAT CALLED THIS ROUTINE.
+     C*
+     C*-------------------------------------------------------------------------
+     C           DTEDT3    BEGSR
+     CSR                   MOVE '0'       ERROR   1
+     CSR                   MOVE $CVD6I    DTDATE  6
+     C*
+     C* DEFINE INPUT FIELDS (DOES NOT AFFECT CONTENTS)
+     C*
+     C           DTFRST    IFNE '1'
+     C                     ADD  0         DTFRMT  10
+214 DC*                    MOVE UDATE     G$DATE
+413aACSR                   EXSR GETFMT
+413aACSR                   EXSR CVTFMT
+     C*
+214 DC*                    MOVELUMONTH    WORK4
+413aMC                     MOVELDSMNTH    WORK4
+214 DC*                    MOVE UDAY      WORK4
+413aMC                     MOVE DSDAY     WORK4
+214 AC                     MOVELWORK4     G$DATE
+214 DC*                    MOVE UYEAR     G$DATE
+413aAC                     MOVE DSYEAR    G$DATE
+     C                     Z-ADDDTFRMT    SVFRMT  10
+     C                     Z-ADD2         DTFRMT
+     C                     EXSR GTOJ$
+     C                     Z-ADDG$JD      UDATEJ  50
+     C                     Z-ADDSVFRMT    DTFRMT
+     C                     MOVE '1'       DTFRST  1
+     C                     END
+     C*
+     C* SEE IF WE ARE WORKING WITH A NORMAL DATE OR A 'MWD' DATE
+     C*
+     C                     MOVE *BLANKS   DTTYPE  8
+     C                     Z-ADD0         DTDAYS  30
+     C                     MOVEADTDATE    A6
+     C*
+     C                     Z-ADD1         X       20
+     C           'M'       LOKUPA6,X                     50
+     C           *IN50     IFEQ '1'
+     C                     MOVE 'MONTHS  'DTTYPE
+     C                     Z-ADD30        DTDAYS
+     C                     END
+     C*
+     C           DTTYPE    IFEQ *BLANKS
+     C                     Z-ADD1         X
+     C           'W'       LOKUPA6,X                     50
+     C           *IN50     IFEQ '1'
+     C                     MOVE 'WEEKS   'DTTYPE
+     C                     Z-ADD7         DTDAYS
+     C                     END
+     C                     END
+     C*
+     C           DTTYPE    IFEQ *BLANKS
+     C                     Z-ADD1         X
+     C           'D'       LOKUPA6,X                     50
+     C           *IN50     IFEQ '1'
+     C                     MOVE 'DAYS    'DTTYPE
+     C                     Z-ADD1         DTDAYS
+     C                     END
+     C                     END
+     C*
+     C           DTTYPE    IFEQ *BLANKS
+     C                     MOVE 'NORMAL  'DTTYPE
+     C                     END
+     C*
+     C* 'MWD' PROCESSING
+     C*
+     C           DTTYPE    IFEQ 'MONTHS  '
+     C           DTTYPE    OREQ 'WEEKS   '
+     C           DTTYPE    OREQ 'DAYS    '
+     C                     MOVEA*BLANKS   A6,X
+     C                     MOVEAA6        RA0A
+     C                     EXSR RADJ
+     C                     Z-ADDRA0N      DTMWD#  50
+     C           DTMWD#    MULT DTDAYS    DTTOTL  50
+     C           UDATEJ    ADD  DTTOTL    J$JD
+     C                     EXSR JTOG$
+     C                     MOVE J$DATE    $CVD6O
+     C                     GOTO ENDDT
+     C                     END
+     C*
+     C* NORMAL PROCESSING
+     C*
+     C*
+     C* IF LAST CHAR OF DATE IS BLANK SHIFT EVERYTHING TO RIGHT 1 CHAR
+     C*
+     C                     MOVE DTDATE    WORK1   1
+     C           WORK1     IFEQ ' '                        BLVL-01
+     C                     MOVELDTDATE    WORK5   5
+     C                     MOVE WORK5     $CVD6I  6
+     C                     MOVEL'0'       $CVD6I
+415 AC                     MOVE $CVD6I    DTDATE
+     C                     END                             EEND-01
+     C*
+     C* CONVERT DATE TO JULIAN FORMAT THEN BACK TO NORMAL FORMAT FOR CHECK
+     C*
+     C                     MOVE DTDATE    G$DATE
+     C                     EXSR GTOJ$
+     C                     Z-ADDG$JD      J$JD    50
+     C                     EXSR JTOG$
+     C*
+     C* CHECK FOR VALID DATE (DATE FROM JTOG$ WILL MATCH INPUT DATE)
+     C*
+     C           G$YYYY    IFNE J$YYYY
+     C           G$MM      ORNE J$MM
+     C           G$DD      ORNE J$DD
+     C                     MOVE '1'       ERROR
+     C                     MOVE '*PGMQ   '$CVRTN
+     C                     EXSR ZM1007
+     C                     ELSE
+     C                     Z-ADDJ$DATE    $CVD6O
+     C                     END
+     C           ENDDT     ENDSR
+413aAC*                                                                   DOC
+413aAC*     ******************************************                    DOC
+413aAC*     *                                        *                    DOC
+413aAC*     *            SUBROUTINE GETFMT           *                    DOC
+413aAC*     *                                        *                    DOC
+413aAC*     ******************************************                    DOC
+413aAC*                                                                   DOC
+413aAC           GETFMT    BEGSR
+413aAC                     CALL @RTVSV
+413aAC                     PARM 'QDATFMT '$LVAL  10
+413aAC                     PARM *BLANKS   $LDTA   3
+413aAC                     MOVEL$LDTA     SYSFMT
+413aAC                     ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE GTOJ$            *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C           GTOJ$     BEGSR
+     C                     MOVE G$DATE    G$DATE  60
+     C* SPLIT DATE INTO MONTH, DAY, YEAR FIELDS
+     C           DTFRMT    IFEQ 1                          BLVL-01
+     C                     MOVELG$DATE    G$YY    20
+     C                     MOVE G$DATE    WORK4   4
+     C                     MOVELWORK4     G$MM    20
+     C                     MOVE WORK4     G$DD    20
+     C                     ELSE                            EELS-01
+     C                     MOVELG$DATE    G$MM
+     C                     MOVE G$DATE    WORK4
+     C                     MOVELWORK4     G$DD
+     C                     MOVE WORK4     G$YY
+     C                     END                             EEND-01
+     C* CREATE 4 DIGIT YEAR
+     C                     MOVE G$YY      G$YYYY  40
+     C           G$YY      IFGE 60                         BLVL-01
+     C                     MOVEL'19'      G$YYYY
+     C                     ELSE                            EELS-01
+     C                     MOVEL'20'      G$YYYY
+     C                     END                             EEND-01
+     C                     Z-ADD0         G$JD
+     C           G$MM      SUB  3         G$MMWK  20
+     C                     Z-ADDG$MMWK    GMWKSV  20
+     C           G$MMWK    IFLT 0                           LVL-01
+     C                     ADD  12        G$MMWK
+     C                     END                              END-01
+     C           GMWKSV    IFNE 0                           LVL-01
+     C           G$MMWK    MULT 30.6      G$JD      H
+     C                     END                              END-01
+     C                     ADD  G$DD      G$JD    50
+     C           G$YYYY    SUB  1900      G$YYWK  30
+     C           G$YYWK    IFNE 0                           LVL-01
+     C           GMWKSV    IFLT 0                           LVL-02
+     C                     SUB  1         G$YYWK
+     C                     END                              END-02
+     C                     END                              END-01
+     C           G$YYWK    MULT 365.25    G$JYD   70
+     C                     ADD  G$JYD     G$JD
+     C           G$JD      DIV  7         G$WK7   70
+     C                     MVR            G$DW    10
+     C                     ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE JTOG$            *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C           JTOG$     BEGSR
+     C           J$JD      DIV  365.25    J$YYWK  30
+     C           J$JD      DIV  365.25    J$TST   99
+     C           J$TST     IFEQ 0                           LVL-01
+     C                     SUB  1         J$YYWK
+     C                     END                              END-01
+     C           J$YYWK    MULT 365.25    J$YD    70
+     C           J$JD      SUB  J$YD      J$YD
+     C           J$YD      IFGT 306                         LVL-01
+     C                     ADD  1         J$YYWK
+     C                     END                              END-01
+     C                     Z-ADD0         J$X     20
+     C           J$YD      DOULEJ$MD                        LVL-01
+     C                     ADD  1         J$X
+     C           J$X       MULT 30.6      J$MD    30H
+     C                     END                              END-01
+     C                     SUB  1         J$X
+     C           J$X       MULT 30.6      J$MD      H
+     C           J$YD      SUB  J$MD      J$DD    20
+     C           J$X       ADD  3         J$MM    20
+     C           J$MM      IFGT 12                          LVL-01
+     C                     SUB  12        J$MM
+     C                     END                              END-01
+     C           J$YYWK    ADD  1900      J$YYYY  40
+     C           DTFRMT    IFEQ 1                          BLVL-01
+     C                     MOVE J$YYYY    WORK2   2
+     C                     MOVELJ$MM      WORK4   4
+     C                     MOVE J$DD      WORK4
+     C                     MOVELWORK2     J$DATE  60
+     C                     MOVE WORK4     J$DATE
+     C                     ELSE                            EELS-01
+     C                     MOVE J$YYYY    WORK2
+     C                     MOVELJ$MM      WORK4
+     C                     MOVE J$DD      WORK4
+     C                     MOVE WORK2     J$DATE
+     C                     MOVELWORK4     J$DATE
+     C                     END                             EEND-01
+     C                     ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE MDYEDT           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  Edit date in MMDDYY format.                                      DOC
+     C*                                                                   DOC
+     CSR         MDYEDT    BEGSR
+     CSR                   Z-ADD2         DTFRMT
+     CSR                   EXSR DTEDT3
+     CSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE MDYCMD           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  MMDDYY ==> YYYYMMDD                                              DOC
+     C*                                                                   DOC
+     CSR         MDYCMD    BEGSR
+211 ACSR         *LIKE     DEFN $CVD6I    SVVD6I
+     CSR                   EXSR MDYYMD
+211 ACSR                   MOVE $CVD6I    SVVD6I
+211 ACSR                   MOVE $CVD6O    $CVD6I
+     CSR                   EXSR YMDCMD
+211 ACSR                   MOVE SVVD6I    $CVD6I
+     CSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE MDYYMD           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  MMDDYY ==> YYMMDD                                                DOC
+     C*                                                                   DOC
+     CSR         MDYYMD    BEGSR
+     CSR                   Z-ADD2         DTFRMT
+     CSR                   EXSR DTEDT3
+     CSR         ERROR     IFEQ '0'
+     CSR         $CVD6O    MULT 10000.01  $CVD6O
+     CSR                   END
+     CSR                   ENDSR
+413bAC*                                                                   DOC
+413bAC*     ******************************************                    DOC
+413bAC*     *                                        *                    DOC
+413bAC*     *            SUBROUTINE MDYNBR           *                    DOC
+413bAC*     *                                        *                    DOC
+413bAC*     ******************************************                    DOC
+413bAC*                                                                   DOC
+413bAC*  MMDDYY ==> day number                                            DOC
+413bAC*                                                                   DOC
+413bACSR         MDYNBR    BEGSR
+413bACSR                   MOVE $CVD6I    G$DATE
+413bACSR                   Z-ADD2         DTFRMT
+413bACSR                   EXSR GTOJ$
+413bACSR                   ADD  1         G$DW
+413bACSR         G$DW      LOKUPTABC#     TABCR#         40
+413bACSR                   Z-ADDTABCR#    $CVD6O
+413bACSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE RADJ             *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     CSR         RADJ      BEGSR
+     C* SUBR TO RIGHT ADJUST & STRIP DEC POINT
+     C* INPUT IS FIELDXRA0A 12 BYTE ALPHA
+     C* OUTPUT IS FIELDXRA0N 9.0  RA2N 11.2   RA5N 11.5
+     C                     MOVEARA0A      A40
+     C                     Z-ADD0         RA2N   112
+     C                     Z-ADD0         RA5N   115
+     C                     Z-ADD0         RA0N   110
+     C                     Z-ADD12        DX      20
+     C           LRA01     TAG
+     C* FINDXLAST SIG DIGIT
+     C           A40,DX    COMP ' '                      50
+     C  N50                GOTO HRA01
+     C           DX        SUB  1         DX
+     C           DX        COMP 0                        50
+     C  N50                GOTO LRA01
+     C                     GOTO ENDRA0
+     C           HRA01     TAG
+     C                     Z-ADD12        D2      20
+     C           LRA02     TAG
+     C* RADJ TO FIRST 12 BYTES
+     C           A40,DX    COMP ','                      50
+     C  N50                MOVE A40,DX    A40,D2
+     C           DX        SUB  1         DX
+     C  N50      D2        SUB  1         D2
+     C           DX        COMP 0                        50
+     C  N50                GOTO LRA02
+     C           LRA03     TAG
+     C* PUT IN LEADING BLANKS
+     C           D2        COMP 0                        50
+     C   50                GOTO ERA03
+     C                     MOVE ' '       A40,D2
+     C           D2        SUB  1         D2
+     C                     GOTO LRA03
+     C           ERA03     TAG
+     C                     Z-ADD1         DX      20
+     C* FINDXDEC PIOIN
+     C           LRA06     TAG
+     C           A40,DX    COMP '.'                      50
+     C   50                GOTO HRA03
+     C           DX        ADD  1         DX
+     C           DX        COMP 13                       50
+     C  N50                GOTO LRA06
+     C           HRA03     TAG
+     C                     MOVE *BLANK    A9
+     C                     MOVE *BLANK    A5
+     C                     Z-ADDDX        D2      20
+     C                     Z-ADD1         D3      20
+     C* INSERT AFTER DEC POINT
+     C           LRA04     TAG
+     C           D2        ADD  1         D2
+     C           D2        COMP 13                   50  50
+     C   50                GOTO ERA04
+     C                     MOVE A40,D2    A5,D3
+     C           D3        ADD  1         D3
+     C           D3        COMP 6                        50
+     C  N50                GOTO LRA04
+     C           ERA04     TAG
+     C                     Z-ADDDX        D2
+     C                     Z-ADD9         D3
+     C           LRA05     TAG
+     C           D2        SUB  1         D2
+     C           D2        COMP 0                        50
+     C   50                GOTO ERA05
+     C                     MOVE A40,D2    A9,D3
+     C           D3        SUB  1         D3
+     C           D3        COMP 0                        50
+     C  N50                GOTO LRA05
+     C           ERA05     TAG
+     C                     MOVEAA5        WORK5A  5
+     C                     MOVEAA9        WORK9A  9
+     C                     MOVE WORK9A    WORK9N  90
+     C                     MOVELWORK5A    WORK2N  22
+     C                     MOVE WORK5A    WORK5N  55
+     C                     Z-ADDWORK9N    RA0N
+     C                     Z-ADDWORK9N    RA2N   112
+     C                     ADD  WORK2N    RA2N
+     C                     Z-ADDWORK9N    RA5N   115
+     C                     ADD  WORK5N    RA5N
+     C           ENDRA0    TAG
+     C                     MOVE *BLANK    RA0A   12
+     C                     ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE YMDCMD           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  YYMMDD ==> YYYYMMDD                                              DOC
+     C*                                                                   DOC
+     CSR         YMDCMD    BEGSR
+     CSR                   EXSR YMDEDT
+     CSR         $CVD6O    IFGE 930000
+     CSR         19000000  ADD  $CVD6O    $CVD8O
+     CSR                   ELSE
+     CSR         20000000  ADD  $CVD6O    $CVD8O
+     CSR                   END
+     CSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE YMDEDT           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  Edit date in YYMMDD format.                                      DOC
+     C*                                                                   DOC
+     CSR         YMDEDT    BEGSR
+     CSR                   Z-ADD1         DTFRMT
+     CSR                   EXSR DTEDT3
+     CSR                   ENDSR
+     C*                                                                   DOC
+     C*     ******************************************                    DOC
+     C*     *                                        *                    DOC
+     C*     *            SUBROUTINE YMDMDY           *                    DOC
+     C*     *                                        *                    DOC
+     C*     ******************************************                    DOC
+     C*                                                                   DOC
+     C*  YYMMDD ==> MMDDYY                                                DOC
+     C*                                                                   DOC
+     CSR         YMDMDY    BEGSR
+     CSR                   Z-ADD1         DTFRMT
+     CSR                   EXSR DTEDT3
+     CSR         ERROR     IFEQ '0'
+     CSR         $CVD6O    MULT 100.0001  $CVD6O
+     CSR                   END
+     CSR                   ENDSR
+413bAC*                                                                   DOC
+413bAC*     ******************************************                    DOC
+413bAC*     *                                        *                    DOC
+413bAC*     *            SUBROUTINE YMDNBR           *                    DOC
+413bAC*     *                                        *                    DOC
+413bAC*     ******************************************                    DOC
+413bAC*                                                                   DOC
+413bAC*  YYMMDD ==> day number                                            DOC
+413bAC*                                                                   DOC
+413bACSR         YMDNBR    BEGSR
+413bACSR                   Z-ADD1         DTFRMT
+413bACSR                   EXSR DTEDT3
+413bACSR         ERROR     IFEQ '0'
+413bACSR                   ADD  1         G$DW
+413bACSR         G$DW      LOKUPTABC#     TABCR#         40
+413bACSR                   Z-ADDTABCR#    $CVD6O
+413bACSR                   ENDIF
+413bACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $CVPRG    #PGMQ  10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*     PIR1007  Invalid date
+     C*
+     CSR         ZM1007    BEGSR
+     CSR                   MOVE 'PIR1007' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE $CVD6I    ERRDTE
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMSMSG
+     CSR                   MOVE #MSGK     $CVMSG
+     CSR                   ENDSR
+** Current Day Indicators (4.13b)
+14253647516273

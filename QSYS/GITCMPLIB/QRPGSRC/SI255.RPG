@@ -1,0 +1,1296 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2000 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  SI255     FTP StuffIt Import - Post
+     F*  03 June 2000
+     F*  Dave Sommerville
+     F*
+     F*  NOTE:
+417  F*    02/18/04
+     F*      - SITYPE = 'I' - Inventory quantity need to manually run
+     F*        recalculate *ALL when finished, replaces slot quantity.
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+414 AF*    06/03/00  DAS 4.14
+     F*      - Created
+     F*
+414aAF*    06/21/00  DAS 4.14a
+     F*      - Revised to get *PICK options when department changes
+     F*        not when warehouse changes.
+     F*      - Revised routine ZZMAN to initialize EXIST flag.
+     F*      - Revised routine ZZCKNS to initialize NEWVS flag.
+     F*      - Added two descriptions to identify exact cause of
+     F*        virtual slot not being created.
+     F*
+414bAF*    06/26/00  DAS 4.14b
+     F*      - Revised mainline to initialize NEWVS flag.
+     F*
+414cAF*    06/27/00  DAS 4.14c
+     F*      - Modified handstack loop to check pointer against
+     F*        702 instead of 720 in ZZCKNS.
+     F*
+415aAF*    12/14/00  MLB  4.15a
+     F*      - Revised ZZSSB to set on SSBFLG if item found.
+     F*
+417 AF*    01/13/03  HNK  4.17
+     F*      - Revised to subtract qty from slot if type='P'. Replace
+     F*        quantity if type='I'.
+     F*        SITYPE = 'P' - Picked quantity
+     F*               = 'I' - Inventory quantity
+417aAF*    02/02/04  MLB  4.17a
+     F*      - Fix: Added call to pgm GETSLOT to retrieve base or
+     F*        virtual slot display where item exists when SITYPE = 'P'.
+417bAF*    02/19/04  RH   4.17b
+     F*      - Fix: subtract qty from ITEMQTY if type='P', picked qty.
+417cAF*    05/10/04  RH   4.17c
+     F*      - ENH: Write an adjustment label record.
+417dAF*    06/07/04  RH   4.17d
+     F*      - ENH: For Inventory SITYPE='I', restore dates from saved
+     F*             file if item in slot did NOT change.
+     F*
+510 AF*    03/22/07  MLB  5.10
+     F*      - Enh: Added client custom code support to program.
+510aAF*    03/22/07  MLB  5.10a
+     F*      - Enh: Revised program to allow Item Type R=Repack item to
+     F*        be populated into the SLOT file.
+510bAF*    10/08/07  RBD & RH  5.10b
+     F*      - Enh: Added support for *VIRTUAL slot option OPVPCK.
+520aAF*    03/26/09  GJA  5.20a
+     F*      - Enh: clear RCV, PCK, ALC, and TFR buckets before
+     F*             writing to SLOT file.
+530aA*    12/07/09  RH   5.30a
+     *      - Add Designation code to parms for CHKSTAT.
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Royal Foodservice
+     F*
+ROY AF*    03/22/07  MLB  ROY
+     F*      - Revised program to populate Fixed pick slots even if
+     F*        qty sent is zero.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: TPC
+     F*
+TPC AF*    03/24/07  MLB  TPC
+     F*      - Revised program to populate Fixed pick slots even if
+     F*        qty sent is zero. Added TPC to ROY mod.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Sofo Foods
+     F*
+SOF AF*    01/06/17  MLB  SOF
+     F*      - Revised program to populate Fixed pick slots even if
+     F*        qty sent is zero. Added SOF to ROY mod.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: FoodPro
+     F*
+FPR AF*    02/17/15  MLB  FPR
+     F*      - Revised program to populate Fixed pick slots even if
+     F*        qty sent is zero. Added FPR to ROY mod.
+FPRaAF*    05/01/15  MLB  FPRa
+     F*      - Revised program to set slot status = SR when slot is
+     F*        WHS2. Set slot status = FR when slot is WHS4.
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  91        - Overflow indicator
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+     FIMPFSTUFIF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FOPTIOND IF  E           K        DISK
+510bAFOPTIONS IF  E           K        DISK
+     FSLOT2   UF  E           K        DISK                      A
+     FVSLOT2  UF  E           K        DISK                      A
+417b FITEMQTY UF  E           K        DISK
+417d FSSLOT2  IF  E           K        DISK
+417d FSVSLOT2 IF  E           K        DISK
+     FSI255PR O   E             91     PRINTER
+417cAFLABEL   O   E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A2          2  1
+     E                    A2N         2  1
+414aDE*                   DESC    1   6 20
+510bDE*                   DESC    1  10 20
+510bME                    DESC    1  11 20
+     E                    RDSC    1   1 50
+     E                    HND       702  2
+     E                    LTR    27  27  1
+510 A*----------------------------------------------------------------
+510 A*  Customer id
+510 A*
+510 AI              'GETCLIENT'           C         @GETCL
+510 A*
+ROY A /COPY QCOPYSRC,IL#ROYAL
+TPC A /COPY QCOPYSRC,IL#TPC
+SOF A /COPY QCOPYSRC,IL#SOFO
+FPR A /COPY QCOPYSRC,IL#FPR
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  *PICK  -  Picking options
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPNXTP  -  Next pallet number.
+     I*    OPBPCK  -  Bulk pick definition.
+     I*    OPPCUB  -  Maximum cube for PIR.
+     I*    OPFPAL  -  Pallets on fixed fork lift.
+     I*    OPFCUB  -  Maximum cube per fixed pallet.
+     I*    OPFSTP  -  Maximum stops per fixed pallet.
+     I*    OPINCL  -  Include PIR in fixed cube.
+     I*    OPSRCH  -  Number of previous pallets to search for space.
+     I*    OPFBLD  -  Fixed pallet building method.
+     I*                1 = By piece without concern for splitting stop.
+     I*                2 = By stop without splitting stop between plts.
+     I*    OPPBRK  -  Break pallets by aisle (Y,N).
+     I*    OPMPUT  -  Manual Put away (Y,N).
+     I*
+     I* Data structure
+     I*
+     IOPDDTA      DS
+     I I            0                         1   70OPNXTP
+     I I            0                        10  142OPPCUB
+     I I            0                        15  150OPFPAL
+     I I            0                        16  202OPFCUB
+     I                                       22  22 OPINCL
+     I I            0                        23  240OPSRCH
+     I I            0                        25  260OPFSTP
+     I I            0                        27  270OPFBLD
+     I I            0                        28  300OPBPCK
+     I                                       31  33 OPPBRK
+     I                                       34  34 OPMPUT
+     I                                      117 117 OPDEND
+     I*----------------------------------------------------------------
+510bAI*  *VIRTUAL  -  Virtual Slot options
+510bA *----------------------------------------------------------------
+510bAI*
+510bAI* Fields
+510bAI*
+510bAI*    OPVALL  -  Always create Virtual slot. (Y/N)
+510bAI*    OPVPCK  -  Allow Virtual pick slots to be created.  (Y/N)
+510bAI*    OPVSLT  -  Create Virtual slot for item when base slot and
+510bAI*               corresponding Virtual slot(s) item(s) are different.
+510bAI*               Always Yes.
+510bAI*    OPVEXP  -  Create Virtual slot when item exists and
+510bAI*               expiration date is different.  (Y/N)
+510bAI*    OPVEND  -  Create Virtual slot when item exists and
+510bAI*               entered date is different.  (Y/N)
+510bAI*    OPVSAM  -  Merge product when entered/expiration dates
+510bAI*               are the same.  (Y/N)
+510bAI*    OPVEDF  -  Merge product when entered dates are different and
+510bAI*               expiration dates are the same.  (Y/N)
+510bAI*
+510bAI* Data structure
+510bAI*
+510bAIOPDAT4      DS
+510bAI                                        1   1 OPVALL
+510bAI                                        2   2 OPVPCK
+510bAI                                        3   3 OPVSLT
+510bAI                                        4   4 OPVEXP
+510bAI                                        5   5 OPVEND
+510bAI                                        6   6 OPVSAM
+510bAI                                        7   7 OPVEDF
+510bAI                                      117 117 OPTEN4
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      None
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C* Main line
+     C*
+     C* Get import date/time.
+     C*
+     C                     MOVE '*CURCMD '$CVCMD
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD8O    IMPDTE  80
+     C                     TIME           IMPTIM  60
+     C*
+     C* Get report heading.
+     C*
+     C                     MOVE *BLANKS   W1HEAD
+     C                     MOVELRDSC,1    $PSTR
+     C                     Z-ADD50        $PLEN
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR  60
+     C                     PARM           $PLEN   30
+     C                     MOVEL$PSTR     W1HEAD
+     C*
+     C* Initialize grand total fields
+     C*
+     C                     Z-ADD0         GRDLIN
+     C                     Z-ADD0         NOSLOT
+     C                     Z-ADD0         NOITEM
+     C                     Z-ADD0         BADBRK
+     C                     Z-ADD0         BADTYP
+     C                     Z-ADD0         NOTCRT
+     C                     Z-ADD0         NOTUPD
+     C*
+     C* Whip through all the download records
+     C*
+     C                     MOVE *OFF      PFLAG   1
+     C                     MOVE *ON       FOREVR  1
+     C                     Z-ADD55        LINPPG  30       MAX LINES PER PAGE
+     C                     Z-ADD999       COUNT   30       LINE COUNTER
+     C                     Z-SUB1         LSTWHS  30
+414aAC                     MOVE '@@@@@'   LSTWHD  5
+     C*
+     C           FOREVR    DOWEQFOREVR
+     C*
+     C                     READ IMPFSTUF                 79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C                     ADD  1         GRDLIN
+     C*
+     C*  Create warehouse heading if necessary.
+     C*
+     C           LSTWHS    IFNE SIWHSE
+     C*
+     C           LSTWHS    IFGT 0
+     C                     EXSR ZZRCAL
+     C                     ENDIF
+     C*
+510bAC*   If warehouse changed, get all new options.
+510bAC*    Get virtual slot options.
+510bAC                     EXSR ZZVRTO
+510bAC*
+     C*
+414aDC**                   MOVE '*PICK   'KYCODE
+414aDC**         KEYOP     CHAINOPTIOND              79
+414aDC**         *IN79     IFEQ *ON
+414aDC**                   MOVE 'N'       OPMPUT
+414aDC**                   ENDIF
+     C*
+     C                     Z-ADDSIWHSE    WHCODE
+     C           WHCODE    CHAINWAREHS               79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   WHDESC
+     C                     END
+     C*
+     C                     MOVE SIWHSE    WORK3A  3
+     C           ' 0'      CHECKWORK3A    POS     10
+     C           4         SUB  POS       LEN     10
+     C           LEN       SUBSTWORK3A:POSWHHEAD
+     C           WHHEAD    CAT  '-':1     WHHEAD
+     C           WHHEAD    CAT  WHDESC:1  WHHEAD
+     C                     CALL 'CENTER'
+     C                     PARM WHHEAD    $CSTR  60
+     C                     PARM 40        $CLEN   30
+     C                     MOVEL$CSTR     WHHEAD
+     C                     Z-ADDSIWHSE    LSTWHS
+     C                     Z-ADD999       COUNT
+     C                     ENDIF
+414aAC*
+414aAC*  Get options when department changes
+414aAC*
+414aAC           LSTWHD    IFNE SIWHDP
+414aAC                     MOVE '*PICK   'KYCODE
+414aAC           KEYOP     CHAINOPTIOND              79
+414aAC           *IN79     IFEQ *ON
+414aAC                     MOVE 'N'       OPMPUT
+414aAC                     ENDIF
+414aAC                     MOVE SIWHDP    LSTWHD
+414aAC                     ENDIF
+     C*
+     C                     MOVE *BLANKS   ITDESC
+     C                     MOVE *BLANKS   ITTYPE
+     C                     MOVE *BLANKS   DETMSG
+417aAC*
+417aAC*  Find actual slot for item based on slot sent in.
+417aAC*
+417aAC           SITYPE    IFEQ 'P'
+417aAC                     CALL 'GETSLOT'
+417aAC                     PARM SIWHSE    $PWHSE  30
+417aAC                     PARM SIWHDP    $PWHDP  5
+417aAC                     PARM SIDISP    $PBASE 12
+417aAC                     PARM SIITEM    $PITEM 15
+417aAC                     PARM *BLANKS   $PSLOT 12
+417aAC                     PARM *BLANKS   $PRTN   8
+417aAC*
+417aAC*    Item found in slot. Replace slot sent in.
+417aAC           $PRTN     IFEQ '*FOUND  '
+417aAC                     MOVE $PSLOT    SIDISP
+417aAC                     ENDIF
+417aAC                     ENDIF
+     C*
+     C*  If slot doesn't exist write error message.
+     C*
+     C           KEYSL2    CHAINSLOT2               N76
+     C           *IN76     IFEQ *ON
+     C                     MOVE DESC,1    DETMSG
+     C                     ADD  1         NOSLOT
+     C                     GOTO PRNDTL
+     C                     ENDIF
+     C*
+     C*  If item doesn't exist write error message.
+     C*
+     C           KEYIT     CHAINPIRITEM              76
+     C           *IN76     IFEQ *ON
+     C                     MOVE DESC,2    DETMSG
+     C                     ADD  1         NOITEM
+     C                     MOVE *BLANKS   ITTYPE
+     C                     MOVE *BLANKS   ITDESC
+     C                     MOVEL'*****'   ITDESC
+     C                     GOTO PRNDTL
+     C                     ENDIF
+     C*
+     C*  If item type not ' ' or 'B' write error message.
+510aAC*  and not type 'R' write error message.
+     C*
+     C           ITTYPE    IFNE ' '
+     C           ITTYPE    ANDNE'B'
+510aAC           ITTYPE    ANDNE'R'
+     C                     MOVE DESC,4    DETMSG
+     C                     ADD  1         BADTYP
+     C                     GOTO PRNDTL
+     C                     ENDIF
+     C*
+417  C*  If item sent is not in the slot, write error message.
+417  C*
+417  C           SITYPE    IFEQ 'P'
+417  C           SIITEM    ANDNESLITEM
+417  C                     MOVE DESC,9    DETMSG
+417  C                     ADD  1         BADTYP
+417  C                     GOTO PRNDTL
+417  C                     ENDIF
+     C*
+     C*  Add rec if qty1, brk qty2 or brk qty3 has good qty.
+     C*  Check if breakdown qty is allowed using piritem file.
+     C*  Add rec if qty1, brk qty2 or brk qty3 has good qty.
+     C*
+     C                     MOVE 'N'       GOOD1
+     C                     EXSR ZZBKDN
+     C           GOOD1     CABEQ'N'       PRNDTL
+     C*
+     C*  If doing manual putaway,
+     C*   Then get actual slot to use for the putaway.
+     C*
+414bAC                     MOVE *OFF      NEWVS
+     C           OPMPUT    IFEQ 'Y'
+     C                     EXSR ZZMAN
+     C           ERROR     CABEQ*ON       PRNDTL
+     C                     ENDIF
+     C*
+     C*  Update slot record.
+     C*
+     C                     EXSR ZZUPD
+     C*
+     C*  Print detail and update subtotals
+     C*
+     C           PRNDTL    TAG
+     C           DETMSG    IFNE *BLANKS
+     C                     EXSR ZRHEAD
+     C                     WRITEDETAIL
+     C                     ADD  1         COUNT
+     C                     ENDIF
+     C*
+     C                     ENDDO
+     C*
+     C*  Print order grand totals
+     C*
+     C                     EXSR ZRHEAD
+     C                     WRITEGRNDTTL
+     C*
+     C*  We are finished so get out
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+510 A*
+510 A* Get client id.
+510 A*
+510 AC                     CALL @GETCL
+510 AC                     PARM           CLIENT 10
+510 AC                     PARM           CLILOC 10
+510 A*
+     CSR                   MOVE *OFF      ERROR   1
+     CSR                   MOVE *OFF      EXIST   1
+     CSR                   MOVE *OFF      NEWVS   1
+     C*
+     C* Key definitions
+     C*
+     C* Item file
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           SIWHSE
+     CSR                   KFLD           SIITEM
+     C*
+     C* Slot2 file
+     C*
+     CSR         KEYSL2    KLIST
+     CSR                   KFLD           SIWHSE
+     CSR                   KFLD           SIWHDP
+     CSR                   KFLD           SIDISP
+     C*
+     C*  OPTIOND file
+     C*
+     CSR         *LIKE     DEFN OPDCOD    KYCODE
+     CSR         KEYOP     KLIST
+     CSR                   KFLD           KYCODE
+     CSR                   KFLD           SIWHSE
+     CSR                   KFLD           SIWHDP
+     C*
+510bAC*    Define key for OPTIONS file.
+     C*
+510bACSR         *LIKE     DEFN OPCODE    KYOCOD
+510bACSR         OPKEY     KLIST
+510bACSR                   KFLD           SIWHSE
+510bACSR                   KFLD           KYOCOD
+     C*
+     C*  VSLOT file
+     C*
+     CSR         KEYVS     KLIST
+     CSR                   KFLD           SIWHSE
+     CSR                   KFLD           SIWHDP
+     CSR                   KFLD           VSDISP
+     C*
+417d CSR         KEYSVS    KLIST
+417d CSR                   KFLD           SIWHSE
+417d CSR                   KFLD           SIWHDP
+417d CSR                   KFLD           VXDISP
+     C*
+     CSR         CKKEY     KLIST
+     CSR                   KFLD           SIWHSE
+     CSR                   KFLD           SIWHDP
+     CSR                   KFLD           $VDISP
+     C*
+417  C*  Convert today's date into century format.
+417  C*
+417  CSR                   MOVE '*CURCMD '$CVCMD
+417  CSR                   CALL @CVTDT
+417  CSR                   PARM           $CVTDT
+417  CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*
+     C*  Define variables
+     C*
+     CSR         *LIKE     DEFN SLEXPD    SVEXPD
+     CSR         *LIKE     DEFN SLWHSE    PHWHSE
+     CSR         *LIKE     DEFN SLWHDP    PHWHDP
+     CSR         *LIKE     DEFN SLAISL    PHAISL
+     CSR         *LIKE     DEFN SLLOC     PHLOC
+     CSR         *LIKE     DEFN SLRLVL    PHRLVL
+     CSR         *LIKE     DEFN SLHAND    PHHAND
+     CSR         *LIKE     DEFN SLSIDE    PHSIDE
+     CSR         *LIKE     DEFN SLSTYP    PHSTYP
+     CSR         *LIKE     DEFN SLDISP    PHDISP
+     CSR         *LIKE     DEFN SLSDEF    PHSDEF
+     CSR         *LIKE     DEFN SLDESG    PHDESG
+     CSR         *LIKE     DEFN SLPSEQ    PHPSEQ
+     CSR         *LIKE     DEFN SLACTV    PHACTV
+     CSR         *LIKE     DEFN SLBLD     PHBLD
+     CSR         *LIKE     DEFN SLSLFD    PHSLFD
+     CSR         *LIKE     DEFN SLDISP    ODISP
+     C*
+     C*   Load handstack array with codes (A..Z, AA..AZ, ...)
+     C*
+     CSR                   Z-ADD0         K       30
+     CSR         1         DO   27        I       20
+     CSR         2         DO   27        J       20
+     CSR                   ADD  1         K
+     CSR         LTR,I     CAT  LTR,J     HND,K
+     CSR                   ENDDO
+     CSR                   ENDDO
+     C*
+     CSR                   MOVE #PROG     $LPRG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLSL  Fill order detail fields.
+     C*
+     CSR         FILLSL    BEGSR
+     C*
+     C*  Move fields from download file to purchase order header fields
+     C*
+     CSR                   MOVE SIITEM    SLITEM
+     CSR                   Z-ADDSIQTY1    SLSTK1
+     CSR         ITFLG1    IFEQ 'Y'
+     CSR                   Z-ADDSIQTY2    SLSTK2
+     CSR                   ELSE
+     CSR                   Z-ADD0         SLSTK2
+     CSR                   ENDIF
+     CSR         ITFLG2    IFEQ 'Y'
+     CSR                   Z-ADDSIQTY3    SLSTK3
+     CSR                   ELSE
+     CSR                   Z-ADD0         SLSTK3
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZBKDN  Check breakdown quanties.
+     C*
+     CSR         ZZBKDN    BEGSR
+     C*
+     CSR                   EXSR ZZSSB
+     C*
+     CSR         SIQTY2    IFNE 0
+     CSR         ITFLG1    ANDNE'Y'
+     CSR         SSBFLG    ANDEQ*OFF
+     CSR                   MOVE DESC,3    DETMSG
+     CSR                   ADD  1         BADBRK
+     CSR                   ENDIF
+     C*
+     CSR         SIQTY3    IFNE 0
+     CSR         ITFLG2    ANDNE'Y'
+     CSR         SSBFLG    ANDEQ*OFF
+     CSR                   MOVE DESC,3    DETMSG
+     CSR                   ADD  1         BADBRK
+     CSR                   ENDIF
+     C*
+     CSR         SIQTY1    IFNE 0
+     CSR                   MOVE 'Y'       GOOD1   1
+     CSR                   ELSE
+     CSR         SIQTY2    IFNE 0
+     CSR         ITFLG1    ANDEQ'Y'
+     CSR         SIQTY2    ORNE 0
+     CSR         SSBFLG    ANDEQ*ON
+     CSR                   MOVE 'Y'       GOOD1
+     CSR                   ELSE
+     CSR         SIQTY3    IFNE 0
+     CSR         ITFLG2    ANDEQ'Y'
+     CSR         SIQTY3    ORNE 0
+     CSR         SSBFLG    ANDEQ*ON
+     CSR                   MOVE 'Y'       GOOD1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+ROY AC*
+ROY AC*    Allow item to be updated into fixed pick slot even if all
+ROY AC*    quantities are zero.
+ROY AC*
+ROY AC           CLIENT    IFEQ ROYAL
+TPC AC           CLIENT    OREQ TPC
+SOF AC           CLIENT    OREQ SOFO
+FPR AC           CLIENT    OREQ FODPRO
+ROY AC*
+ROY AC           SIQTY1    IFEQ 0
+ROY AC           SIQTY2    ANDEQ0
+ROY AC           SIQTY3    ANDEQ0
+ROY AC           SLPICK    ANDEQ'Y'
+ROY AC           SLSTYP    ANDEQ'F'
+ROY AC                     MOVE 'Y'       GOOD1
+ROY AC                     ENDIF
+ROY AC*
+ROY AC                     ENDIF
+     C*
+     CSR                   ENDSR
+417d C*----------------------------------------------------------------
+417d C*
+417d C*  ZZCKDT   Check if item exists in reg or V slot for date
+417d C*
+417d CSR         ZZCKDT    BEGSR
+417d CSR                   MOVE *OFF      EXSTS   1
+417d CSR         KEYSL2    CHAINSSLOT2              N79
+417d CSR         *IN79     IFEQ *OFF
+417d CSR         SSITEM    ANDEQSIITEM
+417d CSR                   MOVE *ON       EXSTS
+417d CSR                   GOTO ENDCKD
+417d CSR                   ELSE
+417d CSR         KEYSL2    SETLLSVSLOT2
+417d CSR         NXTS1     TAG
+417d CSR         KEYSL2    READESVSLOT2                  78
+417d CSR         *IN78     IFEQ '0'
+417d CSR         KEYSVS    CHAINSSLOT2              N79
+417d CSR         *IN79     IFEQ '0'
+417d CSR         SSITEM    ANDEQSIITEM
+417d CSR                   MOVE *ON       EXSTS
+417d C***                  MOVE SLDISP    SIDISP
+417d CSR                   GOTO ENDCKD
+417d CSR                   ELSE
+417d CSR                   GOTO NXTS1
+417d CSR                   ENDIF
+417d CSR                   ENDIF
+417d CSR                   ENDIF
+417d C*
+417d CSR         ENDCKD    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCKNS   Use reg slot or get new Vslot.
+     C*
+     CSR         ZZCKNS    BEGSR
+414aACSR                   MOVE *OFF      NEWVS
+     CSR                   MOVE *ON       ERROR
+     CSR         KEYSL2    CHAINSLOT2               N79
+     CSR         *IN79     IFEQ *OFF
+     CSR         SLITEM    IFEQ *BLANKS
+     CSR                   MOVE *OFF      ERROR
+     CSR                   GOTO ENDCKN
+     CSR                   ELSE
+     C*
+510bAC*   When option 'allow virtual pick slots' is not Yes,
+510bAC*   get out if physical slot is a pick slot so we do not
+510bAC*   create virtual pick slots.
+510bACSR         SLPICK    IFEQ 'Y'
+510bACSR         OPVPCK    ANDNE'Y'
+510bACSR                   MOVE *ON       ERROR
+510bACSR                   GOTO ENDCKN
+510bACSR                   ENDIF
+510bAC*
+     C*
+     C*   Get out if physical slot already uses both
+     C*   positions of handstack field.
+     C*
+     CSR                   MOVEASLHAND    A2
+     CSR         A2,1      IFNE ' '
+     CSR                   GOTO ENDCKN
+     CSR                   ENDIF
+     C*
+     C*   Set handstack flag for later use.
+     C*
+     CSR         SLHAND    IFNE ' '
+     CSR                   MOVE *ON       FLAGHS  1
+     CSR                   ELSE
+     CSR                   MOVE *OFF      FLAGHS
+     CSR                   ENDIF
+     C*
+     C* SAVE PHYSICAL SLOT FIELDS
+     C*
+     CSR                   Z-ADDSLWHSE    PHWHSE
+     CSR                   MOVE SLWHDP    PHWHDP
+     CSR                   MOVE SLAISL    PHAISL
+     CSR                   Z-ADDSLLOC     PHLOC
+     CSR                   Z-ADDSLRLVL    PHRLVL
+     CSR                   MOVE SLHAND    PHHAND
+     CSR                   Z-ADDSLSIDE    PHSIDE
+     CSR                   MOVE SLSTYP    PHSTYP
+     CSR                   MOVE SLDISP    PHDISP
+     CSR                   MOVE SLSDEF    PHSDEF
+     CSR                   MOVE SLDESG    PHDESG
+     CSR                   Z-ADDSLPSEQ    PHPSEQ
+     CSR                   MOVE SLACTV    PHACTV
+     CSR                   MOVE SLBLD     PHBLD
+     CSR                   Z-ADDSLSLFD    PHSLFD
+     C***
+     CSR                   Z-ADDSLPSEQ    $VPSEQ
+     CSR                   MOVE *BLANKS   $VDISP
+     CSR                   Z-ADD0         K
+     CSR                   Z-ADDSLWHSE    $VWHSE  30
+     CSR                   MOVE SLWHDP    $VWHDP  5
+     CSR                   MOVE SLAISL    $VAISL  3
+     CSR                   Z-ADDSLLOC     $VLOC   30
+     CSR                   Z-ADDSLRLVL    $VRLVL  20
+     CSR                   MOVE *BLANKS   $VHAND
+     CSR                   MOVE SLSTYP    $VSTYP  1
+     CSR                   Z-ADDSLPSEQ    $VPSEQ  50
+     CSR                   MOVE *BLANKS   $VDISP
+     CSR                   MOVE SLPICK    $VPICK  1
+     C*
+     C*** Loop & increment handstack to find new v-slot to create.
+     C*
+414cDC**         K         DOWLE720
+414cMCSR         K         DOWLT702
+     CSR                   ADD  1         K
+     C*
+     C*     If physical slot had handstack then limit hs we can use.
+     C*
+     CSR         FLAGHS    IFEQ *ON
+     CSR                   MOVEAHND,K     A2N
+     CSR         A2N,1     IFNE A2,2
+     CSR                   ITER
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   MOVE HND,K     $VHAND
+     CSR                   CALL 'FRMTVS'
+     CSR                   PARM           PHDISP
+     CSR                   PARM           FLAGHS
+     CSR                   PARM           $VHAND  2
+     CSR                   PARM           $VDISP 12
+     C*
+     CSR         CKKEY     CHAINSLOT2               N79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       NEWVS
+     CSR                   MOVE *OFF      ERROR
+     CSR                   MOVE $VDISP    SIDISP
+     CSR                   LEAVE
+     CSR                   ELSE
+     CSR                   ITER
+     CSR                   ENDIF
+     CSR                   ENDDO
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ENDCKN    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCKSL   Check if item exists in reg or V slot
+     C*
+     CSR         ZZCKSL    BEGSR
+     CSR         KEYSL2    CHAINSLOT2               N79
+     CSR         *IN79     IFEQ *OFF
+     CSR         SLITEM    ANDEQSIITEM
+     CSR                   MOVE *ON       EXIST
+     CSR                   GOTO ENDCKS
+     CSR                   ELSE
+     CSR         KEYSL2    SETLLVSLOT2
+     CSR         NXT1      TAG
+     CSR         KEYSL2    READEVSLOT2                   78
+     CSR         *IN78     IFEQ '0'
+     CSR         KEYVS     CHAINSLOT2               N79
+     CSR         *IN79     IFEQ '0'
+     CSR         SLITEM    ANDEQSIITEM
+     CSR                   MOVE *ON       EXIST
+     CSR                   MOVE SLDISP    SIDISP
+     CSR                   GOTO ENDCKS
+     CSR                   ELSE
+     CSR                   GOTO NXT1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ENDCKS    ENDSR
+417c C*----------------------------------------------------------------
+417c C*
+417c C*  ZZCRTL   Create adjustment label record.
+417c C*
+417c CSR         ZZCRTL    BEGSR
+417cAC*
+417cAC                     CLEARLBREC
+417cAC                     Z-ADDSLWHSE    LBWHSE
+417cAC                     MOVE SLWHDP    LBWHDP
+417cAC                     MOVE SLAISL    LBAISL
+417cAC                     Z-ADDSLLOC     LBLOC
+417cAC                     Z-ADDSLRLVL    LBRLVL
+417cAC                     MOVE SLHAND    LBHAND
+417cAC                     Z-ADDSLPSEQ    LBPSEQ
+417cAC                     MOVE SLSTYP    LBSTYP
+417cAC           SLSTYP    IFEQ 'P'
+417cAC                     Z-ADD1         LBQRYF
+417cAC                     ELSE
+417cAC                     Z-ADD0         LBQRYF
+417cAC                     ENDIF
+417cAC                     MOVE SLDISP    LBDISP
+417cAC                     MOVE SLITEM    LBITEM
+417cAC                     Z-ADD0         LBSEQ
+417cAC                     Z-ADD0         LBPBAT
+417cAC                     MOVE *BLANKS   LBPO
+417cAC                     Z-ADD0         LBORD
+417cAC                     Z-ADD0         LBQALC
+417cAC                     Z-ADD0         LBUCUB
+417cAC                     Z-ADD0         LBCUBE
+417cAC                     Z-ADD0         LBUWGT
+417cAC                     Z-ADD0         LBSWGT
+417cAC                     Z-ADD0         LBTIE
+417cAC                     Z-ADD0         LBHIGH
+417cAC                     Z-ADD0         LBTRN#
+417cAC*    Normal UOM
+417cAC           SIQTY1    IFNE 0
+417cAC                     Z-ADDSIQTY1    LBQPCK
+417cAC                     CALL 'PIRLBL#'
+417cAC                     PARM           LBLBL#
+417cAC                     MOVE *BLANKS   LBGRP1
+417cAC                     MOVE *BLANKS   LBGRP2
+417cAC                     MOVE 'N'       LBUTYP
+417cAC                     MOVE *BLANKS   LBUCOD
+417c C*          *IN75     IFEQ *OFF
+417cAC                     MOVE ITUM1     LBUCOD
+417c C*                    ENDIF
+417cAC                     MOVE 'A'       LBTYPE
+417cAC                     MOVE 'C'       LBSTAT
+417cAC                     Z-ADDIMPDTE    LBSDTE
+417cAC                     Z-ADDIMPTIM    LBSTIM
+417cAC                     Z-ADDIMPDTE    LBRDTE
+417cAC                     Z-ADD0         LBSWGT
+417cAC                     WRITELBREC
+417cAC                     ENDIF
+417cAC*
+417cAC*    BRK1 UOM
+417cAC           SIQTY2    IFNE 0
+417cAC                     Z-ADDSIQTY2    LBQPCK
+417cAC                     CALL 'PIRLBL#'
+417cAC                     PARM           LBLBL#
+417cAC                     MOVE *BLANKS   LBGRP1
+417cAC                     MOVE *BLANKS   LBGRP2
+417cAC                     MOVE '1'       LBUTYP
+417cAC                     MOVE *BLANKS   LBUCOD
+417c C*          *IN75     IFEQ *OFF
+417cAC                     MOVE ITUM2     LBUCOD
+417c C*                    ENDIF
+417cAC                     MOVE 'A'       LBTYPE
+417cAC                     MOVE 'C'       LBSTAT
+417cAC                     Z-ADDIMPDTE    LBSDTE
+417cAC                     Z-ADDIMPTIM    LBSTIM
+417cAC                     Z-ADDIMPDTE    LBRDTE
+417cAC                     Z-ADD0         LBSWGT
+417cAC                     WRITELBREC
+417cAC                     ENDIF
+417cAC*
+417cAC*    BRK2 UOM
+417cAC           SIQTY3    IFNE 0
+417cAC                     Z-ADDSIQTY3    LBQPCK
+417cAC                     CALL 'PIRLBL#'
+417cAC                     PARM           LBLBL#
+417cAC                     MOVE *BLANKS   LBGRP1
+417cAC                     MOVE *BLANKS   LBGRP2
+417cAC                     MOVE '2'       LBUTYP
+417cAC                     MOVE *BLANKS   LBUCOD
+412 A**          *IN75     IFEQ *OFF
+417cAC                     MOVE ITUM3     LBUCOD
+412aA**                    ENDIF
+417cAC                     MOVE 'A'       LBTYPE
+417cAC                     MOVE 'C'       LBSTAT
+417cAC                     Z-ADDIMPDTE    LBSDTE
+417cAC                     Z-ADDIMPTIM    LBSTIM
+417cAC                     Z-ADDIMPDTE    LBRDTE
+417cAC                     Z-ADD0         LBSWGT
+417cAC                     WRITELBREC
+417cAC                     ENDIF
+417c CSR         ENDCTL    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZMAN    Get slot to use for manual putaway.
+     C*
+     CSR         ZZMAN     BEGSR
+     CSR                   MOVE *OFF      ERROR
+414aACSR                   MOVE *OFF      EXIST
+     C*
+     C*  Check if item already exists in the base slot
+     C*    or in a corresponding virtual slot.
+     C*
+     CSR                   EXSR ZZCKSL
+     C*
+     C*  If item doesn't already exist in the slot,
+     C*    Then try to get a new virtual slot number for it.
+     C*
+     CSR         EXIST     IFEQ *OFF
+     CSR                   EXSR ZZCKNS
+     CSR         ERROR     IFEQ *ON
+510bACSR         SLPICK    IFEQ 'Y'
+510bACSR         OPVPCK    ANDNE'Y'
+510bACSR                   MOVE DESC,11   DETMSG
+510bACSR                   ELSE
+     CSR                   MOVE DESC,5    DETMSG
+510bACSR                   ENDIF
+     CSR                   ADD  1         NOTCRT
+     CSR                   GOTO ENDMAN
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR         ENDMAN    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZRCAL   Recalculate item quantity from slots.
+     C*
+     CSR         ZZRCAL    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C* Recalculate item qty.
+     C                     Z-ADDLSTWHS    $PWHS  155
+     C                     MOVE 'N'       $JOBQ   1
+     C                     CALL 'UT812'
+     C                     PARM           $PWHS
+     C                     PARM '*ALL    '$ITEM  15
+     C                     PARM           $JOBQ
+     C                     PARM           $LPRG
+     C                     PARM           $LRTN
+     C                     PARM           $LMSG
+     C*
+     CSR         ENDCAL    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZSSB   Check for SSB item.
+     C*
+     CSR         ZZSSB     BEGSR
+     C*
+     C*   Get SSB item, if one exists
+     C*
+     CSR                   MOVE *OFF      SSBFLG  1
+     CSR         ITTYPE    IFEQ ' '
+     CSR                   CALL 'GETSSB'
+     CSR                   PARM ITWHSE    $GWHSE  30
+     CSR                   PARM ITITEM    $GITEM 15
+     CSR                   PARM ' '       #BITEM 15
+     CSR                   PARM           #BDESC 30
+     CSR                   PARM           #BPDSC 15
+     CSR                   PARM           #BWHDP  5
+     CSR                   PARM           #BSTYP  1
+     CSR                   PARM           #BUM    2
+     CSR                   PARM           #BUM2   2
+     CSR                   PARM           #BUMQ2  30
+     CSR                   PARM           #BUM3   2
+     CSR                   PARM           #BUMQ3  30
+     CSR                   PARM           #BRTN   8
+415aAC*    Same slot breakdown was found.
+415aACSR         #BRTN     IFEQ '*FOUND  '
+415aACSR                   MOVE *ON       SSBFLG
+415aACSR                   ENDIF
+     CSR                   ENDIF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD    Update slot file
+     C*
+     CSR         ZZUPD     BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*   Update record.
+     C*
+     C*  Create new slot record
+     C*  $V = from Physical slot when virtual was checked
+     C*  PH = from saved from physical slot when virtual was checked
+     C*  SV = saved from 'FROM' slot.
+     C*  SL = saved from 'FROM' slot.
+     CSR         NEWVS     IFEQ *ON                             B01
+417  C           SITYPE    IFEQ 'I'                        SITYPE = 'I'
+     CSR                   Z-ADD$VWHSE    SLWHSE
+     CSR                   MOVE $VWHDP    SLWHDP
+     CSR                   MOVE 'A '      SLSTAT
+FPRaAC*
+FRPaAC           CLIENT    IFEQ FODPRO
+FPRaAC                     MOVELSIDISP    WRK4    4
+FPRaAC           WRK4      IFEQ 'WHS2'
+FPRaAC                     MOVE 'SR'      SLSTAT
+FPRaAC                     ENDIF
+FPRaAC           WRK4      IFEQ 'WHS4'
+FPRaAC                     MOVE 'FR'      SLSTAT
+FPRaAC                     ENDIF
+FPRaAC                     ENDIF
+FPRaAC*
+     CSR                   MOVE $VAISL    SLAISL
+     CSR                   Z-ADD$VLOC     SLLOC
+     CSR                   Z-ADD$VRLVL    SLRLVL
+     CSR                   MOVE $VHAND    SLHAND
+     CSR                   Z-ADDPHSIDE    SLSIDE
+     CSR                   MOVE $VSTYP    SLSTYP
+     CSR                   MOVE $VDISP    SLDISP
+     CSR                   MOVE PHSDEF    SLSDEF
+     CSR                   MOVE PHDESG    SLDESG
+     CSR                   MOVE PHACTV    SLACTV
+     CSR                   MOVE PHBLD     SLBLD
+     CSR                   Z-ADD$VPSEQ    SLPSEQ
+     CSR                   Z-ADD0         SLSLFD
+     CSR                   MOVE 'V'       SLRSRV
+     CSR                   Z-ADDSVEXPD    SLEXPD
+     CSR                   Z-ADD0         SLPRTY
+     CSR                   Z-ADDIMPDTE    SLENTD
+     CSR                   Z-ADDIMPDTE    SLSDTE
+     CSR                   Z-ADDIMPTIM    SLSTIM
+     CSR                   MOVE SIITEM    SLITEM
+     C*
+     CSR                   Z-ADDSIQTY1    SLSTK1
+     C*
+     CSR         ITFLG1    IFEQ 'Y'
+     CSR                   Z-ADDSIQTY2    SLSTK2
+     CSR                   ELSE
+     CSR                   Z-ADD0         SLSTK2
+     CSR                   ENDIF
+     C*
+     CSR         ITFLG2    IFEQ 'Y'
+     CSR                   Z-ADDSIQTY3    SLSTK3
+     CSR                   ELSE
+     CSR                   Z-ADD0         SLSTK3
+     CSR                   ENDIF
+     C*
+417d C*  Check for item in saved files (sslot or svslot)
+417d C                     EXSR ZZCKDT                     SITYPE = 'I'
+417d C           EXSTS     IFEQ *ON
+417d CSR                   Z-ADDSSEXPD    SLEXPD
+417d CSR                   Z-ADDSSENTD    SLENTD
+417d C                     ENDIF
+417d C*
+520aAC*  clear allocate bucket
+520aACSR                   Z-ADD0         SLALC1
+520aACSR                   Z-ADD0         SLALC2
+520aACSR                   Z-ADD0         SLALC3
+520aAC*  clear receive bucket
+520aACSR                   Z-ADD0         SLRCV1
+520aACSR                   Z-ADD0         SLRCV2
+520aACSR                   Z-ADD0         SLRCV3
+520aAC*  clear pick bucket
+520aACSR                   Z-ADD0         SLPCK1
+520aACSR                   Z-ADD0         SLPCK2
+520aACSR                   Z-ADD0         SLPCK3
+520aAC*  clear transfer bucket
+520aACSR                   Z-ADD0         SLTFR1
+520aACSR                   Z-ADD0         SLTFR2
+520aACSR                   Z-ADD0         SLTFR3
+520aAC*
+     CSR                   WRITESLREC                  79
+     CSR         *IN79     IFEQ *ON                               B03
+     CSR                   MOVE *ON       ERROR
+414aDC**                   MOVE DESC,5    DETMSG
+414aMCSR                   MOVE DESC,7    DETMSG
+     CSR                   ADD  1         NOTCRT
+     CSR                   GOTO ENDUPD
+     CSR                   ENDIF                                  E03
+     CSR                   ADD  1         SLTCRT
+     C*
+     C*  create vslot record.
+     C*
+     CSR                   Z-ADD$VWHSE    VSWHSE
+     CSR                   MOVE $VWHDP    VSWHDP
+     CSR                   MOVE $VAISL    VSAISL
+     CSR                   Z-ADD$VLOC     VSLOC
+     CSR                   Z-ADD$VRLVL    VSRLVL
+     CSR                   MOVE $VHAND    VSHAND
+     CSR                   MOVE $VDISP    VSDISP
+     CSR                   MOVE PHDISP    VSPDIS
+     CSR                   Z-ADDIMPDTE    VSCDTE
+     CSR                   Z-ADDIMPTIM    VSCTIM
+     CSR                   ADD  1         VSCTIM
+     CSR                   WRITEVSREC                  79
+     CSR         *IN79     IFEQ *ON                               B04
+     CSR                   MOVE *ON       ERROR
+414aDC**                   MOVE DESC,5    DETMSG
+414aMCSR                   MOVE DESC,8    DETMSG
+     CSR                   ADD  1         NOTCRT
+     CSR                   GOTO ENDUPD
+     CSR                   ENDIF                                  E04
+     C*
+417  C                     ELSE                            SITYPE = 'P'
+417  CSR                   MOVE *ON       ERROR
+417  CSR                   MOVE DESC,10   DETMSG
+417  CSR                   ADD  1         NOTCRT
+417  CSR                   GOTO ENDUPD
+417  C                     ENDIF                           SITYPE = 'I'
+     C***
+     CSR                   ELSE                                   XX
+     C*
+     C*** Update slot record
+     C*
+     CSR         KEYSL2    CHAINSLOT2                79
+     C*
+     CSR         *IN79     IFEQ *OFF                              B05
+     C*
+     CSR                   MOVE SIITEM    SLITEM
+     CSR         SLSTAT    IFEQ 'V '
+     CSR         SLSTAT    OREQ 'Z '
+     CSR                   MOVE 'A '      SLSTAT
+     CSR                   ENDIF
+FPRaAC*
+FRPaAC           CLIENT    IFEQ FODPRO
+FPRaAC                     MOVELSIDISP    WRK4
+FPRaAC           WRK4      IFEQ 'WHS2'
+FPRaAC                     MOVE 'SR'      SLSTAT
+FPRaAC                     ENDIF
+FPRaAC           WRK4      IFEQ 'WHS4'
+FPRaAC                     MOVE 'FR'      SLSTAT
+FPRaAC                     ENDIF
+FPRaAC                     ENDIF
+FPRaAC*
+     C*
+417  C           SITYPE    IFEQ 'P'
+417  C                     SUB  SIQTY1    SLSTK1
+417  C                     ELSE
+     CSR                   Z-ADDSIQTY1    SLSTK1
+417  C                     ENDIF
+     CSR         ITFLG1    IFEQ 'Y'
+417  C           SITYPE    IFEQ 'P'
+417  C                     SUB  SIQTY2    SLSTK2
+417  C                     ELSE
+     CSR                   Z-ADDSIQTY2    SLSTK2
+417  C                     ENDIF
+     CSR                   ELSE
+     CSR                   Z-ADD0         SLSTK2
+     CSR                   ENDIF
+     CSR         ITFLG2    IFEQ 'Y'
+417  C           SITYPE    IFEQ 'P'
+417  C                     SUB  SIQTY3    SLSTK3
+417  C                     ELSE
+     CSR                   Z-ADDSIQTY3    SLSTK3
+417  C                     ENDIF
+     C                     ELSE
+     CSR                   Z-ADD0         SLSTK3
+     CSR                   ENDIF
+     C*
+     CSR                   Z-ADDIMPDTE    SLENTD
+     CSR                   Z-ADDIMPDTE    SLSDTE
+     CSR                   Z-ADDIMPTIM    SLSTIM
+417d C*  Check for item in saved files (sslot or svslot)
+417d C                     EXSR ZZCKDT                     SITYPE = 'I'
+417d C           EXSTS     IFEQ *ON
+417d CSR                   Z-ADDSSEXPD    SLEXPD
+417d CSR                   Z-ADDSSENTD    SLENTD
+417d C                     ENDIF
+417d C*
+417  C           SITYPE    IFEQ 'P'
+417  C*
+417  C*   Check if status needs to be changed
+417  C*
+417  CSR                   CALL 'CHKSTAT'
+417  CSR                   PARM           SLWHSE
+417  CSR                   PARM           SLITEM
+417  CSR                   PARM           SLSTYP
+417  CSR                   PARM           SLRSRV
+417  CSR                   PARM           SLPICK
+417  CSR                   PARM           SLSTAT
+530aACSR                   PARM           SLDESG
+417  CSR                   PARM           SLSTK1
+417  CSR                   PARM           SLSTK2
+417  CSR                   PARM           SLSTK3
+417  CSR                   PARM           SLALC1
+417  CSR                   PARM           SLALC2
+417  CSR                   PARM           SLALC3
+417  CSR                   PARM           SLTFR1
+417  CSR                   PARM           SLTFR2
+417  CSR                   PARM           SLTFR3
+417  CSR                   PARM           SLPCK1
+417  CSR                   PARM           SLPCK2
+417  CSR                   PARM           SLPCK3
+417  CSR                   PARM           SLRCV1
+417  CSR                   PARM           SLRCV2
+417  CSR                   PARM           SLRCV3
+417  CSR                   PARM           $CNEWS  2
+417  CSR                   PARM           $CRTN   8
+     C*
+417  CSR         $CRTN     IFEQ '*CHANGED'
+417  CSR                   MOVE $CNEWS    SLSTAT
+417  CSR                   Z-ADDTODAY     SLSDTE
+417  CSR                   TIME           SLSTIM
+417  CSR                   ENDIF
+417  CSR                   ENDIF
+     C*
+     CSR                   UPDATSLREC                  79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE DESC,6    DETMSG
+     CSR                   ADD  1         NOTUPD
+     CSR                   ENDIF
+     CSR                   ADD  1         SLTUPD
+     CSR                   ENDIF
+     CSR                   ENDIF
+417b C*  Reduce pick qty from ITEMQTY file.
+417b CSR         SITYPE    IFEQ 'P'
+417b CSR         KEYIT     CHAINITEMQTY              79
+417b C           *IN79     IFEQ *OFF
+417b C                     SUB  SIQTY1    IQSTK1
+417b CSR         ITFLG1    IFEQ 'Y'
+417b C                     SUB  SIQTY2    SLSTK2
+417b C                     ENDIF
+417b CSR         ITFLG2    IFEQ 'Y'
+417b C                     SUB  SIQTY3    SLSTK3
+417b C                     ENDIF
+417b CSR                   UPDATIQREC                  79
+417b CSR                   ENDIF
+417b CSR                   ENDIF
+     C*
+417cMCSR         ENDUPD    TAG
+417cACSR         ERROR     IFEQ *OFF
+417cACSR                   EXSR ZZCRTL
+417cACSR                   ENDIF
+417cDC**         ENDUPD    ENDSR
+417cMCSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+510bAC*  ZZVRTO   Get Virtual slot options
+510bAC*
+510bACSR         ZZVRTO    BEGSR
+510bAC*
+510bAC                     MOVE '*VIRTUAL'KYOCOD
+510bACSR         OPKEY     CHAINOPTIONS              79
+510bACSR         *IN79     IFEQ *ON
+510bACSR                   MOVE 'N'       OPVPCK
+510bACSR                   MOVE 'N'       OPVALL
+510bACSR                   MOVE 'Y'       OPVSLT
+510bACSR                   MOVE 'N'       OPVEXP
+510bACSR                   MOVE 'N'       OPVEND
+510bACSR                   MOVE 'N'       OPVSAM
+510bACSR                   MOVE 'N'       OPVEDF
+510bACSR                   ELSE
+510bACSR                   MOVE OPDATA    OPDAT4
+510bACSR                   ENDIF
+510bAC*
+510bACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZRHEAD   Print report headings.
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         COUNT     IFGE LINPPG
+     CSR                   SETON                     81
+     CSR                   Z-ADD0         COUNT
+     CSR                   WRITEHEAD1
+     CSR                   ADD  2         COUNT
+     CSR                   SETOF                     81
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+*INVALID SLOT*
+*INVALID ITEM*
+*BREAKDOWN INVALID*
+*INVALID ITEM TYPE*
+*CAN'T CREATE VS/1*
+*SLOT NOT UPDATED*
+*CAN'T CREATE VS/2*
+*CAN'T CREATE VS/3*
+ITEM MISMATCH IN SLT
+SLOT NOT FOUND
+VIR PCK/SL NOT ALLOW         510bA
+**
+FTP StuffIt Import
+**
+ ABCDEFGHIJKLMNOPQRSTUVWXYZ

@@ -1,0 +1,1173 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1999 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (630) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  LOADR12   Load Trailer Equipment Detail - Loader Module
+     F*  December 21, 2006
+     F*  Jose Duque
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions:
+     F*
+520 AF*    07/11/08  RBD  5.20    P#00060
+     F*      - Enh: Added client custom code support to program.
+530aAF*    07/08/10  RH   5.30a
+     F*      - Enh: Display dock door assigned in truck builder.
+     F*
+640 AF*    03/16/11  JGD  6.40
+     F*      Enh - Recompiled only to pick up file Ldrteq new version.
+     F*
+640 AF*    03/21/11  CBI-JGD
+     F*      Enh - Add logic to load new output file record
+     F*      Enh - Ldrtrle1/Eqrec, also, change start date
+     F*      Enh - and time field names to 'LTLDTE' and 'LTLTIM'.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: CHENEY
+     F*
+CBI AF*    07/21/08  RBD  CBI     P#00060
+     F*      - Coded conditional loader reason code logic as specific
+     F*        to Cheney.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  01 - 20   FIELD POSITION TO
+     F*  21 - 40   FIELD INPUT ERROR (REVERSE DISPLAY)
+     F*  60        Display product temps at item level.
+     F*  90        VIEW MODE (PROTECT INPUT FIELDS)
+     F*  91        CHANGE MODE (PROTECT KEY)
+     F*  97        ALWAYS ON (USED FOR SFLEND KEYWORD)
+     F*  98        ERROR ON SCREEN (SOUND BUZZER)
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FLOAD12FMCF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        MSGK  KSFILE MSGREC
+     FPIRUSER IF  E           K        DISK
+     FPIRUSER1IF  E           K        DISK
+     F            USREC                             KRENAMEUSREC1
+     FLRSNCODEIF  E           K        DISK
+     FLDRHDR  IF  E           K        DISK
+     FLDREXCP2IF  E           K        DISK
+     FORDH1   IF  E           K        DISK
+530aAFDOCMTRX2IF  E           K        DISK
+     FRTEHED  IF  E           K        DISK
+     FLDRTEQ  UF  E           K        DISK                      A
+640 AFLDRTRLE1UF  E           K        DISK                      A
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A4          4  1
+     E                    $MD       128  1
+     E                    DESC    1   2 70
+     I*----------------------------------------------------------------
+520 AI*  Client ID's
+     I*
+CBI A /COPY QCOPYSRC,IL#CHENEY
+     I*
+520 AI              'GETCLIENT'           C         @GETCL
+     I*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*  Constants
+     I              '0123456789 '         C         DIGITS
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  23 $LCODE
+     I*
+     ISCRN1       DS
+     I                                        1   4 CVALI
+     I                                        1   40NVALO
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I                                        1  30 ERFLD
+     I                                       31  40 ERFROM
+     I                                       41  50 ERTO
+     I            DS
+     I                                    P   1   20$EC
+     I*
+     I            DS
+     I                                        1  20 DSMISC
+     I                                        1   8 DSSDTE
+     I                                        9  11 DSSPCL
+     I                                       12  12 DSRPCK
+     I                                       13  14 DSDOOR
+     I                                       15  15 DSMEAT
+     I                                       16  16 DSCODE
+     I                                       19  19 DSRVS
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message in $PERM
+     C*              *PGMQ    - Error occured. Message sent to pgmq.
+     C*      $PERM   Error message or pointer to message in pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PRTE#  5
+     C                     PARM           $PRTID  5
+     C                     PARM           $PSTRD  8
+     C                     PARM           $PSTRT  6
+     C                     PARM           $PTLR#  8
+     C                     PARM           $PEMP#  5
+     C                     PARM           $PPRG  10
+     C                     PARM           $PAORC  1
+     C                     PARM           $PCOM1 35
+     C                     PARM           $PCOM2 35
+     C                     PARM           $PRCDE  2
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     EXSR ZZINZ1
+     C*
+     C           NXTSCR    DOWNE'EOJ'
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+     C           NXTSCR    CASEQ'02 '     SC1
+     C           NXTSCR    CASEQ'04 '     SC1
+     C                     ENDCS
+     C*
+     C                     ENDDO
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     EXSR ZSCLR
+     C                     SETON                     LR
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ '1'
+     CSR                   MOVE '1'       *IN98
+     CSR                   END
+     C*
+     C*   Overlay screen with error messages
+     C*
+     C                     EXSR ZMDMSG
+     C*
+     C*  Overlay screen with screen to be processed.
+     C*
+     CSR         NXTSCR    IFEQ '01 '
+     CSR                   EXFMTWINDW1                 50
+     CSR                   END
+     C*
+     CSR         NXTSCR    IFEQ '02 '
+     CSR                   EXFMTWINDW2                 50
+     CSR                   END
+     C*
+     CSR         NXTSCR    IFEQ '04 '
+     CSR                   EXFMTWINDW4                 50
+     CSR                   END
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     010203
+     CSR                   SETOF                     040506
+     CSR                   SETOF                     070809
+     CSR                   SETOF                     101112
+     CSR                   SETOF                     1314
+     CSR                   SETOF                     1920
+     CSR                   SETOF                     212223
+     CSR                   SETOF                     242526
+     CSR                   SETOF                     272829
+     CSR                   SETOF                     303132
+     CSR                   SETOF                     333435
+     CSR                   SETOF                     36
+     CSR                   SETOF                     98
+      *
+     CSR                   MOVE '0'       WARN    1
+     CSR                   MOVE '0'       ERROR   1
+     CSR                   MOVE '0'       CMDTKN  1
+      *
+     CSR                   Z-ADD0         E       20
+      *
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen1
+     C*
+     C*----------------------------------------------------------------
+     CSR         SC1       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ '1'
+     CSR                   MOVE 'EOJ'     NXTSCR  3
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ '1'
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for other command keys
+     C*
+     CSR                   EXSR ZZCMD1
+     CSR         CMDTKN    CABEQ*ON       ENDSC1
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR                   EXSR ZZCHK1
+     CSR         ERROR     CABEQ'1'       ENDSC1
+     C*
+640 AC*     Write or update 'Ldrteq' and 'Ldrtrle' files.
+     C*
+     C           UPDT      IFEQ '1'                        UPDT is set
+     C                     UPDATLTREC                      in ZZINZ1
+     C                     ELSE
+     C                     WRITELTREC
+     C                     ENDIF
+      *
+640 AC           UPDT2     IFEQ '1'                        UPDT2 is set
+640 AC                     UPDATEQREC
+640 AC                     ELSE
+640 AC                     WRITEEQREC
+640 AC                     ENDIF
+      *
+     C                     MOVE '*OK     '$PRTN
+      *
+     C                     MOVE 'EOJ'     NXTSCR
+     C*
+      *
+     C           ENDSC1    ENDSR
+      *
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFNAM   Format loader name.
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZZFNAM    BEGSR
+     C*
+     C                     MOVE *BLANKS   W1USER
+     C                     MOVE *BLANKS   FNAME
+     C                     MOVE *BLANKS   LNAME
+     C*
+     C                     MOVE USEMP#    W1LDR#
+     C                     MOVE USEMP#    W1LDR#
+     C                     MOVE USEMP#    LTEMP#
+     C           ' '       SCAN USFNAM    P1      20
+     C           P1        SUBSTUSFNAM:1  FNAME  12
+     C           ' '       SCAN USLNAM    P2      20
+     C           P2        SUBSTUSLNAM:1  LNAME  16
+     C           FNAME     CAT  LNAME:1   W1USER
+     C*
+      *
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C*----------------------------------------------------------------
+     CSR         *INZSR    BEGSR
+     *
+520 A*  Get Client ID
+     *
+520 AC                     CALL @GETCL
+520 AC                     PARM           CLIENT 10
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01122     ROLLUP  50
+     C                     Z-ADD01123     ROLLDN  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*---------------------------------------------------------------
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE '0'       *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE '1'       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*---------------------------------------------------------------
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     C*---------------------------------------------------------------
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     C*---------------------------------------------------------------
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     C*---------------------------------------------------------------
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     C*---------------------------------------------------------------
+     CSR         ZSCLR     BEGSR
+     CSR                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     C*---------------------------------------------------------------
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*      PIR0105 Gneric message
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZM0105    BEGSR
+     CSR                   MOVE 'PIR0105' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*    PIR0203  Value cannot be blank.
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZM0203    BEGSR
+     CSR                   MOVE 'PIR0203' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR9905  Cursor not in correct position for lookup.
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZM9905    BEGSR
+     CSR                   MOVE 'PIR9905' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK1   Window1 and Window2 error checking.
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZZCHK1    BEGSR
+      *
+     C                     MOVE '0'       ERROR
+     C                     MOVE *BLANKS   ERRMSG
+      *
+      *  Check if user id is found in user file.
+      *
+     C           #USER     CHAINPIRUSER              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN01
+     C                     MOVE *ON       *IN26
+     C                     MOVEADESC,1    ERRMSG
+     C                     EXSR ZM0105
+     C                     GOTO ENDCK1
+     C                     ENDIF
+      *
+     C           W1BK1     IFNE *BLANKS
+     C           DIGITS    CHECKW1BK1                    79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN21
+     C                     ELSE
+     C                     MOVELW1BK1     HOLD4   4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTBK1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN21
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1BH1     IFNE *BLANKS
+     C           DIGITS    CHECKW1BH1                    79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN22
+     C                     ELSE
+     C                     MOVELW1BH1     HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTBH1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN22
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1LB1     IFNE *BLANKS
+     C           DIGITS    CHECKW1LB1                    79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN23
+     C                     ELSE
+     C                     MOVELW1LB1     HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTLB1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN23
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1ICS1    IFNE *BLANKS
+     C           DIGITS    CHECKW1ICS1                   79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN24
+     C                     ELSE
+     C                     MOVELW1ICS1    HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTICS1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN24
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1ICM1    IFNE *BLANKS
+     C           DIGITS    CHECKW1ICM1                   79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN25
+     C                     ELSE
+     C                     MOVELW1ICM1    HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTICM1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN25
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1ICL1    IFNE *BLANKS
+     C           DIGITS    CHECKW1ICL1                   79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN26
+     C                     ELSE
+     C                     MOVELW1ICL1    HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTICL1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN26
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1SFB1    IFNE *BLANKS
+     C           DIGITS    CHECKW1SFB1                   79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN27
+     C                     ELSE
+     C                     MOVELW1SFB1    HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTSFB1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN27
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1SPL1    IFNE *BLANKS
+     C           DIGITS    CHECKW1SPL1                   79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN28
+     C                     ELSE
+     C                     MOVELW1SPL1    HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTSPL1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN28
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+     C           W1TPL1    IFNE *BLANKS
+     C           DIGITS    CHECKW1TPL1                   79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN29
+     C                     ELSE
+     C                     MOVELW1TPL1    HOLD4
+     C                     EXSR ZZCONV
+     C                     Z-ADDNVALO     LTTPL1
+     C                     ENDIF
+     C                     ELSE
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN29
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,2    ERRMSG
+     C                     EXSR ZM0105
+     C                     ENDIF
+     C                     ENDIF
+      *
+      *
+     C           ENDCK1    ENDSR
+      *
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD1   User defined command keys for screen 1.
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZZCMD1    BEGSR
+     CSR                   MOVE '0'       CMDTKN
+     C*
+     C*  Test for F4 - Lookup
+     C*
+     CSR         *INKD     IFEQ *ON
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     CSR                   ENDIF
+     C*
+     CSR         ENDCM1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCONV   Convert character input to numeric value.
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZZCONV    BEGSR
+      *
+     C           FRFIL     IFEQ '1'                        Convert
+     C                     GOTO FRMFIL                     values from
+     C                     ENDIF                           file
+      *
+     C                     MOVE '0000'    A4
+     C                     MOVE '0000'    CVALI
+     C                     MOVE ' '       HOLD1   1
+     C                     Z-ADD4         P1
+     C                     Z-ADD4         P2
+      *
+     C           P1        DOWNE*ZEROS                     Converting
+     C                     SUBSTHOLD4:P1  HOLD1            values from
+     C           HOLD1     IFNE *BLANK                     screen
+     C                     MOVEAHOLD1     A4,P2
+     C                     SUB  1         P2
+     C                     ENDIF
+     C                     SUB  1         P1
+     C                     ENDDO
+     C                     MOVEAA4        CVALI
+     C                     GOTO ENDCNV
+      *
+      *
+     C           FRMFIL    TAG
+      *
+     C                     MOVE *BLANKS   A4
+     C                     MOVE *BLANKS   CVALO   4
+     C                     MOVE ' '       HOLD1
+     C                     Z-ADD1         P1
+     C                     Z-ADD1         P2
+      *
+     C           P1        DOWNE5
+     C                     SUBSTHOLD4:P1  HOLD1            Converting
+     C           HOLD1     IFNE '0'                        values from
+     C           P2        ORGT 1
+     C                     MOVEAHOLD1     A4,P2            file
+     C                     ADD  1         P2
+     C                     ENDIF
+     C                     ADD  1         P1
+     C                     ENDDO
+     C                     MOVEAA4        CVALO
+      *
+     CSR         ENDCNV    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ1   Program initialization. Called from main line.
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZZINZ1    BEGSR
+     C*
+     C*  Define key for main file.
+     C*
+     C           TRLKEY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           HLDTRL  8
+     C*
+     C           RCDEKY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           W1RCDE
+      *
+     C           HDREKY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PRTE#
+     C                     KFLD           $PRTID
+      *
+     C           HDRKEY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PRTE#
+     C                     KFLD           $PRTID
+     C                     KFLD           PSTRD
+     C                     KFLD           PSTRT
+      *
+     C           RTKEY     KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PRTID
+      *
+     C           OHKEY     KLIST
+     C                     KFLD           RHPBAT
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PRTID
+530aAC*
+530aAC*     Partial key to get dock door.
+530aAC           DCKEY     KLIST
+530aAC                     KFLD           $PWHSE
+530aAC                     KFLD           $PRTID
+     C*
+     C*  Convert today's date into century format.
+     C*
+     C                     MOVE $PSTRD    PSTRD   80
+     C                     MOVE #JOBDT    W1DATE
+     C                     MOVE $PSTRT    PSTRT   60
+     C                     MOVE $PWHSE    LTWHSE
+     C                     MOVEL$PRTE#    W1RTE#
+     C                     MOVEL$PRTE#    LTRTE
+     C                     MOVEL$PRTID    LTRTID
+     C                     MOVE $PTLR#    W1TRL#
+     C                     MOVE $PTLR#    LTTRLR
+     C                     MOVE *ZEROS    W1LDR#
+     C                     MOVE *BLANKS   W1BK1
+     C                     MOVE *BLANKS   W1BH1
+     C                     MOVE *BLANKS   W1LB1
+     C                     MOVE *BLANKS   W1ICS1
+     C                     MOVE *BLANKS   W1ICM1
+     C                     MOVE *BLANKS   W1ICL1
+     C                     MOVE *BLANKS   W1SFB1
+     C                     MOVE *BLANKS   W1SPL1
+     C                     MOVE *BLANKS   W1TPL1
+     C                     MOVE *BLANKS   ERRMSG
+     C*
+     C                     MOVE '*MDYCMD '$CVCMD
+     C                     MOVE #JOBDT    $CVD6I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+640 MC                     MOVE $CVD8O    LTLDTE
+640 MC                     TIME           LTLTIM
+640 AC                     Z-ADDLTLDTE    W1STRT
+      *
+      *
+      *  Get loading door number
+     C                     MOVE *BLANKS   W1DOOR
+      *
+     C           RTKEY     CHAINRTEHED               79
+     C           *IN79     IFEQ *OFF
+530aAC                     SELEC
+CBI AC           CLIENT    WHEQ CHENEY
+      *
+     C           OHKEY     SETLLORDH1
+     C           OHKEY     READEORDH1                    79
+     C           *IN79     IFEQ *OFF
+     C                     MOVE OHMISC    DSMISC
+     C                     MOVELDSDOOR    W1DOOR
+     C                     ENDIF
+530aAC                     OTHER
+530aAC           DCKEY     SETLLDOCMTRX2
+530aAC           DCKEY     READEDOCMTRX2                 78
+530aAC           *IN78     IFEQ *OFF
+530aAC                     MOVE DMDOOR    W1DOOR
+530aAC                     MOVE DMDOOR    DSDOOR
+530aAC                     ENDIF
+530aAC                     ENDSL
+     C                     ENDIF
+     C*
+     C*  Check if viewing assigned route
+     C*
+     C           $PAORC    IFEQ 'V'                        V=View
+     C                     EXSR ZZVIEW
+     C                     GOTO ENDINZ
+     C                     ENDIF
+      *
+      *
+     C*
+     C*  Check if assigning route 1st time or changing route loader
+     C*
+     C                     SETON                       90
+     C           $PAORC    IFEQ 'C'                        C=Change
+     C                     MOVEL$PTLR#    W1TRL#
+     C                     MOVE $PEMP#    W1LDR#
+     C                     MOVE '02 '     NXTSCR
+     C                     GOTO BYPAS1
+     C                     ENDIF
+      *
+     C           $PAORC    IFEQ 'U'                        U=Unload
+     C                     MOVEL$PTLR#    W1TRL#             Trailer
+     C                     MOVE $PEMP#    W1LDR#
+CBI AC           CLIENT    IFEQ CHENEY
+     C                     MOVE '7 '      W1RCDE
+CBI AC                     ENDIF
+     C                     MOVE '04 '     NXTSCR
+     C                     GOTO BYPAS1
+     C                     ENDIF
+      *
+     C                     MOVE '01 '     NXTSCR
+     C           BYPAS1    TAG
+      *
+     C                     MOVE '0'       FRFIL   1
+      *
+     C           HDREKY    CHAINLDRTEQ               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVE '1'       FRFIL
+      *
+     C           LTBK1     IFEQ *ZEROS
+     C                     MOVEL'0'       W1BK1
+     C                     ELSE
+     C                     MOVELLTBK1     HOLD4            Converting
+     C                     EXSR ZZCONV                     values from
+     C                     MOVELCVALO     W1BK1            file
+     C                     ENDIF
+      *
+     C           LTBH1     IFEQ *ZEROS
+     C                     MOVEL'0'       W1BH1
+     C                     ELSE
+     C                     MOVELLTBH1     HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1BH1
+     C                     ENDIF
+      *
+     C           LTLB1     IFEQ *ZEROS
+     C                     MOVEL'0'       W1LB1
+     C                     ELSE
+     C                     MOVELLTLB1     HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1LB1
+     C                     ENDIF
+      *
+     C           LTICS1    IFEQ *ZEROS
+     C                     MOVEL'0'       W1ICS1
+     C                     ELSE
+     C                     MOVELLTICS1    HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1ICS1
+     C                     ENDIF
+      *
+     C           LTICM1    IFEQ *ZEROS
+     C                     MOVEL'0'       W1ICM1
+     C                     ELSE
+     C                     MOVELLTICM1    HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1ICM1
+     C                     ENDIF
+      *
+     C           LTICL1    IFEQ *ZEROS
+     C                     MOVEL'0'       W1ICL1
+     C                     ELSE
+     C                     MOVELLTICL1    HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1ICL1
+     C                     ENDIF
+      *
+     C           LTSFB1    IFEQ *ZEROS
+     C                     MOVEL'0'       W1SFB1
+     C                     ELSE
+     C                     MOVELLTSFB1    HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1SFB1
+     C                     ENDIF
+      *
+     C           LTSPL1    IFEQ *ZEROS
+     C                     MOVEL'0'       W1SPL1
+     C                     ELSE
+     C                     MOVELLTSPL1    HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1SPL1
+     C                     ENDIF
+      *
+     C           LTTPL1    IFEQ *ZEROS
+     C                     MOVEL'0'       W1TPL1
+     C                     ELSE
+     C                     MOVELLTTPL1    HOLD4
+     C                     EXSR ZZCONV
+     C                     MOVELCVALO     W1TPL1
+     C                     ENDIF
+      *
+      *  Set name of user found in record
+      *  (trailer equipment info already existed).
+      *
+     C           LTEMP#    CHAINPIRUSER1             79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN01
+     C                     MOVE *ON       *IN26
+     C                     MOVEADESC,1    ERRMSG
+     C                     EXSR ZM0105
+     C                     ELSE
+     C                     EXSR ZZFNAM
+     C                     ENDIF
+      *
+      *
+640 MC           LTLDTE    IFNE *ZEROS
+     C                     MOVE '*CMDMDY '$CVCMD
+640 MC                     MOVE LTLDTE    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    W1DATE
+640 MC                     Z-ADDLTLTIM    W1STRT
+     C                     ENDIF
+     C                     MOVE '1'       UPDT    1
+     C                     MOVE '0'       FRFIL
+     C                     ELSE
+     C                     MOVE '0'       UPDT
+      *
+      *  Set name of user loading trailer equipment
+      *  information (1st time).
+      *
+     C           #USER     CHAINPIRUSER              79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       ERROR
+     C                     MOVE *ON       *IN01
+     C                     MOVE *ON       *IN26
+     C                     MOVEADESC,1    ERRMSG
+     C                     EXSR ZM0105
+     C                     ELSE
+     C                     EXSR ZZFNAM
+     C                     ENDIF
+     C                     ENDIF
+640 A *
+640 AC           HDREKY    CHAINLDRTRLE1             79
+640 AC           *IN79     IFEQ *OFF
+640 AC                     MOVE '1'       UPDT2   1
+640 AC                     ELSE
+640 AC                     MOVE '0'       UPDT2
+640 AC                     ENDIF
+      *
+640 A *
+640 A *  Load output file 'Ldrtrle' fields.
+640 AC                     Z-ADDLTWHSE    LEWHSE
+640 AC                     MOVELLTRTE     LERTE
+640 AC                     MOVELLTRTID    LERTID
+640 AC                     MOVE LTTRLR    LETRL#
+640 AC                     MOVE 'O'       LESTAT
+640 AC                     Z-ADDLTLDTE    LEDATE
+640 AC                     Z-ADDLTLTIM    LETIME
+      *
+     CSR         ENDINZ    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZVIEW   Trailer/Loader info (View Mode).
+     C*
+     C*----------------------------------------------------------------
+     CSR         ZZVIEW    BEGSR
+     C*
+     C*
+     C           TOP       TAG
+     C                     SETOF                     202124
+     C                     SETON                     2990
+     C                     Z-ADD1         ONE     20
+     C*
+     C           HDRKEY    CHAINLDRHDR               79
+     C           *IN79     IFEQ *OFF
+     C*   Load current Trailer/Loader info on screen
+     C                     MOVE LHRTE     W1RTE#
+     C                     MOVE LHEMP#    W1LDR#
+     C                     MOVELLHTRLR    W1TRL#
+     C                     Z-ADDLHSTRT    W1TIMC
+     C           LHEMP#    CHAINPIRUSER1             78
+     C           *IN78     IFEQ *OFF
+     C                     EXSR ZZFNAM
+     C                     ENDIF
+     C*
+     CSR         LHSTRD    IFEQ 0
+     CSR                   Z-ADD0         W1DTEC
+     CSR                   ELSE
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE LHSTRD    $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1DTEC
+     CSR                   ENDIF
+     C*
+     C*
+      *
+      *   Set read pointer to header exception file 'Ldrexcp2'
+      *
+     C           HDREKY    SETLLLDREXCP2
+     C           ONE       DOWEQ1
+     CSR                   EXFMTWINDW3                 50
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ '1'
+     CSR                   MOVE 'EOJ'     NXTSCR  3
+     CSR                   MOVE '*EXIT   '$PRTN
+     CSR                   LEAVE
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ '1'
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   MOVE '*CANCEL '$PRTN
+     CSR                   LEAVE
+     CSR                   END
+      *
+      *   See if this route has any exception record
+      *
+     C           HDREKY    READELDREXCP2                 79
+     C           *IN79     IFEQ *ON
+     C           *IN29     ANDEQ*ON
+     C                     MOVE *ON       ERROR
+     C*
+     C           ERRMSG    IFEQ *BLANKS
+     C                     MOVEADESC,1    ERRMSG
+     C                     EXSR ZM0105
+      *
+      *   Overlay screen with informative messages
+      *
+     C                     EXSR ZMDMSG
+     C                     ENDIF
+     C                     GOTO DOBACK
+     C                     ENDIF
+      *
+      *   End of exception records.
+      *
+     C           *IN79     IFEQ *ON
+     C           *IN29     ANDEQ*OFF
+     C                     SETOF                     28
+     C                     GOTO TOP
+     C                     ENDIF
+     C*
+     C*   Load exception record on screen
+      *
+     C           *IN79     IFEQ *OFF
+     C                     SETON                     202128
+     C                     SETON                     30
+     C                     SETOF                     29
+     C                     MOVE LERTE     W1RTE#
+     C                     MOVE LEEMP#    W1LDR#
+     C                     MOVELLETRLR    W1TRL#
+     C                     Z-ADDLESTIM    W1TIME
+     C                     MOVE LECOM1    W1COM1
+     C                     MOVE LECOM2    W1COM2
+     C                     MOVELLEREAS    W1RCDE
+     C           RCDEKY    CHAINLRSNCODE             79
+     C                     MOVELLRSDSC    W1REAS
+     C           LEEMP#    CHAINPIRUSER1             78
+     C           *IN78     IFEQ *OFF
+     C                     EXSR ZZFNAM
+     C                     ENDIF
+     C                     ENDIF
+     C*
+     CSR         LESDTE    IFEQ 0
+     CSR                   Z-ADD0         W1DTEE
+     CSR                   ELSE
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE LESDTE    $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1DTEE
+     CSR                   ENDIF
+     C*
+      *
+     C           DOBACK    TAG
+     CSR                   ENDDO
+     C*
+     C                     MOVE 'EOJ'     NXTSCR
+     C                     ENDIF
+      *
+     O*----------------------------------------------------------------*********
+     O*
+      *
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     O*  COMPILE TIME TABLES
+     O*
+**  DESC
+User not found
+Invalid input, type a numeric value

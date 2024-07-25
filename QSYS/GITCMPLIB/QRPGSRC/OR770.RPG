@@ -1,0 +1,398 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2000 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (630) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR770     Host pick Will Call Exception report.
+     F*  06 April 2000
+     F*  Max Blacknik
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions:
+     F*
+415 AF*    07/16/01  DAS  4.15
+     F*      - Added call to new program OR770MSG to send a message
+     F*        somewhere when this report actually printes.
+     F*
+520 AF*    02/05/09  CWM/MLB 5.20  01/29  02/04
+     F*      - Enh: Added support for new extended stop number.
+     F*        Retrieve stop # in subroutine ZZFGTS and pgm GETSTOP
+     F*
+650aAF*    05/29/13  RBD  6.50a
+     F*      - Enh: Print new stop/drop display instead of 5 dig stop.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  77        Not on file/End of file indicator
+     F*  78        Not on file/End of file indicator
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FORDH2   IF  E           K        DISK
+     FORDD1   IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FRTEHED  IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FOR770PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+     E                    TTL     1   2 40
+     E*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$CERM       DS
+     I                                        1  60 XCERM
+     I                                        1   4 $CMSG
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $CMD    Not referenced
+     C*      $RTYPE  Program to send messages back to.
+     C*      $WHSE   Warehouse number.
+     C*      $RTID   Route id.
+     C*
+     C*    Returned Parameters
+     C*      $RTN    blank    - No problem encountered.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $CMD    8
+     C                     PARM           $RTYPE  8
+     C                     PARM           $WHSE   3
+     C                     PARM           $RTID   5
+     C                     PARM           $RTN    8
+     C*----------------------------------------------------------------
+     C*
+     C                     EXSR ZRFRMT
+     C*
+     C           KEYOH     SETLLORDH2
+     C           FOREVR    DOWEQFOREVR
+     C           KEYOH     READEORDH2                    79
+     C                     SELEC
+     C           *IN79     WHEQ *ON
+     C                     LEAVE
+     C*
+     C                     OTHER
+     C*
+     C                     MOVE *ON       FIRST
+     C           KEYOD     SETLLORDD1
+     C           FOREVR    DOWEQFOREVR
+     C           KEYOD     READEORDD1                    78
+     C                     SELEC
+     C           *IN78     WHEQ *ON
+     C           FIRST     IFEQ *OFF
+     C                     WRITESKIP1
+     C                     ENDIF
+     C                     LEAVE
+     C*
+     C           ODQPK1    WHLT ODQOR1
+     C           ODQPK2    ORLT ODQOR2
+     C           ODQPK3    ORLT ODQOR3
+     C*
+     C                     MOVE *ON       EXCPTN
+     C           KEYIT     CHAINPIRITEM              77
+     C*
+     C*  Start new page if one of following happened.
+     C*     - First pass through.
+     C*
+     C           FIRST     IFEQ *ON
+     C                     MOVE *BLANKS   $CSTR
+     C                     MOVE *BLANKS   CUST#
+     C                     MOVE OHCUST    $CSTR
+     C                     CALL 'ADJUST'
+     C                     PARM '*LEFT   '$CCMD   8
+     C                     PARM           $CSTR  30
+     C                     MOVEL$CSTR     CUST#  11
+     C                     MOVELOHCNAM    CSNAME
+520 AC*
+520 AC                     EXSR ZZFGTS
+520 AC*
+     C                     MOVE *OFF      FIRST
+     C                     MOVE *ON       CSTHDR
+415 AC                     CALL 'OR770MSG'
+     C                     ENDIF
+     C*
+     C*    Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C                     EXSR ZRHEAD
+     C                     MOVE *ON       CSTHDR
+     C                     ENDIF
+     C*
+     C*    Overflow occurred.
+     C*
+     C           CSTHDR    IFEQ *ON
+     C                     WRITEDETAIL1
+     C                     WRITESKIP1
+     C                     MOVE *OFF      CSTHDR
+     C                     ENDIF
+     C*
+     C*    Convert order quantity to string for report.
+     C*
+     C           ITTYPE    IFEQ 'S'
+     C                     Z-ADDODQOR2    $CQTY1
+     C                     Z-ADDODQOR3    $CQTY2
+     C                     Z-ADD0         $CQTY3
+     C                     ELSE
+     C                     Z-ADDODQOR1    $CQTY1
+     C                     Z-ADDODQOR2    $CQTY2
+     C                     Z-ADDODQOR3    $CQTY3
+     C                     ENDIF
+     C                     MOVE '*QTY2STR'$CCMD
+     C                     EXSR ZRCVQY
+     C                     MOVE $CQSTR    P1QORD
+     C*
+     C*    Convert pick quantity to string for report.
+     C*
+     C           ITTYPE    IFEQ 'S'
+     C                     Z-ADDODQPK2    $CQTY1
+     C                     Z-ADDODQPK3    $CQTY2
+     C                     Z-ADD0         $CQTY3
+     C                     ELSE
+     C                     Z-ADDODQPK1    $CQTY1
+     C                     Z-ADDODQPK2    $CQTY2
+     C                     Z-ADDODQPK3    $CQTY3
+     C                     ENDIF
+     C                     EXSR ZRCVQY
+     C                     MOVE $CQSTR    P1QPCK
+     C*
+     C                     WRITEDETAIL2
+     C                     WRITEDETAIL3
+     C*
+     C                     ENDSL
+     C                     ENDDO
+     C                     ENDSL
+     C                     ENDDO
+     C*
+     C                     MOVE *ON       *INLR
+     C*
+     C           EXCPTN    IFEQ *ON
+     C           *IN90     IFEQ *ON
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C                     WRITEFOOT1
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*    Partial key for file ORDD.
+     C*
+     CSR         *LIKE     DEFN ODSTAT    KYSTAT
+     CSR                   MOVE 'C'       KYSTAT
+     CSR         KEYOD     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           OHORD
+     C*
+     C*    Partial key for file ORDH2.
+     C*
+     CSR         *LIKE     DEFN OHTYPE    KYTYPE
+     CSR                   MOVE 'W'       KYTYPE
+     CSR         KEYOH     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           KYSTAT
+     CSR                   KFLD           KYTYPE
+     CSR                   KFLD           $PRTID
+     C*
+     C*    Full key for file PIRITEM
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           ODWHSE
+     CSR                   KFLD           ODITEM
+     C*
+     C*    Partial key for file RTEHED.
+     C*
+     CSR         KEYRT     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           $PRTID
+     C*
+     CSR                   MOVE $WHSE     $PWHSE  30
+     CSR                   MOVE $RTID     $PRTID  5
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURMDY '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    RDATE   60
+     C*
+     CSR                   MOVE *BLANKS   ALPHA7  7
+     CSR                   MOVEL'#PROG   '$CPRG
+     CSR                   TIME           TIME
+     CSR                   MOVE *OFF      CSTHDR  1
+     CSR                   MOVE *OFF      EXCPTN  1
+     CSR                   MOVE *ON       FIRST   1
+     CSR                   MOVE *ON       FOREVR  1
+     CSR                   MOVE *ON       *IN90
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     CSR         ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     CSR         $RTYPE    IFEQ '*DETAIL '
+     CSR                   MOVE TTL,1     TITLE
+     CSR                   ELSE
+     CSR                   MOVE TTL,2     TITLE
+     CSR                   ENDIF
+     CSR                   MOVELTITLE     $PSTR  60
+     CSR                   Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR
+     CSR                   PARM           $PLEN
+     CSR                   MOVEL$PSTR     TITLE
+     C*
+     C*   Get warehouse description.
+     C*
+     CSR                   MOVE *BLANKS   WHSE
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR         $PWHSE    CHAINWAREHS               79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVELWHDESC    $PSTR  60
+     CSR                   ELSE
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR                   ENDIF
+     CSR                   Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR
+     CSR                   PARM           $PLEN
+     CSR                   MOVEL$PSTR     WHSE
+     C*
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$CCMD   8
+     CSR                   PARM           $CSTR  30
+     CSR                   MOVEL$CSTR     LBBAT   7
+     C*
+     C*   Format Route number.
+     C*
+     CSR         KEYRT     CHAINRTEHED               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *BLANKS   RHRTE
+     CSR                   MOVE *ZEROS    RHPBAT
+     CSR                   ENDIF
+     CSR                   MOVE *BLANKS   BATCH
+     CSR                   MOVE *BLANKS   $PSTR
+     CSR                   MOVE RHPBAT    ALPHA7
+     CSR         BATCH     CAT  'Batch:':1BATCH
+     CSR         BATCH     CAT  ALPHA7:1  BATCH
+     CSR         BATCH     CAT  'Route:':2BATCH
+     CSR         BATCH     CAT  RHRTE:1   BATCH
+     CSR                   MOVELBATCH     $PSTR  60
+     CSR                   Z-ADD30        $PLEN   30
+     C*
+     C*   Center batch/route description.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           $PSTR  60
+     CSR                   PARM           $PLEN   30
+     CSR                   MOVEL$PSTR     BATCH
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR                   MOVE *OFF      *IN90
+     C*
+     CSR                   WRITEHEAD1
+     CSR                   WRITECOLUMNS
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     CSR         ZRCVQY    BEGSR
+     C*
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD   8
+     CSR                   PARM           $CPRG  10
+     CSR                   PARM           $CQTY1  70
+     CSR                   PARM           $CQTY2  70
+     CSR                   PARM           $CQTY3  70
+     CSR                   PARM           $CUM1   2
+     CSR                   PARM           $CUM2   2
+     CSR                   PARM           $CUM3   2
+     CSR                   PARM           $CQSTR 10
+     CSR                   PARM           $CUSTR 17
+     CSR                   PARM           $CRTN   8
+     CSR                   PARM           $CERM
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+520 AC*  ZZFGTS   Get Host Stop Number
+520 AC*
+520 AC           ZZFGTS    BEGSR
+520 AC*
+520 AC*    Get Stop From RTESTP
+520 AC*
+520 AC                     CALL 'GETSTOP'
+520 MC                     PARM '*ORDSTP '$SCMD   8
+520 MC                     PARM $PWHSE    $SWHSE  30
+520 MC                     PARM $PRTID    $SRTID  5
+520 MC                     PARM OHORD     $SORD   70
+520 MC                     PARM 0         $SDSTP  20
+520 MC                     PARM           $SSTP   50
+650aAC                     PARM           $SDROP  3
+650aAC                     PARM           $SEXTD 30
+650aAC                     PARM           $SSD    9
+520 AC*
+520 AC           $SSTP     IFGT 0
+650aDC**                   Z-ADD$SSTP     DSPSTP
+650aMC                     MOVE $SSD      DSPSTP
+520 AC                     ELSE
+650aDC**                   Z-ADDOHSTOP    DSPSTP
+650aMC                     MOVE OHSTOP    DSPSTP
+520 AC                     ENDIF
+520 AC*
+520 AC                     ENDSR
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**      TTL   Report title descriptions
+Host Pick Will Call Exception Report
+

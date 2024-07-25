@@ -1,0 +1,275 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2004 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  CCQTY   Calculate CONTAINER & CRUISE quantities.
+     F*  22 December 2003
+     F*  Roxanne Harrison
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions:
+     F*
+CBI  F*  03/02/04  MLB  CBI
+     F*    - Revised program to use new logical view ORDH6. This view
+     F*      is keyed by whse/truk/stat/type/rte/ord. This will reduce
+     F*      the number of reads necessary to accumulate pick/alloc qty.
+     F*    - Revised program to use logical view ORDD2 for detail.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+CBI DF*ORDH2   IF  E           K        DISK
+CBI MFORDH6   IF  E           K        DISK
+CBI DF*ORDD    IF  E           K        DISK
+CBI MFORDD2   IF  E           K        DISK
+     FLABEL1  IF  E           K        DISK
+     FWORKLBL8IF  E           K        DISK
+     I*----------------------------------------------------------------
+     I              'CONTAINER'           C         @TRUK1
+     I              'CRUISE   '           C         @TRUK2
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*
+     C*      $PWHSE  Warehouse
+     C*      $PITEM  Item
+     C*      $PSTYP  Section type
+     C*      $PWHDP  Department
+     C*      $PAISL  Aisle
+     C*      $PPSEQ  Pick Sequence
+     C*      $PRLBL  Level
+     C*      $PHAND  Handstack
+     C*
+     C*
+     C*    Returned Parameters
+     C*
+     C*      $PPCK_  Open pick quantity for Contain/Cruise orders.
+     C*
+     C*      $PALC_  Open allocate quantity for Container/Cruise orders
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PITEM 15
+     C                     PARM           $PSTYP  1
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PAISL  3
+     C                     PARM           $PPSEQ  50
+     C                     PARM           $PRLVL  20
+     C                     PARM           $PHAND  2
+     C*
+     C                     PARM           $PPCK1  50
+     C                     PARM           $PPCK2  30
+     C                     PARM           $PPCK3  30
+     C*
+     C                     PARM           $PALC1  50
+     C                     PARM           $PALC2  30
+     C                     PARM           $PALC3  30
+     C*
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Calculate pick and allocated qty in slot for Container &
+     C*  Cruise orders. (Truck = CONTAINER or CRUISE)
+     C*
+     C*  Main line
+     C                     EXSR INIT
+     C*  Read order detail for item.
+CBI DC*          OHKEY     SETLLORDH2
+CBI MC           OHKEY     SETLLORDH6
+     C           FOREVR    DOWEQFOREVR
+CBI DC*          OHKEY     READEORDH2                    79
+CBI MC           OHKEY2    READEORDH6                    79
+     C           *IN79     IFEQ *ON
+CBI AC           OHTRUK    ORGT @TRUK2
+     C                     LEAVE
+     C                     ENDIF
+     C           OHTRUK    IFNE 'CRUISE'
+     C           OHTRUK    ANDNE@TRUK1
+     C                     ITER
+     C                     ENDIF
+CBI AC*
+CBI AC*    Look for passed in item on Order. If not on
+CBI AC*    Order, get next order.
+CBI AC*
+CBI DC*          ODKEY     SETLLORDD
+CBI MC           ODKEY     SETLLORDD2
+     C           FOREVR    DOWEQFOREVR
+CBI DC*          ODKEY     READEORDD                     78
+CBI MC           ODKEY     READEORDD2                    78
+     C           *IN78     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C           ODITEM    IFNE $PITEM
+     C                     ITER
+     C                     ENDIF
+     C*  Read Label records.
+CBI AC*
+CBI AC*    Find Label record for item. If item is found
+CBI AC*    in label file, then item has been picked.
+CBI AC*    Don't look in work label file for this item/this order.
+CBI AC*
+     C           L1KEY     SETLLLABEL1
+     C           FOREVR    DOWEQFOREVR
+     C           L1KEY     READELABEL1                   77
+     C           *IN77     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C           LBORD     IFNE OHORD
+CBI DC*          LBSEQ     ORNE ODSEQ
+CBI MC           LBSEQ     ANDNEODSEQ
+     C           LBSTAT    OREQ 'C'
+     C                     ITER
+     C                     ELSE
+     C                     MOVE *ON       FOUND   1
+     C                     SELEC
+     C           LBUTYP    WHEQ 'N'
+     C                     ADD  LBQPCK    TLPCK1
+     C           LBUTYP    WHEQ '1'
+     C                     ADD  LBQPCK    TLPCK2
+     C           LBUTYP    WHEQ '2'
+     C                     ADD  LBQPCK    TLPCK3
+     C                     ENDSL
+     C                     ENDIF
+     C                     ITER
+     C                     ENDDO                            LABEL1
+     C*  If no LABEL1 records were found, read WORKLBL8
+CBI AC*
+CBI AC*    Find Work Label record for item. If item is found
+CBI AC*    in work label file, then item has been allocated.
+CBI AC*    but not picked.
+CBI AC*
+     C           FOUND     IFEQ *OFF
+     C           WKKEY     SETLLWORKLBL8
+     C           FOREVR    DOWEQFOREVR
+     C           WKKEY     READEWORKLBL8                 76
+     C           *IN76     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C           LWORD     IFNE OHORD
+CBI DC*          LWSEQ     ORNE ODSEQ
+CBI MC           LWSEQ     ANDNEODSEQ
+     C           LWSTAT    OREQ 'X'
+     C                     ITER
+     C                     ELSE
+     C                     SELEC
+     C           LWUTYP    WHEQ 'N'
+     C                     ADD  LWQALC    TLALC1
+     C           LWUTYP    WHEQ '1'
+     C                     ADD  LWQALC    TLALC2
+     C           LWUTYP    WHEQ '2'
+     C                     ADD  LWQALC    TLALC3
+     C                     ENDSL
+     C                     ENDIF
+     C                     ITER
+     C                     ENDDO                            WORKLBL8
+     C                     ENDIF
+     C                     ITER
+     C                     ENDDO                            ORDD
+     C                     ITER
+     C                     ENDDO                            ORDH
+     C*
+     C*     Move qty to parms.
+     C*
+     C                     Z-ADDTLPCK1    $PPCK1
+     C                     Z-ADDTLPCK2    $PPCK2
+     C                     Z-ADDTLPCK3    $PPCK3
+     C                     Z-ADDTLALC1    $PALC1
+     C                     Z-ADDTLALC2    $PALC2
+     C                     Z-ADDTLALC3    $PALC3
+     C*
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*  INIT    Initialization subrotine
+     C*
+     CSR         INIT      BEGSR
+     C*
+     C*  Initialize special keys
+     C*
+411 AC                     MOVEL$PITEM    HLDILM 15
+     C*
+     C*  Initialize message handling
+     C*
+     C***                  EXSR ZMIMSG
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     CSR                   MOVE *OFF      FOREVR  1
+     C*
+     C*  Initialize counters.
+     CSR                   Z-ADD0         TLPCK1  50
+     CSR                   Z-ADD0         TLPCK2  30
+     CSR                   Z-ADD0         TLPCK3  30
+     CSR                   Z-ADD0         TLALC1  50
+     CSR                   Z-ADD0         TLALC2  30
+     CSR                   Z-ADD0         TLALC3  30
+     C*
+     CSR                   MOVE *OFF      FOUND
+     C*
+     C*  Define key for ORDH file.
+     C*
+     CSR         *LIKE     DEFN OHSTAT    KHSTAT
+     CSR                   MOVE 'P'       KHSTAT
+CBI ACSR         *LIKE     DEFN OHTRUK    KHTRUK
+CBI ACSR                   MOVEL@TRUK1    KHTRUK
+     CSR         OHKEY     KLIST
+     CSR                   KFLD           $PWHSE
+CBI ACSR                   KFLD           KHTRUK
+     CSR                   KFLD           KHSTAT
+CBI AC*
+CBI ACSR         OHKEY2    KLIST
+CBI ACSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for ORDD file.
+CBI ACSR         *LIKE     DEFN LBTYPE    KDSTAT
+CBI ACSR                   MOVE 'P'       KDSTAT
+     CSR         ODKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           OHORD
+CBI ACSR                   KFLD           KDSTAT
+CBI ACSR                   KFLD           $PITEM
+     C*
+     C*  Define key for LABEL1 file.
+     CSR         *LIKE     DEFN LBTYPE    KYTYPE
+     CSR                   MOVE 'O'       KYTYPE
+     CSR         L1KEY     KLIST
+     CSR                   KFLD           OHPBAT
+     CSR                   KFLD           OHWHSE
+     CSR                   KFLD           OHRTE
+     CSR                   KFLD           $PSTYP
+     CSR                   KFLD           KYTYPE
+     CSR                   KFLD           $PWHDP
+     CSR                   KFLD           OHSTOP
+     CSR                   KFLD           $PAISL
+     CSR                   KFLD           $PPSEQ
+     CSR                   KFLD           $PRLVL
+     CSR                   KFLD           $PHAND
+     C*
+     C*  Define key for WORKLBL8 file.
+     CSR         WKKEY     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           OHRTE
+     CSR                   KFLD           ODITEM
+     C*
+     C*
+     CSR                   ENDSR

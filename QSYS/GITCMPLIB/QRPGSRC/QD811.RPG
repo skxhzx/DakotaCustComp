@@ -1,0 +1,208 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  QD811     Recalculate item cube for all items.
+     F*  15 November 1999
+     F*  Roxanne Harrison
+     F*
+     F*  WARNING:  Does not check current cube, will overwrite existing
+     F*            cube.
+     F*            WAREHOUSE # IS HARD CODED
+     F*
+     F*  Revisions
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Notes
+     F*
+     F*    This program needs to be compiled with DEFER=*NO so the status
+     F*    messages can be displayed.
+     F*
+     F*    This program uses a revised method to display error messages.
+     F*    Instead of the program writting each message to the subfile
+     F*    using the message key the subfile has been revised to display
+     F*    all messages from the program message queue automatically.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  78        Chain indicator
+     F*  79        Chain indicator
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FPIRITEM1UF  E           K        DISK
+     FOPTIONS IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    $MD       128  1
+     I*----------------------------------------------------------------
+     I*  *ITEMMNT  -  Item maintenance options.
+     I*
+     I* Fields
+     I*
+     I*    OPSTYP  -  Default section type
+     I*    OPWHDP  -  Default warehouse department
+     I*    OPUM1   -  Default normal unit of measure
+     I*    OPDUM   -  Unit of measure for dimensions
+     I*    OPCUM   -  Unit of measure for cube
+     I*    OPCDIV  -  Divisor for cube
+     I*    OPCAUT  -  Automaticaly calculate cube when zero (Y/N)
+     I*    OPCWRN  -  Display cube warning (Y/N)
+     I*    OPCRNG  -  Display cube warning range percentage
+     I*    OPWUM   -  Unit of measure for weight
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   1 OPSTYP
+     I                                        2   6 OPWHDP
+     I                                        7   8 OPUM1
+     I                                        9  23 OPDUM
+     I                                       24  43 OPCUM
+     I                                       44  522OPCDIV
+     I                                       53  53 OPCAUT
+     I                                       54  54 OPCWRN
+     I                                       55  573OPCRNG
+     I                                       58  72 OPWUM
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                    P   1   20ERWHSE
+     I                                        3   7 ERWHDP
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      none
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           XXWHSE  3
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     Z-ADD1         $PWHSE  30
+     C*
+     C*   Get item maintenance options.
+     C*
+     C                     MOVE '*ITEMMNT'OPCODE
+     C           OPTNKY    CHAINOPTIONS              79
+     C           *IN79     IFEQ *ON
+     C                     CLEAROPDATA
+     C                     END
+     C*
+     C*  Read item by item and recalculate cube.
+     C*
+     C           KEYITW    SETLLPIRITEM1
+     C           FOREVR    DOUNEFOREVR
+     C*
+     C           KEYITW    READEPIRITEM1                 79
+     C           *IN79     IFEQ *ON
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*  Calculate actual cube according to dimensions (like IT145)
+     C*
+     C           *LIKE     DEFN ITCUBE    ACTCUB
+     C           OPCDIV    IFEQ 0
+     C                     Z-ADD0         ACTCUB
+     C                     ELSE
+     C           ITULEN    MULT ITUWDT    TMPCUB 156
+     C                     MULT ITUHGT    TMPCUB
+     C           TMPCUB    DIV  OPCDIV    ACTCUB    H
+     C                     END
+     C                     Z-ADDACTCUB    ITCUBE
+     C*
+     C                     UPDATITREC                  79
+     C*
+     C                     ENDDO
+     C*
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     CSR                   MOVE *ON       FOREVR  1
+DD   C*R                   MOVE #PROG     #PGMQ
+     C*
+     C*  Define keys.
+     C*
+     C*    PIRITEM file (Partial key)
+     C*
+     CSR         KEYITW    KLIST
+     CSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for options file.
+     C*
+     CSR         OPTNKY    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           OPCODE
+413 DC*R                   MOVE #PROG     $LPRG
+     C*
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    CURDTE  80
+     CSR                   TIME           CURTIM  60
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*

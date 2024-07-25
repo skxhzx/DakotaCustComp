@@ -1,0 +1,566 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2013 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   P.O. Box 1957
+     F*   Batavia, IL 60510
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  IT502     FS-WMS Calculate Average Quantity Shipped - Update
+     F*  29 December 1999
+     F*  Max Blacknik
+     F*
+     F*  SK112 - 1.01
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+415 AF*    06/06/01  MLB  4.15
+     F*      - Revised routine *INZSR to calculate Sunday date for
+     F*        current week.
+     F*      - Revised program to not include current week when
+     F*        computing averages.
+     F*
+415aAF*    06/21/01  DAS  4.15a
+     F*      - Added command *FORCE to force it to calculate.
+     F*
+650 AF*    10/02/13  MLB  6.50
+     F*      - Enh: Revised pgm to compute item weekly averages based
+     F*        on actual weeks' history on file if less than system
+     F*        defined weeks history to keep.
+650aAF*    10/03/13  MLB  6.50a
+     F*      - Enh: Revised pgm to client custom code support to pgm.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Greenleaf Produce
+     F*
+GLP AF*    10/03/13  MLB  GLP
+     F*      - Revised pgm to populate daily averages that are zero with
+     F*        last day that has an average when the weekly history for
+     F*        for the item is only 1 week.
+GLPaAF*    10/10/13  MLB  GLPa
+     F*      - Revised pgm to include the current week in the daily totals
+     F*        and daily average calculation. Also, the pgm will add 1 to
+     F*        week's history to keep to accomodate this change.
+GLPbAF*    10/24/13  RH   GLPb
+     F*      - Revised pgm to use 5 weeks as average, will calculate 4 als
+     F*        weeks average but will still keep 12 weeks sales        als
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: CDI
+     F*
+CDI AF*    10/03/13  MLB  GLP
+     F*      - Revised pgm to compute daily averages using past week's
+     F*        history.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        CHAIN INDICATOR
+     F*  90        OVERFLOW INDICATOR FOR EXCEPTION REPORT
+     F*  91        OVERFLOW INDICATOR FOR CATCH WEIGHT REPORT
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FITEMAVG UF  E           K        DISK                      A
+     FITEMSLS1IF  E           K        DISK
+     FOPTIONS IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A40        40  1
+     E                    $MD       128  1
+     E                    IQTY        8  7 2             Itm quantity sold
+     E                    AQS         8  7 2             Avg quantity sold
+     E                    TLQY        8  7 2             Total qty sold
+650aAI*----------------------------------------------------------------
+650aAI*  Customer id
+650aAI*
+650aAI              'GETCLIENT'           C         @GETCL
+650aAI*
+650aA /COPY QCOPYSRC,IL#GLP
+CDI A /COPY QCOPYSRC,IL#CDI
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$AERM       DS
+     I                                        1  60 XAERM
+     I                                        1   4 $AMSG
+     I$CERM       DS
+     I                                        1  60 XCERM
+     I                                        1   4 $CMSG
+     I*----------------------------------------------------------------
+     I*  File/array field overlays
+     I*
+     I            DS
+     I                                        1   72IHTQS1
+     I                                        8  142IHTQS2
+     I                                       15  212IHTQS3
+     I                                       22  282IHTQS4
+     I                                       29  352IHTQS5
+     I                                       36  422IHTQS6
+     I                                       43  492IHTQS7
+     I                                       50  562IHTQSW
+     I                                        1  56 IQTY
+     I            DS
+     I                                        1   72IGAQS1
+     I                                        8  142IGAQS2
+     I                                       15  212IGAQS3
+     I                                       22  282IGAQS4
+     I                                       29  352IGAQS5
+     I                                       36  422IGAQS6
+     I                                       43  492IGAQS7
+     I                                       50  562IGAQSW
+     I                                        1  56 AQS
+     ITQYDS       DS
+     I                                        1  56 TLQY
+     I*----------------------------------------------------------------
+     I*  *DAYEND  -  Day end processing options.
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPSTR1  -  Sunday - Warehouse start time
+     I*    OPSTR2  -  Monday - Warehouse start time
+     I*    OPSTR3  -  Tuesday - Warehouse start time
+     I*    OPSTR4  -  Wednesday - Warehouse start time
+     I*    OPSTR5  -  Thursday - Warehouse start time
+     I*    OPSTR6  -  Friday - Warehouse start time
+     I*    OPSTR7  -  Saturday - Warehouse start time
+     I*    OPLTDT  -  Last transaction processed date
+     I*    OPLTTM  -  Last transaction processed time
+     I*    OPLODT  -  Last order processed date
+     I*    OPLOTM  -  Last order processed time
+     I*    OPWEEK  -  Current week number
+     I*    OPWKAV  -  Number of weeks for average
+     I*    OPDYAV  -  Day to compute averages
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I                                        1   60OPSTR1
+     I                                        7  120OPSTR2
+     I                                       13  180OPSTR3
+     I                                       19  240OPSTR4
+     I                                       25  300OPSTR5
+     I                                       31  360OPSTR6
+     I                                       37  420OPSTR7
+     I                                        1  42 WTIM
+     I                                       43  500OPLTDT
+     I                                       51  560OPLTTM
+     I                                       57  640OPLODT
+     I                                       65  700OPLOTM
+     I                                       71  720OPWEEK
+     I                                       73  750OPWKAV
+     I                                       76  760OPDYAV
+     I                                      117 117 OPTEND
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+415 AI              'CLCDUR'              C         @CLCDR
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I                                      133 140 $CVDR1
+     I                                      141 1450$CVVL1
+     I                                      146 153 $CVDR2
+     I                                      154 1580$CVVL2
+     I                                      159 166 $CVDR3
+     I                                      167 1710$CVVL3
+     I                                      172 179 $CVDR4
+     I                                      180 1840$CVVL4
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERRCL1
+     I                                       11  16 ERRCL2
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+415aDC***    $PCMD   Not used at this time.
+415aMC*      $PCMD   *FORCEnn - Force calculation.
+415aMC*                where nn is number of weeks to use.
+     C*      $PPRG   Program to send messages back to.
+     C*      $WHSE   Warehouse
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message sent to pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $WHSE   3
+     C                     PARM           $PRTN   8
+     C                     PARM           $PMSG   4
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C*
+     C* Loop through items to compute averages.
+     C*
+     C           CMPAVG    IFEQ '*YES'
+     C*
+     C           FOREVR    DOWEQFOREVR
+     C                     SELEC
+     C           *IN79     WHEQ *ON
+     C                     LEAVE                           Exit loop
+     C*
+     C                     OTHER
+     C*
+     C                     MOVE *OFF      EOFIH
+     C                     MOVE *ZEROS    NRRCD
+     C                     MOVE *ZEROS    TQYDS
+     C           KEYIH     SETLLITEMSLS1
+     C*
+     C           EOFIH     DOUEQ*ON
+     C                     EXSR GETIH
+415 AC*
+415 AC*    If this is the current weeks record, do not include
+415 AC*    when computing item totals.
+415 AC           EOFIH     IFEQ *OFF
+415 AC           IHSTRD    ANDGECURWEK
+GLPaAC*
+GLPaAC           CLIENT    IFEQ GRNLEF
+GLPaAC*     Allow current week to be included in calculations.
+GLPaAC                     ELSE
+GLPaAC*
+415 AC                     ITER
+GLPaAC                     ENDIF
+GLPaAC*
+415 AC                     ENDIF
+415 AC*
+415 AC*    If this record's date is less than cutoff, force
+415 AC*    end of file and update average for item.
+415 AC*    We only want to include in our totals records that
+415 AC*    are within the number of weeks history being kept.
+415 AC           EOFIH     IFEQ *OFF
+415 AC           IHSTRD    ANDLTCUTOFF
+415 AC                     MOVE *ON       EOFIH
+415 AC                     ENDIF
+415 AC*
+     C           EOFIH     IFEQ *ON
+     C           NRRCD     OREQ OPWKAV
+     C                     EXSR ZZUPDQ
+     C*
+     C*    Position pointer to next item number.
+     C*
+     C           KEYIH     SETGTITEMSLS1
+     C           $PWHSE    READEITEMSLS1                 79
+     C                     MOVE IHITEM    KYITEM
+     C*
+     C                     LEAVE
+     C                     ENDIF
+     C*
+     C*    Accumulate total quantity sold.
+     C*
+     C                     EXSR ZZTLQY
+     C                     ENDDO                           End IH loop
+     C                     ENDSL                           End Select stmt
+     C                     ENDDO                           End RH loop.
+     C                     ENDIF                           End IF loop.
+     C*
+     C* Close up shop and return home.
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+650aAC*
+650aAC* Get client id.
+650aAC*
+650aAC                     CALL @GETCL
+650aAC                     PARM           CLIENT 10
+650aAC                     PARM           CLILOC 10
+650aAC*
+     C*
+415aAC                     MOVEL$PCMD     $PCMD6  6
+415aAC                     MOVE $PCMD     $PCMD2  20
+     C*
+     CSR                   MOVE *BLANKS   $PRTN
+     CSR                   MOVE $WHSE     $PWHSE  30
+     CSR                   MOVE *ON       FOREVR  1
+     CSR                   MOVE *OFF      EOFIH   1
+     CSR                   MOVE *ZEROS    X       30
+GLP AC                     MOVE *ZEROS    G       30
+     CSR                   MOVE *ZEROS    NRRCD   50
+415 ACSR                   MOVE *ZEROS    CURWEK  80
+415 ACSR                   MOVE *ZEROS    CUTOFF  80
+GLP AC           *LIKE     DEFN IGAQS1    DAYAVG
+     CSR         *LIKE     DEFN IHITEM    KYITEM
+     C*
+     C*  Define partial key for ITEMAVG file.
+     C*
+     CSR         KEYIG     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           IHITEM
+     C*
+     C*  Define partial key for ITEMSLS1 file.
+     C*
+     CSR         KEYIH     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           KYITEM
+     C*
+     C*  Define partial key for OPTIONS file.
+     C*
+     CSR         KEYOP     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           OPCODE
+     C*
+     C*    Retrieve Day end processing options.
+     C*
+     CSR                   MOVE '*DAYEND 'OPCODE
+     CSR         KEYOP     CHAINOPTIONS              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ALL'0'   WTIM
+     CSR                   ENDIF
+415aAC*
+415aAC*    See if we should force the number of weeks to average.
+415aAC*
+415aACSR         $PCMD6    IFEQ '*FORCE'
+415aACSR         $PCMD2    ANDGT0
+415aACSR                   Z-ADD$PCMD2    OPWKAV
+415aACSR                   ENDIF
+GLPaAC*
+GLPaAC*    Increase Weeks Average value to include current week.
+GLPaAC*
+GLPaAC           CLIENT    IFEQ GRNLEF
+GLPbAC                     Z-ADD4         OPWKAV
+GLPaAC                     ADD  1         OPWKAV
+GLPaAC                     ENDIF
+CDI AC*
+CDI AC*    Set Weeks Average value to 1.
+CDI AC*
+CDI AC           CLIENT    IFEQ CDI
+CDI AC                     Z-ADD1         OPWKAV
+CDI AC                     ENDIF
+     C*
+     C*    Retrieve today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*    Convert Current date to day number.
+     C*
+     CSR                   MOVE '*CMDNBR '$CVCMD
+     CSR                   MOVE TODAY     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    T       10
+     C*
+     C*   Test day number to see if today we compute averages.
+     C*
+     CSR         T         IFEQ OPDYAV
+415aACSR         $PCMD6    OREQ '*FORCE'
+     CSR                   MOVE '*YES'    CMPAVG  4
+     CSR         $PWHSE    SETLLITEMSLS1
+     CSR         $PWHSE    READEITEMSLS1                 79
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE IHITEM    KYITEM
+     CSR                   ENDIF
+415 AC*
+415 AC*   Compute Sunday date for current week.
+415 ACSR                   MOVE '*CMDCMD '$CVCMD
+415 ACSR                   MOVE TODAY     $CVD8I
+415 ACSR                   MOVE '*SUBDAYS'$CVDR1
+415 ACSR         T         SUB  1         $CVVL1
+415 ACSR                   CALL @CLCDR
+415 ACSR                   PARM           $CVTDT
+415 ACSR                   Z-ADD$CVD8O    CURWEK
+415 ACSR                   Z-ADD$CVD8O    CUTOFF
+415 AC*
+415 AC*   Compute cutoff date.
+415 ACSR                   MOVE '*CMDCMD '$CVCMD
+415 ACSR                   MOVE CUTOFF    $CVD8I
+415 ACSR                   MOVE '*SUBDAYS'$CVDR1
+415 ACSR         OPWKAV    MULT 7         $CVVL1
+415 ACSR                   CALL @CLCDR
+415 ACSR                   PARM           $CVTDT
+415 ACSR                   Z-ADD$CVD8O    CUTOFF
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ  10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*
+     C*  GETIH   Get item detail sales record.
+     C*
+     CSR         GETIH     BEGSR
+     C*
+     CSR         KEYIH     READEITEMSLS1                 79
+     C*
+     C*   Set flag if there are no more detail records.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       EOFIH
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZTLQY  Accumulate total quantity sold.
+     C*
+     CSR         ZZTLQY    BEGSR
+     C*
+     CSR         1         DO   8         X
+     CSR                   ADD  IQTY,X    TLQY,X
+     CSR                   ENDDO
+     C*
+     C*    Accumulate total number item records read.
+     C*
+     CSR         NRRCD     ADD  1         NRRCD
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPDQ  Update average quantity sold.
+     C*
+     CSR         ZZUPDQ    BEGSR
+     C*
+     CSR         KEYIG     CHAINITEMAVG              79
+     C*
+     CSR                   SELEC
+     CSR         *IN79     WHEQ *ON
+     CSR         *NOKEY    CLEARIGREC
+     CSR                   MOVE IHWHSE    IGWHSE
+     CSR                   MOVE IHITEM    IGITEM
+     CSR                   ENDSL
+     C*
+     CSR         1         DO   8         X
+650 AC*      Less history on file than history to keep. Use actual weeks.
+650 AC           NRRCD     IFLT OPWKAV
+650 AC           NRRCD     ANDGE1
+650 AC           TLQY,X    DIV  NRRCD     AQS,X     H
+650 AC                     ELSE
+     CSR         TLQY,X    DIV  OPWKAV    AQS,X     H
+650 AC                     ENDIF
+     C*
+     CSR                   ENDDO
+GLP AC*
+GLP AC           CLIENT    IFEQ GRNLEF
+GLP AC           NRRCD     IFEQ 1
+GLP AC                     EXSR UPDAVG
+GLP AC                     ENDIF
+GLP AC                     ENDIF
+     C*
+650 AC*      Update record with # weeks used to compute average.
+650 AC           NRRCD     IFLT OPWKAV
+650 AC                     Z-ADDNRRCD     IGWKAV
+650 AC                     ELSE
+     CSR                   Z-ADDOPWKAV    IGWKAV
+650 AC                     ENDIF
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   WRITEIGREC
+     C*
+     CSR                   ELSE
+     CSR                   UPDATIGREC
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+GLP AC*
+GLP AC*----------------------------------------------------------------
+GLP AC*
+GLP AC*  UPDAVG  Update daily averages when partial week.
+GLP AC*
+GLP AC           UPDAVG    BEGSR
+GLP AC*
+GLP AC                     MOVE *ZEROS    DAYAVG
+GLP AC                     Z-ADD7         G
+GLP AC           1         DO   7         X
+GLP AC           AQS,G     IFGT 0
+GLP AC                     Z-ADDAQS,G     DAYAVG
+GLP AC                     LEAVE
+GLP AC                     ELSE
+GLP AC           G         SUB  1         G
+GLP AC                     ENDIF
+GLP AC*
+GLP AC                     ENDDO
+GLP AC*
+GLP AC           DAYAVG    IFGT 0
+GLP AC*
+GLP AC*      Update Daily Average that are zero with last saved avg.
+GLP AC           1         DO   7         X
+GLP AC           AQS,X     IFEQ 0
+GLP AC                     Z-ADDDAYAVG    AQS,X
+GLP AC                     ENDIF
+GLP AC                     ENDDO
+GLP AC                     ENDIF
+GLP AC*
+GLP AC                     ENDSR
+GLP AC*
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*

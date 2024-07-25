@@ -1,0 +1,258 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2012 BFC Software, Inc. - All Rights Reserved     */
+/*   BFC Software, Inc.                                              */
+/*   24 N. Washington Ave #203                                       */
+/*   Batavia, IL 60510                                               */
+/*   (630) 562-0375                                                  */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  SAPIMPCL    Import SAP File from IFS                             */
+/*  April 2, 2012                                                    */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*  04/02/12  RTR  6.40                                              */
+/*    - Created.                                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ SAPIMPCL:   PGM        PARM(&PCMD &WHSE &PATH1 &RETURN)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Client ID's.  */
+
+
+  /* Message queues */
+
+             DCL        VAR(&IMPMSGQ)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&IMPERRMSGQ) TYPE(*CHAR) LEN(10)
+
+/*-----------------------------------------------------------------*/
+/*  Declare variables                                              */
+/*-----------------------------------------------------------------*/
+
+   /* Parameters and work variables */
+
+             DCL        VAR(&FINISHED)   TYPE(*LGL)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&IMPFORMTYP) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&IMPMODE)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&IMPOUTQ)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&MSGKEY)     TYPE(*CHAR) LEN(4)
+             DCL        VAR(&NXTNUM)     TYPE(*DEC)  LEN(7)
+             DCL        VAR(&NXTNUMA)    TYPE(*CHAR) LEN(7)
+             DCL        VAR(&OUTQ)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&PATH1)      TYPE(*CHAR) LEN(80)
+             DCL        VAR(&PATH2)      TYPE(*CHAR) LEN(80)
+             DCL        VAR(&PCMD)       TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RUN)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TOFILE)     TYPE(*CHAR) LEN(500)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+             DCL        VAR(&RTNRTE)     TYPE(*CHAR) LEN(5)
+
+   /* Standard message handling variables */
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+             CHGVAR     VAR(&FINISHED) VALUE('0')
+
+   /* Setup Standard Import Processing Variables. */
+
+             CHGVAR     VAR(&IMPMODE) VALUE('*INTER')
+             CHGVAR     VAR(&IMPOUTQ) VALUE('*JOB')
+             CHGVAR     VAR(&IMPFORMTYP) VALUE('*STD')
+             CHGVAR     VAR(&TOFILE) +
+                          VALUE('/qsys.lib/qtemp.lib/impfflat.file/im+
+                          pfflat.mbr')
+
+/*-----------------------------------------------------------------*/
+/*        Submit Customer Order Updates for Processing             */
+/*-----------------------------------------------------------------*/
+
+             IF         COND(&PCMD = '*ROUTE' *OR &PCMD = '*WILL') +
+                          THEN(DO)
+               CHGVAR     VAR(&IMPMSGQ) VALUE('IMPORD')
+               CHGVAR     VAR(&IMPERRMSGQ) VALUE('IMPORDERR')
+
+/*           Create member name */
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               IF         COND(&PCMD = '*WILL') THEN(DO)
+                 CHGVAR     VAR(&MBR) VALUE('W' *CAT %SST(&WHSE 2 2) +
+                              *CAT &NXTNUMA)
+               ENDDO
+               ELSE       CMD(DO)
+                 CHGVAR     VAR(&MBR) VALUE('R' *CAT %SST(&WHSE 2 2) +
+                              *CAT &NXTNUMA)
+               ENDDO
+
+/*           Create members for import files */
+               IF         COND(&PATH1 > ' ') THEN(DO)
+                 ADDPFM     FILE(SAPIMPF) MBR(&MBR) TEXT('SAP Route')
+                 MONMSG     MSGID(CPF3204 CPF7306) EXEC(DO)
+                   CLRPFM     FILE(SAPIMPF) MBR(&MBR)
+                   MONMSG     MSGID(CPF3204 CPF7306) EXEC(DO)
+                     CHGVAR     VAR(&RETURN) VALUE('*ERROR')
+                     GOTO       CMDLBL(GETOUT)
+                   ENDDO
+
+                 ENDDO
+
+/*           Create flat file for IFS import */
+             CRTPF      FILE(QTEMP/SAPFLAT) RCDLEN(1100)
+             MONMSG     MSGID(CPF5813)
+
+/*           Copy IFS file to flat file */
+             CPYFRMSTMF FROMSTMF(&PATH1) +
+                          TOMBR('/QSYS.LIB/QTEMP.LIB/SAPFLAT.FILE/SAP+
+                          FLAT.MBR') MBROPT(*REPLACE) +
+                          STMFCCSID(*STMF) TABEXPN(*NO)
+                 MONMSG     MSGID(CPFA085 CPFA095) CMPDTA(*NONE) EXEC(DO)
+                   CHGVAR     VAR(&RETURN) VALUE('*ERROR')
+                   GOTO       CMDLBL(GETOUT)
+                 ENDDO
+                ENDDO
+
+/*           Copy flat file to work file */
+             CPYF       FROMFILE(QTEMP/SAPFLAT) TOFILE(SAPIMPF) +
+                          FROMMBR(*FIRST) TOMBR(&MBR) +
+                          MBROPT(*REPLACE) FMTOPT(*NOCHK)
+
+   /* Create members */
+
+               ADDPFM     FILE(IMPFITM3) MBR(&MBR) TEXT('SAP Import - +
+                          SAPIMPCL')
+               OVRDBF     FILE(IMPFITM3) MBR(&MBR)
+               ADDPFM     FILE(IMPFITMM) MBR(&MBR) TEXT('SAP Import - +
+                          SAPIMPCL')
+               OVRDBF     FILE(IMPFITMM) MBR(&MBR)
+               ADDPFM     FILE(IMPFSTUF3) MBR(&MBR) TEXT('SAP Import - +
+                          SAPIMPCL')
+               OVRDBF     FILE(IMPFSTUF3) MBR(&MBR)
+               ADDPFM     FILE(IMPFORDH5) MBR(&MBR) TEXT('SAP Import - +
+                          SAPIMPCL')
+               OVRDBF     FILE(IMPFORDH5) MBR(&MBR)
+               ADDPFM     FILE(IMPFORDHM) MBR(&MBR) TEXT('SAP Import - +
+                          SAPIMPCL')
+               OVRDBF     FILE(IMPFORDHM) MBR(&MBR)
+               ADDPFM     FILE(IMPFORDD5) MBR(&MBR) TEXT('SAP Import - +
+                          SAPIMPCL')
+               OVRDBF     FILE(IMPFORDD5) MBR(&MBR)
+               ADDPFM     FILE(IMPFORDDM) MBR(&MBR) TEXT('SAP Import - +
+                          SAPIMPCL')
+               OVRDBF     FILE(IMPFORDDM) MBR(&MBR)
+
+               OVRDBF     FILE(SAPIMPF) MBR(&MBR)
+
+   /* Run program to parse SAPFLAT and build interface files */
+               CALL       PGM(SAPIMP) PARM(&RTNRTE)
+
+   /* Change member text for debugging */
+               CHGPFM     FILE(SAPIMPF) MBR(&MBR) TEXT('SAP Route' +
+                          *BCAT &RTNRTE)
+
+   /* Call program to do item import */
+
+               CHGVAR     VAR(&RUN) VALUE('*INTER')
+               CHGVAR     VAR(&OUTQ) VALUE('*JOB')
+               CHGVAR     VAR(&FORM) VALUE('*STD')
+               CALL  PGM(II280CL) PARM('*ITEM3 ' &MBR &RUN &OUTQ &FORM)
+
+   /* Call program to do Slot Stuffit import */
+
+               CALL  PGM(SI270CL) PARM('*FULL' &MBR &RUN &OUTQ &FORM)
+
+   /* Call program to do route import */
+
+               CALL  PGM(OI290CL) PARM(&MBR '*ROUTE5' &RUN &OUTQ &FORM)
+
+   /* Clean up member overrides */
+               DLTOVR     FILE(IMPFITM3)
+               MONMSG     MSGID(CPF0000)
+               DLTOVR     FILE(IMPFITMM)
+               MONMSG     MSGID(CPF0000)
+               DLTOVR     FILE(IMPFSTUF3)
+               MONMSG     MSGID(CPF0000)
+               DLTOVR     FILE(IMPFORDH5)
+               MONMSG     MSGID(CPF0000)
+               DLTOVR     FILE(IMPFORDHM)
+               MONMSG     MSGID(CPF0000)
+               DLTOVR     FILE(IMPFORDD5)
+               MONMSG     MSGID(CPF0000)
+               DLTOVR     FILE(IMPFORDDM)
+               MONMSG     MSGID(CPF0000)
+
+               DLTOVR     FILE(SAPIMPF)
+               MONMSG     MSGID(CPF0000)
+
+               RMVM       FILE(SAPIMPF) MBR(&MBR)
+               MONMSG     MSGID(CPF0000)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               CHGVAR     VAR(&RETURN)   VALUE('*OK')
+
+             ENDDO
+
+/*-----------------------------------------------------------------*/
+/*        End of program                                           */
+/*-----------------------------------------------------------------*/
+
+ GETOUT:
+
+             IF COND(&FINISHED = '0') THEN(DO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          TOMSGQ(&IMPMSGQ) MSGTYPE(*INFO)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          TOMSGQ(&IMPERRMSGQ) MSGTYPE(*INFO)
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Export FAILED, see following +
+                          messages. Member' *BCAT &MBR *TCAT '.') +
+                          MSGTYPE(*INFO) KEYVAR(&MSGKEY)
+             ENDDO
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) TOMSGQ(&IMPMSGQ) MSGTYPE(*COMP)
+
+             IF COND(&FINISHED = '0') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) TOMSGQ(&IMPERRMSGQ) +
+                          MSGTYPE(*COMP)
+             ENDDO
+
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+               RCLRSC     LVL(*CALLER)
+
+             DLTF       FILE(QTEMP/SAPFLAT)
+             MONMSG     MSGID(CPF0000)
+
+             ENDPGM

@@ -1,0 +1,1273 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2001 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT830     Change item quantities
+     F*  18 April 2001
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+415 AF*    04/18/01  DAS  4.15
+     F*      - Created                                                 d
+     F*
+415aAF*    04/24/01  DAS  4.15a
+     F*      - Added PASWRD window to screen format.
+     F*      - Revised to ask user for password if *CHANGE or *VIEW
+     F*        are not passed in.
+417aAF*    08/11/04  RH   4.17a
+     F*      - Fix: Revised to call GETSLOTITM, if the item was an
+     F*        alias item for a SSB item, GETBASE would return the SSB
+     F*        item which is not a slot item.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  21 - 30   Field input error (reverse display)
+     F*  90        View mode (protect all fields)
+     F*  91        Change mode (protect key fields)
+     F*  97        Alawys on (used for SFLEND keyword)
+     F*  98        Error on screen (sound alarm)
+     F*  99        Universal record indicator (very temporary usage)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT830FM CF  E                    WORKSTN
+     F                                              KINFDS INFDS
+     F                                        MSGK  KSFILE MSGREC
+     FWAREHS  IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FITEMQTY UF  E           K        DISK
+     FUNMESR  IF  E           K        DISK
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A10        10  1
+     E                    A22        22  1
+     E                    $MD       128  1
+     E                    DESC    1   3 30
+     E                    LBL     1   3 22
+     E                    TYP     1   1 10
+     I*----------------------------------------------------------------
+     I*  Data structures for comparing original and current records.
+     I*
+     ICURREC    E DSITEMQTY
+     IORGREC      DS
+     I                                     10001000 DS1000
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+415aAI              'OPNIQTYCL '          C         @OPNSQ
+     I$LPARM      DS
+     I                                        1   8 $LCMD
+     I                                        9  18 $LPRG
+     I                                       19  68 $LUKY
+     I                                       69  76 $LRTN
+     I                                       77 136 $LERM
+     I                                       77  80 $LMSG
+     I*
+     I*   Redefine key
+     I*
+     I                                       19  210$LWHSE
+     I                                       22  36 $LITEM
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I*
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+417a I*----------------------------------------------------------------
+417a I*  Called programs
+417a I*
+417aAI              'GETSLOTITM'          C         @GETSI
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     I*  Workstation exception data structure
+     I*
+     IINFDS       DS
+     I                                     *STATUS  STATUS
+     I                                      370 370 ROWIN
+     I                                      371 371 COLIN
+     I*----------------------------------------------------------------
+     I*  Workstation exception redefinition data structure
+     I*
+     I            DS
+     I                                    B   1   20ROW#
+     I                                        2   2 ROW
+     I                                    B   3   40COL#
+     I                                        4   4 COL
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   Command: *CHANGE, *VIEW
+     C*      $PWHSE  Warehouse code.
+     C*      $PITEM  Item number.
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PWHSA  3
+     C                     PARM           $PITEM 15
+     C*
+     C                     MOVE $PWHSA    $PWHSE  30
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *ON       *IN97
+     C                     MOVE *OFF      *IN90
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      ERROR
+     C                     EXSR ZZINZ2
+     C           ERROR     IFEQ *ON
+     C                     MOVE 'EOJ'     NXTSCR
+     C                     END
+     C*
+     C           NXTSCR    DOWNE'EOJ'
+     C                     EXSR DSPSCR
+     C           NXTSCR    CASEQ'01 '     SC1
+     C           NXTSCR    CASEQ'02 '     SC2
+     C           NXTSCR    CASEQ'03 '     SC3
+     C                     END
+     C                     END
+     C*
+     C*   Do some clean up before leaving.
+     C*
+     C                     EXSR ZSCLR
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*  DSPSCR - Display screen
+     C*
+     CSR         DSPSCR    BEGSR
+     C*
+     C*   Set ON alarm indicator if error occured
+     C*
+     CSR         ERROR     IFEQ *ON
+     CSR                   MOVE *ON       *IN98
+     CSR                   END
+     C*
+     C*   Overlay screen with error messages
+     C*
+     C                     EXSR ZMDMSG
+     C*
+     C*  Overlay screen with screen to be processed.
+     C*
+     CSR         NXTSCR    IFEQ '01 '
+     CSR                   EXFMTSCREEN1                50
+     CSR                   END
+     CSR         NXTSCR    IFEQ '02 '
+     CSR                   EXFMTSCREEN2                50
+     CSR                   END
+     CSR         NXTSCR    IFEQ '03 '
+     CSR                   EXFMTSCREEN3                50
+     CSR                   END
+     C*
+     C*   Initialize error indicators and fields
+     C*
+     CSR                   SETOF                     010203
+     CSR                   SETOF                     040506
+     CSR                   SETOF                     070809
+     CSR                   SETOF                     101112
+     CSR                   SETOF                     131415
+     CSR                   SETOF                     161718
+     CSR                   SETOF                     1920
+     CSR                   SETOF                     212223
+     CSR                   SETOF                     242526
+     CSR                   SETOF                     272829
+     CSR                   SETOF                     30
+     CSR                   SETOF                     98
+     CSR                   MOVE *OFF      WARN    1
+     CSR                   MOVE *OFF      ERROR   1
+     CSR                   MOVE *OFF      CMDTKN  1
+     CSR                   Z-ADD0         E       20
+     C*
+     C*   Initialize error subfile
+     C*
+     CSR                   EXSR ZMCMSG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*     Screen initialization and wrap-up routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 01 initialization
+     C*
+     CSR         SCR01I    BEGSR
+     CSR                   MOVE '01 '     NXTSCR  3
+     CSR                   EXSR ZZDFT1
+     CSR         END01I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 02 initialization
+     C*
+     CSR         SCR02I    BEGSR
+     CSR                   MOVE '02 '     NXTSCR  3
+     C*
+     C*  Get existing record(s).
+     C*
+     CSR                   EXSR ZZFIL2
+     CSR         END02I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  Screen 03 initialization
+     C*
+     CSR         SCR03I    BEGSR
+     CSR                   MOVE '03 '     NXTSCR  3
+     C*
+     C*  Get existing record(s).
+     C*
+     CSR                   EXSR ZZFIL3
+     CSR         END03I    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*              Screen Processing Routines
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  SC1  -  Screen 1
+     C*
+     CSR         SC1       BEGSR
+     C*
+     C*  Test for F3 - Exit
+     C*
+     CSR         *INKC     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR                   EXSR SCR01I
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   GOTO ENDSC1
+     CSR                   END
+     C*
+     C*  Test for other command keys
+     C*
+     CSR                   EXSR ZZCMD1
+     CSR         CMDTKN    CABEQ*ON       ENDSC1
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR                   EXSR ZZCHK1
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR                   EXSR ZZUPD
+     CSR         ERROR     CABEQ*ON       ENDSC1
+     CSR         ENDSC1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SC2  -  Screen 2
+     C*
+     CSR         SC2       BEGSR
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR                   EXSR SCR02I
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR                   EXSR SCR01I
+     CSR                   GOTO ENDSC2
+     CSR                   END
+     C*
+     C*  Test for other command keys
+     C*
+     CSR                   EXSR ZZCMD2
+     CSR         CMDTKN    CABEQ*ON       ENDSC2
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR                   EXSR ZZCHK2
+     CSR         ERROR     CABEQ*ON       ENDSC2
+     CSR                   EXSR ZZUPD2
+     CSR         ERROR     CABEQ*ON       ENDSC2
+     CSR         ENDSC2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SC3  -  Screen 3
+     C*
+     CSR         SC3       BEGSR
+     C*
+     C*  Test for F5 - Refresh
+     C*
+     CSR         *INKE     IFEQ *ON
+     CSR                   EXSR SCR03I
+     CSR                   GOTO ENDSC3
+     CSR                   END
+     C*
+     C*  Test for F12 - Previous
+     C*
+     CSR         *INKL     IFEQ *ON
+     CSR                   MOVE '02 '     NXTSCR
+     CSR                   GOTO ENDSC3
+     CSR                   END
+     C*
+     C*  Test for other command keys
+     C*
+     CSR                   EXSR ZZCMD3
+     CSR         CMDTKN    CABEQ*ON       ENDSC3
+     C*
+     C*  Some other key pressed.
+     C*
+     C*     Check input and write/update record.
+     C*
+     CSR                   EXSR ZZCHK3
+     CSR         ERROR     CABEQ*ON       ENDSC3
+     C***                  EXSR ZZUPD3
+     C***        ERROR     CABEQ*ON       ENDSC3
+     CSR         ENDSC3    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Initialize special keys
+     C*
+     C                     Z-ADD0         ENTER   50
+     C                     Z-ADD2         COMAND  50
+     C                     Z-ADD01122     ROLLUP  50
+     C                     Z-ADD01123     ROLLDN  50
+     C                     Z-ADD01124     CLEAR   50
+     C                     Z-ADD01125     HELP    50
+     C*
+     C*  Initialize message handling
+     C*
+     C                     EXSR ZMIMSG
+     C*
+     C*   Call user added initialization routine.
+     C*
+     C                     EXSR ZZINZ
+     C                     ENDSR
+     C*---------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*    ZMCMSG  Clear message record subfile
+     C*
+     CSR         ZMCMSG    BEGSR
+     CSR                   MOVE *OFF      *IN97
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK    40
+     CSR                   WRITEMSGCLR
+     CSR                   MOVE '*CLEAR ' #MSGID  7
+     CSR                   MOVE '*NULL  ' #MSGTP  7
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMDMSG  Display message record subfile
+     C*
+     CSR         ZMDMSG    BEGSR
+     CSR                   MOVE *ON       *IN97
+     CSR         MSGK      IFGT 0
+     CSR                   WRITEMSGCTL
+     CSR                   Z-ADD*ZERO     MSGK
+     CSR                   END
+     CSR                   ENDSR
+     C*
+     C*    ZMIMSG  Initialization necessary for message subfile
+     C*
+     CSR         ZMIMSG    BEGSR
+     CSR                   MOVE #PROG     #PGMQ  10
+     CSR                   EXSR ZMCMSG
+     CSR                   ENDSR
+     C*
+     C*    ZMPMSG  Add message record to subfile
+     C*
+     CSR         ZMPMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ
+     CSR                   PARM           #MSGK
+     CSR         #MSGID    IFNE '*CLEAR '
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   END
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZSCLR   Clear screen
+     C*
+     CSR         ZSCLR     BEGSR
+     CSR                   WRITECLRSCR
+     CSR                   MOVE *ON       SCLEAR  1
+     CSR                   ENDSR
+     C*
+     C*    ZMQMSG  Add message record to subfile from program queue
+     C*
+     CSR         ZMQMSG    BEGSR
+     CSR                   ADD  1         MSGK
+     CSR                   WRITEMSGREC
+     CSR                   ENDSR
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID
+     CSR                   PARM           #MSGTP
+     CSR                   PARM           #MSGDT
+     CSR                   PARM           #PGMQ2 10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*    ZMnnnn  Build and send message nnnn to this program
+     C*----------------------------------------------------------------
+     C*      0105
+     C*
+     CSR         ZM0105    BEGSR
+     CSR                   MOVE 'PIR0105' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR0112  Invalid range entered.
+     C*
+     CSR         ZM0112    BEGSR
+     CSR                   MOVE 'PIR0112' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVEAERRMSG    $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7971  Error in writing a record.
+     C*
+     CSR         ZM71      BEGSR
+     CSR                   MOVE 'PIR7971' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7972  Error in updating a record.
+     C*
+     CSR         ZM72      BEGSR
+     CSR                   MOVE 'PIR7972' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR7983  Record changed by another user.
+     C*
+     CSR         ZM83      BEGSR
+     CSR                   MOVE 'PIR7983' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*   PIR9905  Cursor not in correct position for lookup.
+     C*
+     CSR         ZM9905    BEGSR
+     CSR                   MOVE 'PIR9905' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT12210  Can't lock item record.
+     C*
+     CSR         ZM10      BEGSR
+     CSR                   MOVE 'IT12210' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*     IT12273  Item does not exist.
+     C*
+     CSR         ZM73I     BEGSR
+     CSR                   MOVE 'IT12273' #MSGID
+     CSR                   MOVE '*DIAG  ' #MSGTP
+     CSR                   MOVE *BLANKS   $MD,1
+     CSR                   EXSR ZMPMSG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK1   Screen 1 error checking.
+     C*
+     CSR         ZZCHK1    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     C*
+     C*  Verify warehouse code.
+     C*
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADDW1WHSE    $LWHSE
+     CSR                   CALL 'WH900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN01
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN21
+     CSR                   MOVE *ON       *IN01
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*  Verify item number
+     C*
+     CSR                   MOVE '*VERIFY '$LCMD
+     CSR                   Z-ADDW1WHSE    $LWHSE
+     CSR                   MOVE W1ITEM    $LITEM
+     CSR                   CALL 'IT900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*ERROR  '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN22
+     CSR                   MOVE *ON       *IN02
+     CSR                   MOVEL$LERM     ERRMSG
+     CSR                   EXSR ZM0105
+     CSR                   ELSE
+     CSR         $LRTN     IFEQ '*PGMQ   '
+     CSR                   MOVE *ON       ERROR
+     CSR                   MOVE *ON       *IN22
+     CSR                   MOVE *ON       *IN02
+     CSR                   MOVE $LMSG     #MSGK
+     CSR                   EXSR ZMQMSG
+     CSR                   ENDIF
+     CSR                   ENDIF
+     CSR         ENDCK1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK2   Screen 2 error checking.
+     C*
+     CSR         ZZCHK2    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     CSR         ENDCK2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCHK3   Screen 3 error checking.
+     C*
+     CSR         ZZCHK3    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     CSR         ENDCK3    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD1   User defined command keys for screen 1.
+     C*
+     CSR         ZZCMD1    BEGSR
+     CSR                   MOVE *OFF      CMDTKN
+     C*
+     C*  Test for F4 - Lookup
+     C*
+     CSR         *INKD     IFEQ '1'
+     CSR                   MOVE '1'       CMDTKN
+     CSR                   Z-ADD0         ROW#
+     CSR                   MOVE ROWIN     ROW
+     CSR                   Z-ADD0         COL#
+     CSR                   MOVE COLIN     COL
+     C*
+     CSR                   SELEC
+     C*
+     C*     Warehouse.
+     C*
+     CSR         ROW#      WHEQ 8
+     CSR                   MOVE *ON       *IN01
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   Z-ADDW1WHSE    $LWHSE
+     CSR                   CALL 'WH900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   Z-ADD$LWHSE    W1WHSE
+     CSR                   ENDIF
+     C*
+     C*     Item number.
+     C*
+     CSR         ROW#      WHEQ 9
+     CSR                   MOVE *ON       *IN02
+     CSR                   MOVE '*LOOKUP '$LCMD
+     CSR                   Z-ADDW1WHSE    $LWHSE
+     CSR                   MOVE W1ITEM    $LITEM
+     CSR                   CALL 'IT900'
+     CSR                   PARM           $LPARM
+     CSR         $LRTN     IFEQ '*SELECT '
+     CSR                   MOVE $LITEM    W1ITEM
+     CSR                   END
+     C*
+     CSR                   OTHER
+     C*
+     C*     Cursor not on a valid lookup field.
+     C*
+     CSR                   MOVE '1'       ERROR
+     CSR                   EXSR ZM9905
+     CSR                   ENDSL
+     CSR                   ENDIF
+     CSR         ENDCM1    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD2   User defined command keys for screen 2.
+     C*
+     CSR         ZZCMD2    BEGSR
+     CSR                   MOVE *OFF      CMDTKN
+     C*
+     C*  Test for F13 - Linked items
+     C*
+     CSR         *INKM     IFEQ *ON
+     CSR                   MOVE *ON       CMDTKN
+     CSR                   CALL 'IT170CL'
+     CSR                   PARM $PWHSE    $LWHSE
+     CSR                   PARM           $PITEM
+     CSR                   PARM           $LRTN
+     CSR                   ENDIF
+     CSR         ENDCM2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZCMD3   User defined command keys for screen 2.
+     C*
+     CSR         ZZCMD3    BEGSR
+     CSR                   MOVE *OFF      CMDTKN
+     C*
+     C*  Test for F10 - Update
+     C*
+     CSR         *INKJ     IFEQ '1'
+     CSR                   MOVE '1'       CMDTKN
+     CSR                   EXSR ZZUPD3
+     CSR                   ENDIF
+     CSR         ENDCM3    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZDFT1   Get default values for add.
+     C*
+     CSR         ZZDFT1    BEGSR
+     CSR         $PITEM    IFEQ *BLANKS
+     CSR                   MOVE *BLANKS   W1ITEM
+     CSR                   ELSE
+     CSR                   MOVE 'EOJ'     NXTSCR
+     CSR                   END
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL2   Fill screen 2 fields with info from file.
+     C*
+     CSR         ZZFIL2    BEGSR
+     C*
+     CSR         $PCMD     IFEQ '*CHANGE'
+     CSR                   MOVE *OFF      *IN90
+     CSR                   ELSE
+     CSR                   MOVE *ON       *IN90
+     CSR                   ENDIF
+     C*
+     C*   Get warehouse description.
+     C*
+     CSR         W1WHSE    CHAINWAREHS               79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVELDESC,1    WHDESC
+     CSR                   ENDIF
+415aAC*
+415aAC*   Get "open" item quantities.
+415aAC*
+415aACSR                   CALL @OPNSQ
+415aACSR                   PARM $PWHSE    $OWHSE  30
+415aACSR                   PARM $PITEM    $OITEM 15
+415aACSR                   PARM           $OALC1  50
+415aACSR                   PARM           $OALC2  30
+415aACSR                   PARM           $OALC3  30
+415aACSR                   PARM           $OHLD1  50
+415aACSR                   PARM           $OHLD2  30
+415aACSR                   PARM           $OHLD3  30
+415aACSR                   PARM           $OUNK1  50
+415aACSR                   PARM           $OUNK2  30
+415aACSR                   PARM           $OUNK3  30
+     C*
+415aACSR                   Z-ADD$OALC1    WOALC1
+415aACSR                   Z-ADD$OALC2    WOALC1
+415aACSR                   Z-ADD$OALC3    WOALC1
+415aACSR                   Z-ADD$OUNK1    WOUNK1
+415aACSR                   Z-ADD$OUNK2    WOUNK2
+415aACSR                   Z-ADD$OUNK3    WOUNK3
+     C*
+     C*   Initialize quanitities.
+     C*
+     CSR                   CLEARIQSTK1
+     CSR                   CLEARIQSTK2
+     CSR                   CLEARIQSTK3
+     CSR                   CLEARIQALC1
+     CSR                   CLEARIQALC2
+     CSR                   CLEARIQALC3
+     CSR                   CLEARIQTRI1
+     CSR                   CLEARIQTRI2
+     CSR                   CLEARIQTRI3
+     CSR                   CLEARIQTRO1
+     CSR                   CLEARIQTRO2
+     CSR                   CLEARIQTRO3
+     C*
+     C*   Initialize headings
+     C*
+     CSR                   MOVE *BLANKS   W2LBL1
+     CSR                   MOVE *BLANKS   W2HEAD
+     CSR                   MOVE *BLANKS   W2LBLX
+     CSR                   MOVE *BLANKS   W2HEDX
+     CSR                   MOVE *BLANKS   W2UM1
+     CSR                   MOVE *BLANKS   W2UM2
+     CSR                   MOVE *BLANKS   W2UM3
+     C*
+     C*   Get selected item info.
+     C*
+     CSR         ITKEY     CHAINPIRITEM              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   CLEARITTYPE
+     CSR                   CLEARITDESC
+     CSR                   CLEARITPDSC
+     CSR                   CLEARITUM1
+     CSR                   CLEARITUM2
+     CSR                   CLEARITUM3
+     CSR                   MOVELW1ITEM    ITITEM
+     CSR                   MOVELDESC,2    ITDESC
+     CSR         '-'       CAT  ITDESC:1  ITDESC
+     CSR         W1ITEM    CAT  ITDESC:1  ITDESC
+     CSR                   GOTO ENDFL2
+     CSR                   ENDIF
+     C*
+     C*  Save information about selected item (Item that was sent in)
+     C*
+     CSR                   MOVE ITTYPE    #OTYPE  1
+     CSR                   MOVE ITITEM    #OITEM 15
+     CSR                   MOVE ITDESC    #ODESC 30
+     CSR                   MOVE ITPDSC    #OPDSC 15
+     CSR                   MOVE ITUM1     #OUM1   2
+     CSR                   MOVE ITUM2     #OUM2   2
+     CSR                   MOVE ITUM3     #OUM3   2
+     C*
+     C*   Get short UOM descriptions for selected item.
+     C*
+     CSR                   MOVE *BLANKS   #OSU1   5
+     CSR                   MOVE *BLANKS   #OSU2   5
+     CSR                   MOVE *BLANKS   #OSU3   5
+     C*
+     CSR         ITUM1     IFNE *BLANKS
+     CSR         ITUM1     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #OSU1
+     CSR                   ELSE
+     CSR                   MOVELITUM1     #OSU1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ITUM2     IFNE *BLANKS
+     CSR         ITUM2     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #OSU2
+     CSR                   ELSE
+     CSR                   MOVELITUM2     #OSU2
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         ITUM3     IFNE *BLANKS
+     CSR         ITUM3     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #OSU3
+     CSR                   ELSE
+     CSR                   MOVELITUM3     #OSU3
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR                   MOVE #OSU1     W2UM1
+     CSR                   MOVE #OSU2     W2UM2
+     CSR                   MOVE #OSU3     W2UM3
+     C*
+     C*   Initialize base information.
+     C*
+     CSR                   MOVE ITITEM    #BITEM
+417aACSR                   MOVE ITITEM    #SITEM
+     CSR                   MOVE ITTYPE    #BITYP
+     CSR                   MOVE ITDESC    #BDESC
+     CSR                   MOVE ITPDSC    #BPDSC
+     CSR                   MOVE ITUM1     #BUM1
+     CSR                   MOVE ITUM2     #BUM2
+     CSR                   MOVE ITUM3     #BUM3
+     CSR                   MOVE #OSU1     #BSU1   5
+     CSR                   MOVE #OSU2     #BSU2   5
+     CSR                   MOVE #OSU3     #BSU3   5
+     C*
+     C*  If select item is a Base item  . . .
+     C*    Then try to get a corresponding SSB item.
+     C*
+     CSR         ITTYPE    IFEQ ' '
+     CSR                   CALL 'GETSSB'
+     CSR                   PARM W1WHSE    $GWHSE  30
+     CSR                   PARM W1ITEM    $GITEM 15
+     CSR                   PARM ' '       #BITEM 15
+     CSR                   PARM           #BDESC 30
+     CSR                   PARM           #BPDSC 15
+     CSR                   PARM           #BWHDP  5
+     CSR                   PARM           #BSTYP  1
+     CSR                   PARM           #BUM    2
+     CSR                   PARM           #BUM2   2
+     CSR                   PARM           #BUMQ2  30
+     CSR                   PARM           #BUM3   2
+     CSR                   PARM           #BUMQ3  30
+     CSR                   PARM           #BRTN   8
+     CSR         #BRTN     IFEQ '*FOUND  '
+     CSR                   MOVE 'S'       #BITYP
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*  If selected item is a Contract, Alias, SSB or Breakdown item . . .
+     C*    Then get corresponding Base item.
+     C*
+     CSR         ITTYPE    IFEQ 'C'
+     CSR         ITTYPE    OREQ 'A'
+     CSR         ITTYPE    OREQ 'S'
+     CSR         ITTYPE    OREQ 'B'
+     CSR                   CALL 'GETBASE'
+     CSR                   PARM W1WHSE    $GWHSE  30
+     CSR                   PARM W1ITEM    $GITEM 15
+     CSR                   PARM ' '       #BITEM
+     CSR                   PARM           #BITYP  1
+     CSR                   PARM           #BDESC 30
+     CSR                   PARM           #BPDSC 15
+     CSR                   PARM           #BWHDP  5
+     CSR                   PARM           #BSTYP  1
+     CSR                   PARM           #BUM1   2
+     CSR                   PARM           #BUM2   2
+     CSR                   PARM           #BUMQ2  30
+     CSR                   PARM           #BUM3   2
+     CSR                   PARM           #BUMQ3  30
+     CSR                   PARM ' '       #BCITM 15
+     CSR                   PARM           #BCTYP  1
+     CSR                   PARM           #BCDSC 30
+     CSR                   PARM           #BCPDS 15
+     CSR                   PARM           #BCWDP  5
+     CSR                   PARM           #BCSTP  1
+     CSR                   PARM           #BCUM1  2
+     CSR                   PARM           #BCUM2  2
+     CSR                   PARM           #BCUQ2  30
+     CSR                   PARM           #BCUM3  2
+     CSR                   PARM           #BCUQ3  30
+     CSR                   PARM           #BRTN   8
+     CSR                   ENDIF
+417aAC*   Get slot item.
+417aACSR                   CALL @GETSI
+417aACSR                   PARM W1WHSE    $GWHSE  30
+417aACSR                   PARM W1ITEM    $GITEM 15
+417aACSR                   PARM ' '       #SITEM 15
+417aACSR                   PARM           #SITYP  1
+417aACSR                   PARM           #SDESC 30
+417aACSR                   PARM           #SPDSC 15
+417aACSR                   PARM           #SRTN  10
+417aACSR                   PARM           #SMSG  60
+     C*
+     C*   Get short UOM descriptions for base item.
+     C*
+     CSR         #BUM1     IFNE #OUM1
+     CSR         #BUM1     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #BSU1
+     CSR                   ELSE
+     CSR                   MOVEL#BUM1     #BSU1
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         #BUM2     IFNE #OUM2
+     CSR         #BUM2     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #BSU2
+     CSR                   ELSE
+     CSR                   MOVEL#BUM2     #BSU2
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     CSR         #BUM3     IFNE #OUM2
+     CSR         #BUM3     CHAINUNMESR               77
+     CSR         *IN79     IFEQ *OFF
+     CSR                   MOVE UMSHRT    #BSU3
+     CSR                   ELSE
+     CSR                   MOVEL#BUM3     #BSU3
+     CSR                   ENDIF
+     CSR                   ENDIF
+     C*
+     C*   Create label for selected item
+     C*
+     C*     If selected item is a SSB item . . .
+     C*        Then display the breakdown 1 UOM.
+     C*        Otherwise use the normal UOM.
+     C*
+     C*     Note: Except for the description, the SSB fields
+     C*           should be identical to its Base item's fields.
+     C*
+     CSR                   MOVEALBL,1     A22
+     CSR         #OTYPE    IFEQ 'S'
+     CSR                   MOVEA#OSU2     A22,16
+     CSR                   ELSE
+     CSR                   MOVEA#OSU1     A22,16
+     CSR                   ENDIF
+     CSR                   MOVEAA22       W2LBL1
+     CSR         W2LBL1    CAT  ')':0     W2LBL1
+     CSR                   MOVE ':'       W2LBL1
+     C*
+     C*   Create description for selected item
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#OTYPE    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+     CSR         #OITEM    CAT  TEMP10:1  W2HEAD
+     CSR         W2HEAD    CAT  '-':1     W2HEAD
+     CSR         W2HEAD    CAT  #ODESC:1  W2HEAD
+     C*
+     C*   Create label and description for corresponding item.
+     C*
+     CSR                   SELEC
+     C*
+     C*     If selected item is a Base item . . .
+     C*        Then display its corresponding SSB item (if any)
+     C*        Otherwise display nothing.
+     C*
+     CSR         #OTYPE    WHEQ ' '
+     CSR         #BITYP    IFEQ 'S'
+     CSR                   MOVEALBL,3     A22
+     CSR                   MOVEA#BSU2     A22,11
+     CSR                   MOVEAA22       W2LBLX
+     CSR         W2LBLX    CAT  ')':0     W2LBLX
+     CSR                   MOVE ':'       W2LBLX
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#BITYP    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+417aDC**         #BITEM    CAT  TEMP10:1  W2HEDX
+417aMCSR         #SITEM    CAT  TEMP10:1  W2HEDX
+     CSR         W2HEDX    CAT  '-':1     W2HEDX
+     CSR         W2HEDX    CAT  #BDESC:1  W2HEDX
+     CSR                   ENDIF
+     C*
+     C*     If selected item is a Breakdown item . . .
+     C*        Then display its corresponding Base item.
+     C*             Note: UOM is not applicable in this situation.
+     C*
+     CSR         #OTYPE    WHEQ 'B'
+     CSR                   MOVEALBL,2     A22
+     CSR                   MOVEA'N/A'     A22,12
+     CSR                   MOVEAA22       W2LBLX
+     CSR         W2LBLX    CAT  ')':0     W2LBLX
+     CSR                   MOVE ':'       W2LBLX
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#BITYP    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+417aDC**         #BITEM    CAT  TEMP10:1  W2HEDX
+417aMCSR         #SITEM    CAT  TEMP10:1  W2HEDX
+     CSR         W2HEDX    CAT  '-':1     W2HEDX
+     CSR         W2HEDX    CAT  #BDESC:1  W2HEDX
+     C*
+     C*     Otherwise . . .
+     C*        Then display its corresponding Base item w/UOM.
+     C*             Note: UOM of Base should match UOM of selected item.
+     C*
+     CSR                   OTHER
+     CSR                   MOVEALBL,2     A22
+     CSR                   MOVEA#BSU1     A22,12
+     CSR                   MOVEAA22       W2LBLX
+     CSR         W2LBLX    CAT  ')':0     W2LBLX
+     CSR                   MOVE ':'       W2LBLX
+     C*
+     CSR                   MOVEATYP,1     A10
+     CSR                   MOVEA#BITYP    A10,8
+     CSR                   MOVEAA10       TEMP10 10
+     C*
+417aDC**         #BITEM    CAT  TEMP10:1  W2HEDX
+417aMCSR         #SITEM    CAT  TEMP10:1  W2HEDX
+     CSR         W2HEDX    CAT  '-':1     W2HEDX
+     CSR         W2HEDX    CAT  #BDESC:1  W2HEDX
+     C*
+     CSR                   ENDSL
+     C*
+     C*   Get warehouse quantity record for appropriate item
+     C*
+     C*     If selected item is Base, Breakdown or SSB item . . .
+     C*        Then get record for that item.
+     C*        Otherwise get record for corresponding Base item.
+     C*
+     CSR         #OTYPE    IFEQ ' '
+     CSR         #OTYPE    OREQ 'B'
+     CSR         #OTYPE    OREQ 'C'
+     CSR         ITKEY     CHAINITEMQTY             N78
+     CSR                   ELSE
+     CSR         ITKEYB    CHAINITEMQTY             N78
+     CSR                   ENDIF
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *BLANKS   W2HEDX
+     CSR                   MOVELDESC,3    W2HEDX
+     CSR         '-'       CAT  W2HEDX:1  W2HEDX
+     CSR         W1ITEM    CAT  W2HEDX:1  W2HEDX
+     CSR                   GOTO ENDFL2
+     CSR                   ENDIF
+     C*
+     C*   Save current record values for later comparison.
+     C*
+     CSR                   MOVELCURREC    ORGREC
+     C*
+     C*   Move file fields into screen fields.
+     C*
+     CSR                   Z-ADDIQSTK1    W2STK1
+     CSR                   Z-ADDIQSTK2    W2STK2
+     CSR                   Z-ADDIQSTK3    W2STK3
+     CSR                   Z-ADDIQALC1    W2ALC1
+     CSR                   Z-ADDIQALC2    W2ALC2
+     CSR                   Z-ADDIQALC3    W2ALC3
+     CSR                   Z-ADDIQHLD1    W2HLD1
+     CSR                   Z-ADDIQHLD2    W2HLD2
+     CSR                   Z-ADDIQHLD3    W2HLD3
+     C**                   Z-ADDIQTRI1    W2TRI1
+     C**                   Z-ADDIQTRI2    W2TRI2
+     C**                   Z-ADDIQTRI3    W2TRI3
+     C**                   Z-ADDIQTRO1    W2TRO1
+     C**                   Z-ADDIQTRO2    W2TRO2
+     C**                   Z-ADDIQTRO3    W2TRO3
+     C*
+     C*   Calculate available quantities.
+     C*
+     CSR         IQSTK1    SUB  IQALC1    W2AVL1
+     CSR                   SUB  IQHLD1    W2AVL1
+     C*
+     CSR         IQSTK2    SUB  IQALC2    W2AVL2
+     CSR                   SUB  IQHLD2    W2AVL2
+     C*
+     CSR         IQSTK3    SUB  IQALC3    W2AVL3
+     CSR                   SUB  IQHLD3    W2AVL3
+     C*
+     CSR         ENDFL2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZFIL3   Fill screen 3 fields with info from file.
+     C*
+     CSR         ZZFIL3    BEGSR
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ    Extra program initialization. Called from *INZSR.
+     C*
+     CSR         ZZINZ     BEGSR
+     C*
+     C*  Define key for item file.
+     C*
+     CSR         ITKEY     KLIST
+     CSR                   KFLD           W1WHSE
+     CSR                   KFLD           W1ITEM
+     C*
+     C*  Define key for base item.
+     C*
+     CSR         ITKEYB    KLIST
+     CSR                   KFLD           W1WHSE
+417aMCSR                   KFLD           #SITEM
+417aDC**                   KFLD           #BITEM
+     C*
+     CSR                   MOVE #PROG     $LPRG
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZINZ2   Program initialization. Called from main line.
+     C*
+     CSR         ZZINZ2    BEGSR
+     C*
+415aACSR         $PCMD     IFNE '*CHANGE'
+415aACSR         $PCMD     ANDNE'*VIEW  '
+415aACSR                   EXSR ZZPWRD
+415aACSR                   ENDIF
+     C*
+     CSR         $PCMD     IFEQ '*CHANGE'
+     CSR                   MOVE 'CHANGE'  WOTYPE
+     CSR                   ELSE
+     CSR                   MOVE 'VIEW  '  WOTYPE
+     CSR                   ENDIF
+     C*
+     C*   Select first screen to display.
+     C*
+     CSR                   SELEC
+     CSR         $PITEM    WHEQ *BLANKS
+     CSR                   CALL 'GETWHSE'
+     CSR                   PARM           #USER
+     CSR         W1WHSE    PARM 0         #WHSE   30
+     CSR                   EXSR SCR01I
+     C*
+     CSR                   OTHER
+     CSR                   Z-ADD$PWHSE    W1WHSE
+     CSR                   MOVE $PITEM    W1ITEM
+     CSR                   EXSR ZZCHK1
+     CSR         ERROR     IFEQ *ON
+     CSR                   EXSR SCR01I
+     CSR                   ELSE
+     CSR                   EXSR SCR02I
+     CSR                   ENDIF
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSR
+415aAC*----------------------------------------------------------------
+415aAC*
+415aAC*  ZZPWRD   Get password
+415aAC*
+415aAC*    Note: Password becomes value for $CMD. Therefore, the
+415aAC*          password to allow changes is *CHANGE.
+415aAC*
+415aACSR         ZZPWRD    BEGSR
+     CSR                   MOVE *BLANKS   W1PWRD
+     CSR                   EXFMTPASWRD
+     CSR                   MOVE W1PWRD    $PCMD
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD    Update record.
+     C*
+     CSR         ZZUPD     BEGSR
+     CSR                   MOVE *OFF      ERROR
+     CSR                   EXSR SCR02I
+     CSR         ENDUPD    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD2   Update for screen 2.
+     C*
+     CSR         ZZUPD2    BEGSR
+     CSR                   MOVE *OFF      ERROR
+     CSR         $PCMD     IFEQ '*CHANGE'
+     CSR                   EXSR SCR03I
+     CSR                   ELSE
+     CSR                   EXSR SCR01I
+     CSR                   ENDIF
+     CSR         ENDUP2    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZZUPD3   Update for screen 3.
+     C*
+     CSR         ZZUPD3    BEGSR
+     C*
+     C*   Get warehouse quantity record for appropriate item
+     C*
+     C*     If selected item is Base, Breakdown or SSB item . . .
+     C*        Then get record for that item.
+     C*        Otherwise get record for corresponding Base item.
+     C*
+     CSR         #OTYPE    IFEQ ' '
+     CSR         #OTYPE    OREQ 'B'
+     CSR         #OTYPE    OREQ 'C'
+     CSR         ITKEY     CHAINITEMQTY              78
+     CSR                   ELSE
+     CSR         ITKEYB    CHAINITEMQTY              78
+     CSR                   ENDIF
+     C*
+     C*   Check for error updating record.
+     C*
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM72
+     CSR                   GOTO ENDUP3
+     CSR                   ENDIF
+     C*
+     C*   Check to see if record was changed by someone else.
+     C*
+     CSR         CURREC    IFNE ORGREC
+     CSR                   MOVE *ON       ERROR
+     CSR                   EXSR ZM83
+     CSR                   MOVE '02 '     NXTSCR
+     CSR                   GOTO ENDUP3
+     CSR                   ENDIF
+     C*
+     C*   Update record.
+     C*
+     CSR                   Z-ADDW2STK1    IQSTK1
+     CSR                   Z-ADDW2STK2    IQSTK2
+     CSR                   Z-ADDW2STK3    IQSTK3
+     CSR                   Z-ADDW2ALC1    IQALC1
+     CSR                   Z-ADDW2ALC2    IQALC2
+     CSR                   Z-ADDW2ALC3    IQALC3
+     CSR                   Z-ADDW2HLD1    IQHLD1
+     CSR                   Z-ADDW2HLD2    IQHLD2
+     CSR                   Z-ADDW2HLD3    IQHLD3
+     C**                   Z-ADDW2TRI1    IQTRI1
+     C**                   Z-ADDW2TRI2    IQTRI2
+     C**                   Z-ADDW2TRI3    IQTRI3
+     C**                   Z-ADDW2TRO1    IQTRO1
+     C**                   Z-ADDW2TRO2    IQTRO2
+     C**                   Z-ADDW2TRO3    IQTRO3
+     CSR                   UPDATIQREC
+     C*
+     CSR                   MOVE *OFF      ERROR
+     CSR                   EXSR SCR01I
+     CSR         ENDUP3    ENDSR
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+* * INVALID WAREHOUSE * *
+* * INVALID ITEM * *
+* * QTY RECORD NOT FOUND * *
+**
+Selected item (
+Base item (
+SSB item (
+**
+(Type ' ')

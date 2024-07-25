@@ -1,0 +1,258 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  IT381     Slot replenishment.
+     F*  31 October, 1994
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions
+     F*    11/28/94  DAS
+     F*      - Added pick slot department to OR532 parameters.
+     F*
+     F*    05/10/96  HNK  2.13
+     F*      - Revised IT381 to accept two new parameters. First is number
+     F*        of replenishments to do. (1-999 or *ALL). Second is only
+     F*        those replenishments that will free up a overflow slot.
+     F*      - Revised call to OR532 to pass one new parameter, $PFRSL.
+     F*
+     F*      - Revised IT381 to accept one new parameter. Slot definition
+     F*        to select replenishments from for filling pick slots.
+     F*      - Revised call to OR532 to pass one new parameter, $PSDEF.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+213 AF*  80        First cycle complete                                   GFG
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT381   IP  E           K        DISK
+     FOPTIONS IF  E           K        DISK
+     FBATCTL  O   E           K        DISK
+     FSLOT2   UF  E           K        DISK
+     I*----------------------------------------------------------------
+     I*
+     I* Data structure
+     I*
+     IOPDATA      DS
+     I I            0                         1   30OPCLVL
+     I                                        4   4 OPCWRA
+     I                                        5   5 OPCWRB
+     I                                        6   6 OPUWRA
+     I                                        7   7 OPUWRB
+     I                                        8  50 OPTEXT
+     I I            0                        51  520OPERR
+     I I            0                        53  540OPCWGT
+     I                                       55  64 OPLPGM
+     I                                      117 117 OPTEND
+213 AI            DS                                                      GFG
+213 AI                                        1   3 ALLRPL                GFG
+213 AI I            0                         4   60NRPL                  GFG
+213 AI I            0                         7  110NRRPL                 GFG
+     I*----------------------------------------------------------------
+     I*  Called program
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSA  3
+     C                     PARM           $PWHDP  5
+213 AC                     PARM           $PNRPL  4                       GFG
+213 AC                     PARM           $PFRSL  4                       GFG
+213 AC                     PARM           $PSDEF  4                       GFG
+     C*
+     C           SL2KEY    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PWHDP
+     C                     KFLD           QLDISP
+213 AC*
+213 AC           *IN80     IFEQ *OFF                                      GFG
+213 AC           $PNRPL    IFEQ '*ALL'                                    GFG
+213 AC                     MOVE 'YES'     ALLRPL           All replen's   GFG
+213 AC                     ELSE                                           GFG
+213 AC                     MOVE $PNRPL    NRPL             Nbr replen's   GFG
+213 AC                     ENDIF                                          GFG
+213 AC                     MOVE *ON       *IN80                           GFG
+213 AC                     ENDIF                                          GFG
+     C*----------------------------------------------------------------
+     C*
+     C*   Calculate quantities.
+     C*
+     C                     CALL 'SLOTQTY'
+     C                     PARM           QLSTK1
+     C                     PARM           QLSTK2
+     C                     PARM           QLSTK3
+     C*
+     C                     PARM           QLALC1
+     C                     PARM           QLALC2
+     C                     PARM           QLALC3
+     C*
+     C                     PARM           QLTFR1
+     C                     PARM           QLTFR2
+     C                     PARM           QLTFR3
+     C*
+     C                     PARM           QLPCK1
+     C                     PARM           QLPCK2
+     C                     PARM           QLPCK3
+     C*
+     C                     PARM           QLRCV1
+     C                     PARM           QLRCV2
+     C                     PARM           QLRCV3
+     C*
+     C                     PARM           STOCK1  50
+     C                     PARM           STOCK2  30
+     C                     PARM           STOCK3  30
+     C*
+     C                     PARM           AVAIL1  50
+     C                     PARM           AVAIL2  30
+     C                     PARM           AVAIL3  30
+     C*
+     C* If Stock qty <or= Replenish qty, then do replenishment.
+     C*
+     C           STOCK1    CABGTITREPL    SKPREC
+     C*
+     C*  Create a replenishment.
+     C*
+     C                     Z-ADD$PWHSE    $WHSE
+     C                     MOVE QLITEM    $PITEM
+     C                     MOVE ITUM1     $PUCOD
+     C                     MOVE ITCUBE    $PCUBE
+     C                     MOVE ITSWGT    $PSWGT
+     C                     MOVE QLWHDP    $PWHDP
+     C                     MOVE QLAISL    $PAISL
+     C                     Z-ADDQLLOC     $PLOC
+     C                     Z-ADDQLRLVL    $PRLVL
+     C                     MOVE QLHAND    $PHAND
+     C                     MOVE QLDISP    $PDISP
+     C                     Z-ADD0         $PQTY
+     C*
+     C                     CALL 'OR532'
+     C                     PARM           $PBAT   70
+     C                     PARM           $WHSE   30
+     C                     PARM *BLANKS   $PRTE   5
+     C                     PARM           $PITEM 15
+     C                     PARM           $PUCOD  2
+     C                     PARM           $PCUBE  73
+     C                     PARM           $PSWGT  72
+     C                     PARM *ZEROS    $PTRN#  70
+     C                     PARM           $PWHDP  5
+     C                     PARM           $PAISL  3
+     C                     PARM           $PLOC   30
+     C                     PARM           $PRLVL  20
+     C                     PARM           $PHAND  2
+     C                     PARM           $PDISP 12
+     C                     PARM           $PQTY   70
+213 AC                     PARM           $PFRSL  4        Free slots?    GFG
+213 AC                     PARM           $PSDEF  4        Slot type      GFG
+     C                     PARM           $PRTN   8
+     C*
+     C*  Update slot file.
+     C*
+     C           SL2KEY    CHAINSLOT2                7978
+     C*  Skip locked records.
+     C           *IN78     CABEQ*ON       SKPREC
+     C           *IN79     IFEQ *OFF
+     C                     ADD  $PQTY     SLRCV1
+     C                     UPDATSLREC
+213 AC*                                                                   GFG
+213 AC*  Check to see if limit of replenishments to do                    GFG
+213 AC*  has been reached.                                                GFG
+213 AC*                                                                   GFG
+213 AC           $PQTY     IFGT *ZEROS                                    GFG
+213 AC                     ADD  1         NRRPL                           GFG
+213 AC           ALLRPL    IFNE 'YES'                                     GFG
+213 AC           NRRPL     ANDEQNRPL                       # replen to do GFG
+213 AC                     MOVE *ON       *INLR            reached. Exit. GFG
+213 AC                     ENDIF                                          GFG
+213 AC                     ENDIF                                          GFG
+     C                     ENDIF
+     C*
+     C           SKPREC    TAG
+     C*
+     C*  Get replenishment label print program name.
+     C*
+     CLR                   MOVE '*PICKLBL'OPCODE
+     CLR         KEYOP     CHAINOPTIONS              79
+     C*
+     CLR         *IN79     IFEQ *OFF
+     CLR         OPLPGM    ANDNE*BLANKS
+     CLR                   CALL OPLPGM
+     CLR                   PARM '*REPLEN '$PCMD   8
+     CLR                   PARM           $PBAT   70
+     CLR                   PARM           $PWHSE  30
+     CLR                   PARM *BLANKS   $PRTE   5
+     CLR                   PARM *BLANKS   $PSTYP  1
+     CLR                   PARM           $PWHDP  5
+     CLR                   PARM *ZEROS    $PTRN#  70
+     CLR                   ENDIF
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C                     MOVE $PWHSA    $PWHSE  30
+     C*
+     C*  Define key for OPTIONS file.
+     C*
+     CSR         KEYOP     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           OPCODE
+     C*
+     C*     - Get new batch number.
+     C*
+     CSR                   CALL 'PIRBAT#'
+     CSR                   PARM           $PBAT
+     C*
+     C*     - Create batch control record.
+     C*
+     CSR                   Z-ADD$PBAT     BTBAT#
+     CSR                   Z-ADD$PWHSE    BTWHSE
+     CSR                   MOVE '*REPLEN 'BTTYPE
+     CSR                   MOVE *BLANKS   BTSTAT
+     CSR                   MOVE *BLANKS   BTRTE
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    BTSTRD
+     CSR                   TIME           BTSTRT
+     CSR                   MOVE #USER     BTSTRB
+     CSR                   WRITEBTREC
+     C*
+     CSR                   ENDSR

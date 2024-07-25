@@ -1,0 +1,195 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1997 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR631     Truck build - Bulk replenishment.
+     F*  24 Jun 1997
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    06/24/97 DAS  4.00
+     F*      - This program is an exact duplicate of OR531.
+     F*
+408  F*    01/22/98 RH   4.08
+     F*      - Recompiled
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FSLOT3   UF  E           K        DISK
+     FITEMDEF2IF  E           K        DISK
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PWHSE  Warehouse number.
+     C*      $PITEM  Item number.
+     C*      $PQTY   Normal quantity.
+     C*
+     C*    Returned Parameters
+     C*      $PAISL  Aisle of replenished slot.
+     C*      $PLOC   Location of replenished slot.
+     C*      $PRLVL  Level of replenished slot.
+     C*      $PHAND  Handstack of replenished slot.
+     C*      $PDISP  Display of replenished slot.
+     C*      $PRTN   *OK      - Slot had room for replenishment.
+     C*              *NOROOM  - No room in pick slot for replenishment.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PWHSE  30
+     C                     PARM           $PITEM 15
+     C                     PARM           $PQTY   70
+     C                     PARM           $PAISL  3
+     C                     PARM           $PLOC   30
+     C                     PARM           $PRLVL  20
+     C                     PARM           $PHAND  2
+     C                     PARM           $PDISP 12
+     C                     PARM           $PRTN   8
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE '*NOROOM '$PRTN
+     C*
+     C*   Get the picking slot for the item.
+     C*
+     C                     MOVE 'A '      SLSTAT
+     C                     MOVE 'Y'       SLPICK
+     C           KEYSL3    SETLLSLOT3
+     C           KEYSL3    READESLOT3                    79
+     C*
+     C*   Do nothing if picking slot doesn't exist.
+     C*
+     C           *IN79     CABEQ*ON       BOTTOM
+     C*
+     C*   Calculate empty space in slot.
+     C*
+     C                     EXSR EMPTY
+     C           ERROR     CABEQ*ON       BOTTOM
+     C*
+     C*   Replenish slot if entire quantity will fit.
+     C*
+     C           $PQTY     IFLE EMPTYQ
+     C                     ADD  $PQTY     SLRCV1
+     C                     UPDATSLREC
+     C                     MOVE SLAISL    $PAISL
+     C                     Z-ADDSLLOC     $PLOC
+     C                     Z-ADDSLRLVL    $PRLVL
+     C                     MOVE SLHAND    $PHAND
+     C                     MOVE SLDISP    $PDISP
+     C                     MOVE '*OK     '$PRTN
+     C                     ENDIF
+     C*
+     C           BOTTOM    TAG
+     C*
+     C           $PRTN     IFEQ '*NOROOM '
+     C                     UNLCKSLOT3
+     C                     ENDIF
+     C*
+     C                     RETRN
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     C*  Define partial key for SLOT3 file.
+     C*
+     C           KEYSL3    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PITEM
+     C                     KFLD           SLSTAT
+     C                     KFLD           SLPICK
+     C*
+     C*  Define key for ITEMDEF2 file.
+     C*
+     C           KEYID2    KLIST
+     C                     KFLD           $PWHSE
+     C                     KFLD           $PITEM
+     C                     KFLD           SLSDEF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  EMPTY   Calculate empty space in slot.
+     C*
+     CSR         EMPTY     BEGSR
+     CSR                   MOVE *OFF      ERROR   1
+     C*
+     C*  Get item tie/high definition for slot.
+     C*
+     CSR         KEYID2    CHAINITEMDEF2             78
+     CSR         *IN78     IFEQ *ON
+     CSR                   MOVE *ON       ERROR
+     CSR                   GOTO ENDEMP
+     CSR                   ENDIF
+     C*
+     C*  Calculate total space for slot.
+     C*
+     CSR                   SELEC
+     CSR         IDTIE     WHEQ 0
+     CSR                   Z-ADDIDHIGH    PALLET  50
+     CSR         IDHIGH    WHEQ 0
+     CSR                   Z-ADDIDTIE     PALLET
+     CSR                   OTHER
+     CSR         IDTIE     MULT IDHIGH    PALLET
+     CSR                   ENDSL
+     CSR         PALLET    MULT SDPOS     SPACE   71
+     C*
+     C*  Call program to calculate availabe slot quantities.
+     C*
+     CSR                   CALL 'SLOTQTY'
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     C*
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     C*
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     C*
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     C*
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     C*
+     CSR                   PARM           STOCK1  50
+     CSR                   PARM           STOCK2  30
+     CSR                   PARM           STOCK3  30
+     C*
+     CSR                   PARM           AVAIL1  50
+     CSR                   PARM           AVAIL2  30
+     CSR                   PARM           AVAIL3  30
+     C*
+     C*  Calculate free space for slot.
+     C*
+     CSR         SPACE     SUB  STOCK1    EMPTYQ  70
+     C*
+     CSR         ENDEMP    ENDSR

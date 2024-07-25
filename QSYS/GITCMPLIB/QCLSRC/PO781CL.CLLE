@@ -1,0 +1,142 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2021 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PO781CL   Export DockVue Activity - Loop                         */
+/*  13 August 2021                                                   */
+/*  Max Blacknik                                                     */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    08/13/21  MLB  7.50                                            */
+/*     - Created.                                                    */
+/*                                                                   */
+/*    10/27/21  TDC  7.50a                                           */
+/*     - Changed the run wait time to 1 minute.                      */
+/*                                                                   */
+/*    11/17/21  TDC  7.50b                                           */
+/*     - Changed varilables for Bertram.                             */
+/*                                                                   */
+/*    02/02/22  TDC  7.50c                                           */
+/*     - Changed varilables for Chef's Warehouse WH:10               */
+/*                                                                   */
+/*    08/12/22  TDC  7.60                                            */
+/*     - Changed varilables for Chef's Warehouse WH:10               */
+/*                                                                   */
+/*    05/05/23  TDC  7.70a                                           */
+/*     - Modified time retreival for different timezones on          */
+/*          the same box.                                            */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Client Custom Revisions:                                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &WHSE   -  Warehouse                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ PO781CL:    PGM        PARM(&WHSE)
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(PO781CL)
+
+  /* Name of report program. */
+
+             DCL        VAR(&RPTPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(DOCK001R)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CUTOFF)     TYPE(*DEC) LEN(4 0) VALUE(2359)
+/* 750aD     DCL        VAR(&DELAYMIN)   TYPE(*DEC) LEN(4 0) VALUE(15)    */
+/* 750aA */  DCL        VAR(&DELAYMIN)   TYPE(*DEC) LEN(4 0) VALUE(1)
+/* 750bD     DCL        VAR(&JOBD)       TYPE(*CHAR) LEN(10) VALUE(CFIDVUP001) */
+/* 750bD     DCL        VAR(&JOBDLIB)    TYPE(*CHAR) LEN(10) VALUE(PIR720)     */
+/* 750bD     DCL        VAR(&JOBNAME)    TYPE(*CHAR) LEN(10) VALUE(CFIDOCKVUE) */
+/* 750bA     DCL        VAR(&JOBD)       TYPE(*CHAR) LEN(10) VALUE(SBRDVUP001) */
+/* 750bA     DCL        VAR(&JOBDLIB)    TYPE(*CHAR) LEN(10) VALUE(PIR740)     */
+/* 750bA     DCL        VAR(&JOBNAME)    TYPE(*CHAR) LEN(10) VALUE(SBRDOCKVUE) */
+/* 750cM     DCL        VAR(&JOBD)       TYPE(*CHAR) LEN(10) VALUE(PIRDVUT010) */
+/* 750cM     DCL        VAR(&JOBDLIB)    TYPE(*CHAR) LEN(10) VALUE(PIR730)     */
+/* 750cM     DCL        VAR(&JOBNAME)    TYPE(*CHAR) LEN(10) VALUE(CFIDVU010)  */
+/* 760 A */  DCL        VAR(&JOBD)       TYPE(*CHAR) LEN(10) VALUE(PIRJOBDSFP)
+/* 760 A */  DCL        VAR(&JOBDLIB)    TYPE(*CHAR) LEN(10) VALUE(*libl)
+/* 760 A */  DCL        VAR(&JOBNAME)    TYPE(*CHAR) LEN(10) VALUE(SFPDVUP001)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&NEWTIME)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&NUMHOUR)    TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&NUMMIN)     TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&SEV)        TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&SYSTIME)    TYPE(*CHAR) LEN(6)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO CMDLBL(GETOUT))
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/* Run DockVue program.                                              */
+
+             CALL       PGM(&RPTPGM)
+
+/* Determine next run time and put back on job queue. */
+
+  /* 770a    RTVSYSVAL  SYSVAL(QTIME) RTNVAR(&SYSTIME)             */
+ /*770aA */  CALL       PGM(RTVPARTIME) PARM(&SYSTIME)
+             CHGVAR     VAR(&NUMHOUR) VALUE(%SST(&SYSTIME 1 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(%SST(&SYSTIME 3 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN + &DELAYMIN)
+             IF         COND(&NUMMIN *GE 60) THEN(DO)
+               CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN - 60)
+               CHGVAR     VAR(&NUMHOUR) VALUE(&NUMHOUR + 1)
+             ENDDO
+             IF         COND(&NUMHOUR *GE 24) THEN(GOTO CMDLBL(GETOUT))
+             IF         COND(((&NUMHOUR * 100) + &NUMMIN) *GE +
+                          &CUTOFF) THEN(GOTO CMDLBL(GETOUT))
+
+             CHGVAR     VAR(%SST(&SYSTIME 1 2)) VALUE(&NUMHOUR)
+             CHGVAR     VAR(%SST(&SYSTIME 3 2)) VALUE(&NUMMIN)
+             CHGVAR     VAR(&NEWTIME) VALUE(%SST(&SYSTIME 1 2) *CAT +
+                          ':' *CAT %SST(&SYSTIME 3 2) *CAT ':00')
+
+             SBMJOB     CMD(CALL PGM(&SBMPGM) parm('010')) JOB(&JOBNAME) +
+                          JOBD(&JOBDLIB/&JOBD) JOBQ(QS36EVOKE) LOG(4 +
+                          0 *NOLIST) SCDTIME(&NEWTIME) MSGQ(*NONE)
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+/*  Clean up before leaving */
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

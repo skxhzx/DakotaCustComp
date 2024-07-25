@@ -1,0 +1,328 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2008 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*----------------------------------------------------------------
+     F*
+     F*  RU376A    Route Loading Analysis Report.
+     F*  April 9, 2008
+     F*  Jose Duque  (Copy of RU371A)
+     F*
+     F*  Revisions
+     F*
+520 AF*    01/16/09  RBD  5.20
+     F*      - Added variable field for printing pgm name, as the
+     F*        prtf RU376APR is used by multiple pgms.
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions
+     F*
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRU376A  IP  E           K        DISK
+     FLDRHHDR3IF  E           K        DISK
+     FLDRDCOM2IF  E           K        DISK
+     FPIRTRAN IF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     F*
+     FRU376APRO   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    MSG     1   1 24
+     E*----------------------------------------------------------------
+     I*  Data structure To hold flag Open, Print and Close times.
+     I*
+     I            DS
+     I                                        1   6 HLDTIM
+     I                                        1   2 HLDHR
+     I                                        3   4 HLDMM
+     I                                        5   6 HLDSS
+     I            DS
+     I                                        1   72HLDMM2
+     I                                        1   50MM
+     I                                        6   70MINPER
+     I            DS
+     I                                        1   60TAVG
+     I                                        1   20TAHR
+     I                                        3   40TAMIN
+     I                                        5   60TASEC
+     I*
+     I*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Level break occurred.
+     C*     - Filled page.
+     C*
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $SDTE6  6
+     C                     PARM           $PDTE6  6
+     C                     PARM           $FSEC   6
+     C                     PARM           $RSEC   6
+     C*
+     C*
+     C           FIRST     IFEQ *ON
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     MOVE *OFF      FIRST
+     C                     ENDIF
+      *
+     C           COUNT     IFEQ RECPAG
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C*
+     C           RUSTAT    IFNE 'D'                        Skip deleted
+     C                     EXSR ZRDETL                     flags
+     C                     ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* REPORT TOTALS
+     C*
+     CLR         REC#      IFGT 0
+      *
+     CLR         WTOTRT    SUB  NOFLG     FLGRTE
+     CLR                   MOVE $FSEC     SECONS
+     CLR                   MOVE *ON       FLG
+     CLR                   Z-ADD*ZEROS    TAVG
+     CLR                   EXSR ZRAVG
+     CLR                   MOVE TAVG      WTOAV1
+      *
+     CLR                   MOVE $RSEC     SECONS
+     CLR                   MOVE *OFF      FLG
+     CLR                   Z-ADD*ZEROS    TAVG
+     CLR                   EXSR ZRAVG
+     CLR                   MOVE TAVG      WTOAV2
+      *
+     CLR                   WRITESKIP1
+     CLR                   WRITETOTFLG
+     CLR                   WRITESKIP1
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD0         REC#    30
+     C                     Z-ADD0         COUNT   30
+     C                     Z-ADD55        RECPAG  30
+     C                     Z-ADD*ZEROS    WTOTRT
+     C                     MOVE $PDTE6    FRMDTE
+     C                     MOVE $SDTE6    TODTE
+     C                     Z-ADD*ZEROS    NOFLG   40
+     C                     Z-ADD*ZEROS    FLGRTE  40
+     C                     Z-ADD*ZEROS    SECONS  60
+     C                     MOVE *ON       FLG     1
+520 AC                     MOVEL'RU376A'  PGMID
+     C*
+     C*  Define partial key for LDRHHDR3 file.
+     C*
+      *
+     C           LDRHDR    KLIST
+     C                     KFLD           RUWHSE
+     C                     KFLD           RHRTE
+     C                     KFLD           RHRTID
+      *
+      *
+      *                    EXSR ZRFRMT
+      *                    EXSR ZRHEAD
+     C                     EXSR ZRCLER
+     C                     EXSR ZRZERO
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*   Calculate average on flag and route 'Diff Time'.
+     C*
+     C           ZRAVG     BEGSR
+      *
+     C           SECONS    DIV  60        HLDMM2           ConvSectoMin
+      *
+     C           FLG       IFEQ *ON                        Flagged rtes
+     C           HLDMM2    DIV  FLGRTE    HLDMM2           only
+     C                     ELSE
+     C           HLDMM2    DIV  WTOTRT    HLDMM2           All routes
+     C                     ENDIF
+      *
+     C           MINPER    DIV  100       HLDPER  32       SetSecPercent
+     C           HLDPER    MULT 60        HLDSS1  60H      CalcSeconds
+     C                     Z-ADDHLDSS1    TASEC
+      *
+      *
+      *  Take care of minutes overflow
+     C           MM        IFGT 59
+     C           MM        DIV  60        HLDHRS  20       Loading
+     C                     MVR            TAMIN            Tavg
+     C                     Z-ADDHLDHRS    TAHR
+     C                     ELSE
+     C                     Z-ADD*ZEROS    TAHR
+     C                     Z-ADDMM        TAMIN
+     C                     ENDIF
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           RUWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C*  Print headings for the next page.
+     C*
+     C                     WRITEHEAD1
+     C                     WRITECOLUMNS
+     C*
+     C*
+     C*  Print previous page detail lines.
+     C*
+     C                     Z-ADD0         COUNT
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRCLER    BEGSR
+     C*
+     C*   Initialize all data structures.
+     C*
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRDETL    BEGSR
+     C*
+     C*
+      *          Move flag start,close and diff times to report
+     C*
+     C           2         SUBSTRUODTT:1  HLDHR
+     C           2         SUBSTRUODTT:3  HLDMM
+     C           2         SUBSTRUODTT:5  HLDSS
+     C                     MOVE HLDTIM    W1STRT           FlagStarTime
+     C*
+     C                     MOVELRUCDTS    HOLDIT 26
+     C*
+     C           2         SUBSTHOLDIT:12 HLDHR
+     C           2         SUBSTHOLDIT:15 HLDMM
+     C           2         SUBSTHOLDIT:18 HLDSS
+     C                     MOVE HLDTIM    W1CLST           FlagClosTime
+     C*
+     C                     MOVE RHSHPT    W1DIFF
+     C                     MOVE RHEXPT    W1DIF2
+     C           W1DIFF    IFEQ *ZEROS                     Route w/o
+     C                     MOVELMSG,1     W1NOFL           flags
+     C                     SETON                     02
+     C                     ADD  1         NOFLG
+     C                     ELSE
+     C                     SETOF                     02
+     C                     ENDIF
+      *----------------------------------------------------------------
+      *
+      *          LDRHHDR3 below carries closed routes only.
+      *
+     C           LDRHDR    CHAINLDRHHDR3             79
+     C           *IN79     IFEQ *OFF
+     C                     Z-ADDLHHENT    W1ENDT           Get route
+     C                     Z-ADDLHHCLT    W1CLS2           end & close
+     C                     Z-ADDLHHSUP    W1SUP#           times, also,
+     C                     ELSE                            supervisor
+     C                     Z-ADD*ZEROS    W1ENDT           emp #.
+     C                     Z-ADD*ZEROS    W1CLS2
+     C                     Z-ADD*ZEROS    W1SUP#
+     C                     ENDIF
+      *
+     C           LDRHDR    CHAINLDRDCOM2             79
+     C           *IN79     IFEQ *OFF                       Find if
+     C                     MOVE 'Y'       W1COMM           there is any
+     C                     ELSE                            comment for
+     C                     MOVE 'N'       W1COMM           this route
+     C                     ENDIF
+      *
+     C           RUTRN#    CHAINPIRTRAN              79
+     C           *IN79     IFEQ *OFF                       Find flag
+     C                     Z-ADDPTEMP#    W1EMP#           runner emp#
+     C                     ELSE
+     C                     Z-ADD*ZEROS    W1EMP#
+     C                     ENDIF
+      *----------------------------------------------------------------
+     C*
+     C*          Find type of flag
+     C*
+     C                     MOVE *BLANKS   W1TYPE
+     C                     SELEC
+     C           RUTYPE    WHEQ 'N'
+     C                     MOVEL'REPL'    W1TYPE
+     C*
+     C           RUTYPE    WHEQ 'U'
+     C                     MOVEL'OUT'     W1TYPE
+     C*
+     C           RUTYPE    WHEQ 'M'
+     C                     MOVEL'MERGE'   W1TYPE
+     C*
+     C                     ENDSL
+     C*
+     C*
+     C*  Print detail line.
+     C                     WRITEDETAIL1
+     C                     ADD  1         COUNT
+     C                     ADD  1         REC#
+     C                     ADD  1         WTOTRT
+     C                     Z-ADD*ZEROS    WTOAV1
+     C                     Z-ADD*ZEROS    WTOAV2
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     ENDSR
+     O*----------------------------------------------------------------
+     O*
+**  MSG - Message
+THIS ROUTE HAS NOT FLAGS

@@ -1,0 +1,1473 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OI225     Import customer orders - Post
+     F*  08 July 1997
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    08/22/94  DAS
+     F*      - Added misc. field.
+     F*
+     F*    10/22/94  HNK
+     F*      - Added OIDSEQ/ODSEQ fields.
+     F*
+213 AF*    05/22/96  DAS
+     F*      - Added new fields to ORDH (OHORIG, OHCORD).
+     F*      - Moving OIHORD into OHCORD.
+     F*      - Getting unique number for OHORD by calling NXTORD#.
+     F*      - Initializing OHORIG to ' '.
+214 AF*    07/15/96  RH  V2.14
+     F*      - If breakdown qty being imported, verify if allowed.
+     F*      - If breakdown qty in not allowed, do not import brk qty.
+216  F*    08/14/96  HNK  2.16
+     F*      - Input parameter changed to $PWHS (15 5) from $PWHSE(3 0)
+     F*
+400  F*    06/02/97  DAS  4.00
+     F*      - Added route type to parameters.
+     F*      - Importing orders by route instead of order number.
+     F*      - File IMPORDH replaced with IMPORDH1.
+     F*      - The OHRTE field will now contain the route id from the
+     F*        RTEHED file (RHRTID).
+     F*
+404 AF*    08/26/97  DAS  4.04
+     F*      - Revised to only import normal orders ($PTYPE=' ').
+     F*
+404  F*    08/27/97  HNK/RH  4.04
+     F*      - Changed to handle cross docking.
+     F*
+404  F*    09/04/97  RH      4.04
+     F*      - If no PO detail record exists, create CrossDk rec with seq 0.
+     F*
+405  F*    09/16/97  RH      4.05
+     F*      - If cross dock slot exists for item, update qty allocated for slot
+     F*
+406  F*    09/21/97  DAS  4.06
+     F*      - Change the cross dock status code to equal the import
+     F*        record's special status code.
+     F*
+406  F*    09/22/97  DAS  4.06
+     F*      - Revised to unlock SLOT4 record.
+     F*
+407  F*    11/10/97  RH   4.07
+     F*      - Change to check for existing cross dock slot record using slstat
+     F*        of 'XD'.  Only one slot cross dock rec will exist for the item.
+     F*
+407  F*    11/19/97  DAS  4.07
+     F*      - Revised read of SLOT1 to not lock record.
+     F*
+416 AF*    06/07/01  MLB  4.16
+     F*      - Added exception print file to program.
+416aAF*    10/05/01  MLB  4.16a
+     F*      - Revised program to merge Add-on orders to
+     F*        Open Route.
+     F*      - Added files: OPTIONS,ORDD1,ORDH4,RTEHED1.
+500aAF*    07/26/05  RH   5.00a
+     F*      - Fix: Add code to get base if item type = A.
+     F*        Change to divide ITCUBE by brk qty to calculate cube for
+     F*        type 'S' item.
+     F*
+     F*----------------------------------------------------------------
+     F* Indicators
+     F*
+     F*  61        - Special order (Customer # > 0)
+     F*  78        - EOF for IMPORDD
+     F*  79        - EOF for IMPORDH
+     F*  91        - Overflow indicator
+     F*
+     F*----------------------------------------------------------------
+     F* File Specs
+     F*
+400 DF*MPORDH UF  E           K        DISK
+400 MFIMPORDH1UF  E           K        DISK
+     FIMPORDD UF  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FREPORTS IF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+404 AFSLOT1   UF  E           K        DISK                      A
+405 AFSLOT4   UF  E           K        DISK
+405 AF            SLREC                             KRENAMESLREC4
+404 AFPODTL1  IF  E           K        DISK
+400 AFRTESUM  UF  E           K        DISK                      A
+416aAFORDH4   IF  E           K        DISK
+416 AF            OHREC                             KRENAMEOHREC4
+416aAFORDD1   UF  E           K        DISK
+416aAF            ODREC                             KRENAMEODREC1
+416aAFOPTIONS IF  E           K        DISK
+416aAFRTEHED1 UF  E           K        DISK
+416aAF            RHREC                             KRENAMERHREC1
+400 AFRTEHED  O   E           K        DISK                      A
+416aDF*ORDH    O   E           K        DISK                      A
+416aMFORDH    UF  E           K        DISK                      A
+     FORDD    O   E           K        DISK                      A
+404 AFCROSSDK O   E           K        DISK                      A
+     FOI225PR O   E             91     PRINTER
+416 AFOI2251PRO   E             92     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+404 DE*                   DESC    1   3 20
+404 ME                    DESC    1   6 20
+416 AE                    A80        80  1
+416 AE                    OVRPRT  1   1 80
+416aAI*----------------------------------------------------------------
+416aAI*  *GENPICK -  General picking options.
+416aAI*----------------------------------------------------------------
+416aAI*
+416aAI* Fields
+416aAI*
+416aAI*    OPERPT  -  Print exception (short) error report (Y,N).
+416aAI*    OPELBL  -  Print exception (short) labels (Y,N)
+416aAI*    OPRFWC  -  Using RF will call (Y,N).
+416aAI*    OPNRSC  -  Number of pallet sections (1-9).
+416aAI*    OPHPWC  -  Host pick Will Call (Y/N).
+416aAI*    OPMRGA  -  Merge Add-on order(s) with Open Routes.
+416aAI*    OPPLSQ  -  Pallet number sequence. 1=Unload seq, 2=Load seq
+416aAI*
+416aAI* Data structure
+416aAI*
+416aAIOPDATA      DS
+416aAI                                        1   1 OPERPT
+416aAI                                        2   2 OPELBL
+416aAI                                        3   3 OPRFWC
+416aAI                                        4   40OPNRSC
+416aAI                                        5   5 OPHPWC
+416aAI                                        6   6 OPMRGA
+415aAI                                        7   7 OPPLSQ
+416aAI                                      117 117 OPTEND
+416aAI*----------------------------------------------------------------
+416aAI*  Re-definition field(s)
+416aAI*
+416aAI            DS
+416aAI                                       13  15 OIHMEC
+416aAI                                        1  20 OIHMSC
+416aAI            DS
+416aAI                                       13  15 OHMEMC
+416aAI                                        1  20 OHMISC
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+416 aI*----------------------------------------------------------------
+416 AI*  Constants
+416 AI*
+416 AI              '- Exceptions'        C         EXCHDR
+416aAI              '** Added to existing-C         STS01
+416aAI              ' Open Order. '
+416aAI              '** New Order Added t-C         STS02
+416aAI              'o Open Route.'
+416aAI              '** Upd''d on existin-C         STS03
+416aAI              'g Open Order.'
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+216 MC*      $PWHS   Warehouse to process.
+400 AC*      $PTYPE  Order types to process.
+400 AC*              ' ' - Normal
+400 AC*              'T' - Transfer
+400 AC*              'W' - Will Call
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+216 MC                     PARM           $PWHS  155
+400 AC                     PARM           $PTYPE  1
+     C*----------------------------------------------------------------
+     C* Main line
+400 AC*
+400 AC* Get import date/time.
+400 AC*
+400 AC                     MOVE '*CURCMD '$CVCMD
+400 AC                     CALL @CVTDT
+400 AC                     PARM           $CVTDT
+400 AC                     Z-ADD$CVD8O    IMPDTE  80
+400 AC                     TIME           IMPTIM  60
+     C*
+     C* Get report heading.
+     C*
+     C                     MOVE *BLANKS   W1HEAD
+     C                     MOVEL'OI215PR' RPPRTF
+     C           RPPRTF    CHAINREPORTS              79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELRPDESC    $PSTR
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD50        $PLEN
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR  60
+     C                     PARM           $PLEN   30
+     C                     MOVEL$PSTR     W1HEAD
+416 AC*
+416 AC*    Create heading for exceptions report.
+416 AC*
+416 AC           RPDESC    CAT  EXCHDR:1  $PSTR     P
+416 AC                     CALL 'CENTER'
+416 AC                     PARM           $PSTR
+416 AC                     PARM           $PLEN
+416 AC                     MOVEL$PSTR     W1HDR1
+416 AC                     MOVE *ON       *IN92
+416 AC                     MOVE *OFF      PRHDR1  1
+416 AC                     MOVE *OFF      EXCPRT  1
+416 AC                     MOVE *OFF      EXCPR1  1
+416 AC*    Get exceptions report override if any.
+416 AC                     EXSR OPNPRT
+     C*
+     C*   Get warehouse description.
+     C*
+     C           $PWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   WHDESC
+     C                     END
+     C*
+     C*   Create warehouse heading.
+     C*
+     C                     MOVE $PWHSE    WORK3A  3
+     C           ' 0'      CHECKWORK3A    POS     10
+     C           4         SUB  POS       LEN     10
+     C           LEN       SUBSTWORK3A:POSWHHEAD
+     C           WHHEAD    CAT  '-':1     WHHEAD
+     C           WHHEAD    CAT  WHDESC:1  WHHEAD
+     C                     CALL 'CENTER'
+     C                     PARM WHHEAD    $CSTR  60
+     C                     PARM 40        $CLEN   30
+     C                     MOVEL$CSTR     WHHEAD
+     C*
+     C* Initialize grand total fields
+     C*
+     C                     Z-ADD0         GRDORD
+     C                     Z-ADD0         GRDLIN
+     C                     Z-ADD0         PREOH
+     C                     Z-ADD0         PREOD
+     C                     Z-ADD0         NOITEM
+214 AC                     Z-ADD0         BADBRK
+     C*
+     C* Whip through all the download header records
+     C*
+400 AC           *LIKE     DEFN OIHRTE    LSTRTE
+400 AC                     MOVE '@@@@@'   LSTRTE
+     C                     MOVE *OFF      PFLAG   1
+     C                     MOVE *OFF      EOFH    1
+     C                     Z-ADD55        LINPPG  30       MAX LINES PER PAGE
+     C                     Z-ADD0         COUNT   30       LINE COUNTER
+400 DC*          OIHKEY    SETLLIMPORDH
+400 MC           OIHKEY    SETLLIMPORDH1
+     C           EOFH      DOUEQ*ON
+     C*
+400 DC*          OIHKEY    READEIMPORDH                  79
+400 MC           OIHKEY    READEIMPORDH1                 79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *ON       EOFH
+     C                     GOTO ENDDOH
+     C                     ENDIF
+     C*
+     C*  Print report heading if necessary.
+     C*
+416 AC                     MOVE *OFF      PRHDR1
+     C           PFLAG     IFEQ *OFF
+     C           COUNT     ORGE LINPPG
+     C                     Z-ADD0         COUNT
+     C                     WRITEHEAD1
+     C                     ADD  3         COUNT
+     C                     MOVE *OFF      PFLAG
+     C                     ENDIF
+400 AC*
+400 AC*  Add record to route header file when route changes.
+400 AC*
+400 AC           OIHRTE    IFNE LSTRTE
+416aAC                     MOVE *OFF      MRGRTE
+416aAC                     MOVE *BLANKS   NEWRTE
+416aAC                     MOVE *BLANKS   NEWRTC
+416aAC*
+416aAC*  Merge order(s) into Open routes allowed.
+416aAC*  Check if Route still at Open status.
+416aAC           OPMRGA    IFEQ 'Y'
+416aAC           $PTYPE    ANDEQ' '
+416aAC                     EXSR ZZCKR1
+416aAC                     EXSR ZZCKRT
+416aAC                     ENDIF
+416aAC*
+400 AC                     EXSR FILLRH
+400 AC                     WRITERHREC                  49
+400 AC                     MOVE OIHRTE    LSTRTE
+400 AC                     ENDIF
+     C*
+     C*  Add record to order header file. If an error occurs, assume
+     C*    it was caused by a duplicate record.
+     C*
+     C                     MOVE *BLANKS   HEDMSG
+416aAC*
+416aAC*    Route allows Add-on orders to be merged with existing Open orders.
+416aAC*    Check if order header still at Open status.
+416aAC                     MOVE *OFF      MRGORD
+416aAC                     MOVE *OFF      WRGSTS
+416aAC                     MOVE *ZEROS    OPNORD
+416aAC                     MOVE *ZEROS    OPNORC
+416aAC           MRGRTE    IFEQ *ON
+416aAC                     EXSR ZZCKO1
+416aAC                     EXSR ZZCKOR
+416aAC                     ENDIF
+416aAC*
+     C                     EXSR FILLOH
+     C                     WRITEOHREC                  49
+     C           *IN49     IFEQ *ON
+     C                     MOVE DESC,1    HEDMSG
+     C                     ADD  1         PREOH
+     C                     ENDIF
+     C*
+     C*    Print order heading
+     C*
+     C           PFLAG     IFEQ *OFF
+     C                     WRITEHEAD2
+     C                     ADD  2         COUNT
+     C                     ENDIF
+     C*
+     C                     WRITEHEAD3
+     C                     ADD  2         COUNT
+     C*
+     C           PFLAG     IFEQ *OFF
+     C                     WRITEHEAD4
+     C                     ADD  2         COUNT
+     C                     MOVE *ON       PFLAG
+     C                     ENDIF
+416 AC*
+416 AC*    Exception occurred, print on report.
+416 AC                     SELEC
+416 AC           HEDMSG    WHGT *BLANKS
+416 AC*
+416 AC*    Print exception report page headings.
+416 AC           *IN92     IFEQ *ON
+416 AC                     WRITEHEAD11                 92
+416 AC                     WRITEHEAD21
+416 AC                     ENDIF
+416 AC                     WRITEHEAD31
+416 AC*    Set on flag that customer heading printed already.
+416 AC                     MOVE *ON       PRHDR1
+416 AC*
+416 AC                     ENDSL
+416 AC*
+     C*
+     C*    Initialize order subtotals
+     C*
+     C                     Z-ADD0         SUBLIN  30
+     C                     Z-ADD0         SUBQ1   70
+     C                     Z-ADD0         SUBQ2   70
+     C                     Z-ADD0         SUBQ3   70
+416 AC                     MOVE *ZEROS    SUBQ11
+416 AC                     MOVE *ZEROS    SUBQ21
+416 AC                     MOVE *ZEROS    SUBQ31
+     C*
+     C*    Whip through all the download detail records
+     C*
+     C                     MOVE *OFF      EOFD    1
+416 AC                     MOVE *OFF      EXCPR1
+     C           OIDKEY    SETLLIMPORDD
+     C           EOFD      DOUEQ*ON
+     C*
+     C           OIDKEY    READEIMPORDD                  78
+     C           *IN78     IFEQ *ON
+     C                     MOVE *ON       EOFD
+     C                     GOTO ENDDOD
+     C                     ENDIF
+     C                     MOVE *BLANKS   DETMSG
+     C                     MOVE 'N'       GOOD1
+404 AC                     MOVE 'N'       GOOD2
+416aAC                     MOVE *OFF      MRGITM
+416aAC                     MOVE *BLANKS   STSMSG
+     C*
+     C*       If item doesn't exist write error message.
+     C*
+     C           ITKEY     CHAINPIRITEM              76
+     C           *IN76     IFEQ *ON
+     C                     MOVE DESC,2    DETMSG
+     C                     ADD  1         NOITEM
+     C                     MOVE *BLANKS   ITDESC
+     C                     MOVEL'*****'   ITDESC
+     C                     ELSE
+     C*       Check if breakdown qty is allowed using piritem file.
+     C*       Add rec if qty1, brk qty2 or brk qty3 has good qty.
+214 AC                     EXSR ZZBKDN
+     C*
+214 AC*       If qty1, brkdown qty2 or brkdown qty3 has good qty,
+     C*        add record to order detail file. If an error
+     C*        occurs, assume was caused by a duplicate record.
+400 AC*        Update route summary with detail information.
+     C*
+214 AC           GOOD1     IFEQ 'Y'
+404 AC                     EXSR ZZXDCK
+404 AC           GOOD2     IFEQ 'Y'
+     C                     EXSR FILLOD
+416aAC*
+416aAC*    Record was updated in FILLOD.
+416aAC           SKPWRT    IFEQ *OFF
+     C                     WRITEODREC                  49
+     C           *IN49     IFEQ *ON
+     C                     MOVE DESC,1    DETMSG
+     C                     ADD  1         PREOD
+     C                     ENDIF
+416aAC                     ENDIF
+400 AC                     EXSR UPDSUM
+404 AC                     ENDIF
+214 AC                     ENDIF
+     C*
+     C                     ENDIF
+     C*
+     C*       Print order detail and update subtotals
+     C*
+     C                     EXSR ZRHEAD
+     C                     WRITEDETAIL
+     C                     ADD  1         COUNT
+416aAC*
+416aAC*       Print order detail item merge info line.
+416aAC*
+416aAC           MRGRTE    IFEQ *ON
+416aAC           MRGITM    ANDEQ*ON
+416aAC           WRGSTS    ANDEQ*OFF
+416aAC                     EXSR ZRHEAD
+416aAC                     WRITEDETAIL2
+416aAC                     ADD  1         COUNT
+416aAC                     ENDIF
+416aAC*
+     C                     ADD  1         SUBLIN
+     C                     ADD  OIDQ1     SUBQ1
+     C                     ADD  OIDQ2     SUBQ2
+     C                     ADD  OIDQ3     SUBQ3
+     C*
+     C*       Delete detail record from download file
+     C*
+     C                     DELETOIDREC
+416 AC*
+416 AC*       Exception occurred, print on report.
+416 AC                     SELEC
+416 AC           DETMSG    WHGT *BLANKS
+416 AC*
+416 AC*    Turn on flag to indicate at least one exception printed.
+416 AC*    Print grand totals when complete.
+416 AC                     MOVE *ON       EXCPRT
+416 AC*    Turn on flag to indicate at least one exception printed.
+416 AC*    Print sub totals when complete.
+416 AC                     MOVE *ON       EXCPR1
+416 AC*
+416 AC                     ADD  OIDQ1     SUBQ11
+416 AC                     ADD  OIDQ2     SUBQ21
+416 AC                     ADD  OIDQ3     SUBQ31
+416 AC*
+416 AC*    Print exception report page headings.
+416 AC           *IN92     IFEQ *ON
+416 AC                     WRITEHEAD11                 92
+416 AC                     WRITEHEAD21
+416 AC                     WRITEHEAD31
+416 AC                     WRITEHEAD41
+416 AC                     MOVE *ON       PRHDR1
+416 AC                     ENDIF
+416 AC*
+416 AC*    Print exception report Customer info and headings.
+416 AC           PRHDR1    IFEQ *OFF
+416 AC                     WRITEHEAD31                 92
+416 AC                     MOVE *ON       PRHDR1
+416 AC                     ENDIF
+416 AC*
+416 AC*    Print exception report page headings.
+416 AC           *IN92     IFEQ *ON
+416 AC                     WRITEHEAD11                 92
+416 AC                     WRITEHEAD21
+416 AC                     WRITEHEAD31
+416 AC                     WRITEHEAD41
+416 AC                     ENDIF
+416 AC*
+416 AC                     WRITEDETAIL1                92
+416 AC*
+416 AC                     ENDSL
+     C*
+     C           ENDDOD    TAG
+     C                     ENDDO
+     C*
+     C*    Print order subtotals and update grand totals
+     C*
+     C**                   EXSR ZRHEAD
+     C                     WRITESUBTTL
+     C                     ADD  3         COUNT
+     C                     ADD  1         GRDORD
+     C                     ADD  SUBLIN    GRDLIN
+416 AC*
+416 AC*    Print Order exception subtotals.
+416 AC           EXCPR1    IFEQ *ON
+416 AC           *IN92     IFEQ *ON
+416 AC                     WRITEHEAD11                 92
+416 AC                     WRITEHEAD21
+416 AC                     WRITEHEAD31
+416 AC                     WRITEHEAD41
+416 AC                     ENDIF
+416 AC                     WRITESUBTTL1                92
+416 AC                     ENDIF
+416 AC*
+     C*  Delete header record from download file
+     C*
+     C                     DELETOIHREC
+     C*
+     C           ENDDOH    TAG
+     C                     ENDDO
+     C*
+     C*  Print order grand totals
+     C*
+     C           PFLAG     IFEQ *ON
+     C           COUNT     IFGE LINPPG
+     C                     WRITEHEAD1
+     C                     ENDIF
+     C                     WRITEGRNDTTL
+     C                     ENDIF
+416aAC*
+416aAC*    Remove NEW Order Header if no items attached.
+416aAC           MRGORD    IFEQ *ON
+416aAC                     EXSR ZZCKO1
+416aAC                     ENDIF
+416aAC*
+416aAC*    Remove NEW Route Header if no orders attached.
+416aAC           MRGRTE    IFEQ *ON
+416aAC                     EXSR ZZCKR1
+416aAC                     ENDIF
+416 AC*
+416 AC*    Print exception grand totals.
+416 AC           EXCPRT    IFEQ *ON
+416 AC           *IN92     IFEQ *ON
+416 AC                     WRITEHEAD11                 92
+416 AC                     ENDIF
+416 AC                     WRITEGRNDTTL1
+416 AC                     ENDIF
+416 AC*
+     C*
+     C*  We are finished so get out
+     C*
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+404 AC*
+404 AC*  *INZSR  Initialization subrotine
+     C*
+404 ACSR         *INZSR    BEGSR
+216 AC                     Z-ADD$PWHS     $PWHSE  30
+     C* Key definitions
+     C*
+     C* Download order header file - Partial key
+     C*
+     C           OIHKEY    KLIST
+     C                     KFLD           $PWHSE
+404 AC                     KFLD           $PTYPE
+     C*
+     C* Download order detail file - Partial key
+     C*
+     C           OIDKEY    KLIST
+     C                     KFLD           OIHWHS
+     C                     KFLD           OIHORD
+416aAC*
+416aAC* ORDH Order header file - Partial key
+416aAC*
+416aACSR         *LIKE     DEFN OHORD     NEWORD
+416aACSR         OHKEY     KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           NEWORD
+416aAC*
+416aAC* ORDH4 Order header file - Full key  (NEW Route)
+416aAC*
+416aACSR         *LIKE     DEFN RHRTID    NEWRTE
+416aACSR         OH3KEY    KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           NEWRTE
+416aAC*
+416aAC* ORDH4 Order header file - Full key  (Open Route)
+416aAC*
+416aACSR         OH5KEY    KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           OPNRTE
+416aACSR                   KFLD           OIHORD
+416aAC*
+416aAC* ORDD Order detail file - Partial key
+416aAC*
+416aACSR         ODKEY     KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           NEWORD
+416aAC*
+416aAC* ORDD1 Order detail file - Full key
+416aAC*
+416aACSR         *LIKE     DEFN ODSTAT    KYSTAT
+416aACSR                   MOVE 'O'       KYSTAT
+416aACSR         OD1KEY    KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           OPNORD
+416aACSR                   KFLD           KYSTAT
+416aACSR                   KFLD           OIDSEQ
+416aACSR                   KFLD           OIDITM
+416aACSR         OD2KEY    KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           NEWORD
+416aAC*
+416aAC* OPTIONS Options file - Full key
+416aAC*
+416aACSR         OPKEY     KLIST
+416aACSR                   KFLD           OPWHSE
+416aACSR                   KFLD           OPCODE
+     C*
+     C* Item file
+     C*
+     C           ITKEY     KLIST
+     C                     KFLD           OIDWHS
+     C                     KFLD           OIDITM
+400 AC*
+400 AC* Route summary file
+400 AC*
+416aACSR         *LIKE     DEFN RHRTID    KYRTID
+400 AC           KEYRS     KLIST
+400 AC                     KFLD           RHWHSE
+416aDC*R                   KFLD           RHRTID
+416aMCSR                   KFLD           KYRTID
+400 AC                     KFLD           ITWHDP
+404 AC*
+404 AC* PO DETAIL file
+404 AC*
+404 AC           KEYPD1    KLIST
+404 AC                     KFLD           $PWHSE
+404 AC                     KFLD           OIDPO
+404 AC                     KFLD           OIDITM
+404 AC*
+416aAC* RTEHED1 - Route header file - Partial key
+416aAC*
+416aACSR         RH1KEY    KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           OIHRTE
+416aAC*
+416aAC* RTEHED1 - Route header file - Full key
+416aACSR         *LIKE     DEFN RHRTE     NEWRTC
+416aACSR         RH2KEY    KLIST
+416aACSR                   KFLD           $PWHSE
+416aACSR                   KFLD           NEWRTC
+416aACSR                   KFLD           NEWRTE
+416aAC*
+404 AC* SLOT1 file
+404 AC*
+404 ACSR         *LIKE     DEFN SLAISL    KYAISL
+404 ACSR         KEYSL1    KLIST
+404 ACSR                   KFLD           $PWHSE
+404 ACSR                   KFLD           ITWHDP
+404 AC                     KFLD           KYAISL
+405 AC* SLOT4 file
+405 AC*
+405 AC           *LIKE     DEFN SLDISP    KYDISP
+405 AC           KEYSL4    KLIST
+405 AC                     KFLD           $PWHSE
+405 AC                     KFLD           ITWHDP
+405 AC                     KFLD           OIDITM
+405 AC                     KFLD           KYDISP
+416aAC*
+416aAC*    Retrieve General Pick options for warehouse.
+416aAC*    This applies to only Regular orders.
+416aACSR         $PTYPE    IFEQ ' '
+416aACSR                   Z-ADD$PWHSE    OPWHSE
+416aACSR                   MOVE '*GENPICK'OPCODE
+416aACSR         OPKEY     CHAINOPTIONS              7978
+416aACSR         *IN79     IFEQ *ON
+416aACSR                   MOVE 'N'       OPMRGA
+416aACSR                   ENDIF
+416aAC*
+416aAC*    All other order types, force Allow Merge orders to No
+416aACSR                   ELSE
+416aACSR                   MOVE 'N'       OPMRGA
+416aACSR                   ENDIF
+     C*
+     C*  Variables and constants.
+     C*
+     CSR                   MOVE *OFF      FOREVR  1
+416aACSR                   MOVE *OFF      MRGRTE  1
+416aACSR                   MOVE *OFF      MRGORD  1
+416aACSR                   MOVE *OFF      MRGITM  1
+416aACSR                   MOVE *OFF      WRGSTS  1
+416aACSR                   MOVE *OFF      RCDLCK  1
+416aACSR                   MOVE *OFF      SKPWRT  1
+416aACSR         *LIKE     DEFN RHRTID    OPNRTE
+416aACSR         *LIKE     DEFN RHRTE     OPNRTC
+416aACSR         *LIKE     DEFN OHORD     OPNORD
+416aACSR         *LIKE     DEFN OHORD     OPNORC
+416aACSR         *LIKE     DEFN ODQOR1    DIFQY1
+416aACSR         *LIKE     DEFN ODQOR2    DIFQY2
+416aACSR         *LIKE     DEFN ODQOR3    DIFQY3
+416aAC*
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*
+404 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLOD  Fill order detail fields.
+     C*
+     CSR         FILLOD    BEGSR
+416aACSR                   MOVE *OFF      SKPWRT
+416aAC*
+416aAC*    Route & order at Open status. Check if item already on order.
+416aAC*    If yes, then compute difference between import qty's and order
+416aAC*    qty's. Then update order with import qty.
+416aACSR                   SELEC
+416aACSR         MRGRTE    WHEQ *ON
+416aACSR         MRGORD    ANDEQ*ON
+416aACSR         WRGSTS    ANDEQ*OFF
+416aAC*
+416aACSR                   MOVE *ON       RCDLCK
+416aACSR                   EXSR ZZGTOD
+416aACSR                   MOVE *OFF      RCDLCK
+416aAC*
+416aACSR                   SELEC
+416aACSR         *IN75     WHEQ *OFF
+416aACSR         OIDITM    ANDEQODITEM
+416aAC*
+416aAC*    Calculate change in quantity to update RTESUM file.
+416aACSR         OIDQ1     SUB  ODQOR1    DIFQY1
+416aACSR         OIDQ2     SUB  OIDQ2     DIFQY2
+416aACSR         OIDQ3     SUB  OIDQ3     DIFQY3
+416aAC*
+416aACSR                   Z-ADDOIDQ1     ODQOR1
+416aACSR         ITFLG1    IFEQ 'Y'
+416aACSR                   Z-ADDOIDQ2     ODQOR2
+416aACSR                   ENDIF
+416aACSR         ITFLG2    IFEQ 'Y'
+416aACSR                   Z-ADDOIDQ3     ODQOR3
+416aACSR                   ENDIF
+416aACSR                   UPDATODREC1
+416aAC*    Load print field for report.
+416aACSR                   MOVE ODORD     PRTORD
+416aACSR                   MOVE STS03     STSMSG
+416aACSR                   MOVE *ON       MRGITM
+416aACSR                   MOVE *ON       SKPWRT
+416aACSR                   GOTO ENDLOD
+416aACSR                   ENDSL
+416aAC*
+416aACSR                   ENDSL
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEARODREC
+     C*
+     C*  Move fields from download file to purchase order header fields
+     C*
+     CSR                   Z-ADDOIDWHS    ODWHSE
+416aAC*
+416aAC*    Open route found, Open order not found or at wrong status.
+416aAC*    Create order under current Open route.
+416aACSR                   SELEC
+416aACSR         MRGRTE    WHEQ *ON
+416aACSR         MRGORD    ANDEQ*OFF
+416aACSR         WRGSTS    ANDEQ*OFF
+416aAC*
+416aACSR         MRGRTE    OREQ *ON
+416aACSR         MRGORD    ANDEQ*OFF
+416aACSR         WRGSTS    ANDEQ*ON
+416aACSR                   Z-ADDNEWORD    ODORD
+416aACSR                   MOVE STS02     STSMSG
+416aAC*
+416aAC*    Open route found, Open order found.
+416aAC*    Add item to current Open order.
+416aACSR         MRGRTE    WHEQ *ON
+416aACSR         MRGORD    ANDEQ*ON
+416aACSR         WRGSTS    ANDEQ*OFF
+416aACSR                   Z-ADDOPNORD    ODORD
+416aACSR                   MOVE STS01     STSMSG
+416aAC*
+416aACSR                   OTHER
+213 DC*                    Z-ADDOIDORD    ODORD
+213 MCSR                   Z-ADDOHORD     ODORD
+416aACSR                   ENDSL
+416aAC*    Load print field for report.
+416aACSR                   MOVE ODORD     PRTORD
+416aAC*
+     CSR                   Z-ADDOIDSEQ    ODSEQ
+     CSR                   MOVE OIDITM    ODITEM
+     CSR                   Z-ADDOIDQ1     ODQOR1
+416aACSR                   Z-ADDOIDQ1     DIFQY1
+214 ACSR         ITFLG1    IFEQ 'Y'
+     CSR                   Z-ADDOIDQ2     ODQOR2
+416aACSR                   Z-ADDOIDQ2     DIFQY2
+214 ACSR                   ELSE
+214 ACSR                   Z-ADD0         ODQOR2
+416aACSR                   Z-ADD0         DIFQY2
+214 ACSR                   ENDIF
+214 ACSR         ITFLG2    IFEQ 'Y'
+     CSR                   Z-ADDOIDQ3     ODQOR3
+416aACSR                   Z-ADDOIDQ3     DIFQY3
+214 ACSR                   ELSE
+214 ACSR                   Z-ADD0         ODQOR3
+416aACSR                   Z-ADD0         DIFQY3
+214 ACSR                   ENDIF
+     CSR                   Z-ADDOIDWH2    ODWH2
+     CSR                   Z-ADDOIDOR2    ODOR2
+     CSR                   MOVE OIDOIT    ODOITM
+     CSR                   MOVE OIDSPC    ODSPCL
+     CSR                   MOVE 'O'       ODSTAT
+416aACSR                   MOVE *ON       MRGITM
+416aAC*
+416aACSR         ENDLOD    TAG
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  FILLOH   Fill order header fields.
+     C*
+     CSR         FILLOH    BEGSR
+     C*
+     C*  Initialize record
+     C*
+     CSR                   CLEAROHREC
+     C*
+     C*  Move fields from download file to purchase order header fields
+     C*
+     CSR                   Z-ADDOIHWHS    OHWHSE
+213 DC*                    Z-ADDOIHORD    OHORD
+213 ACSR                   CALL 'PIRORD#'
+213 ACSR                   PARM OHWHSE    $OWHSE  30
+213 ACSR         OHORD     PARM 0         $OORD   70
+416aACSR                   Z-ADDOHORD     NEWORD
+     CSR                   MOVE OIHTYP    OHTYPE
+213 ACSR                   Z-ADDOIHORD    OHCORD
+     CSR                   MOVE OIHCPO    OHCPO
+     CSR                   Z-ADDOIHCUS    OHCUST
+     CSR                   MOVE OIHCNM    OHCNAM
+     CSR                   MOVE OIHCA1    OHCAD1
+     CSR                   MOVE OIHCA2    OHCAD2
+     CSR                   MOVE OIHCCT    OHCCTY
+     CSR                   MOVE OIHCST    OHCST
+     CSR                   MOVE OIHCZP    OHCZIP
+416aAC*
+416aAC*    Open route found, Open order NOT found.
+416aAC*    Add Order to current Open Route.
+416aACSR                   SELEC
+416aACSR         MRGRTE    WHEQ *ON
+416aACSR         MRGORD    ANDEQ*OFF
+416aACSR         WRGSTS    ANDEQ*OFF
+416aACSR                   MOVE OPNRTE    OHRTE
+416aAC*
+416aACSR                   OTHER
+400 DC*                    MOVE OIHRTE    OHRTE
+400 MCSR                   MOVE RHRTID    OHRTE
+416aACSR                   ENDSL
+416aAC*    Load print field for report.
+416aACSR                   MOVE OHRTE     PRTRTE
+     CSR                   Z-ADDOIHSTP    OHSTOP
+     CSR                   MOVE OIHTRK    OHTRUK
+     CSR                   MOVE OIHMSC    OHMISC
+     CSR                   MOVE 'O'       OHSTAT
+400 DC*                    MOVE '*CURCMD '$CVCMD
+400 DC*                    CALL @CVTDT
+400 DC*                    PARM           $CVTDT
+400 DC*                    Z-ADD$CVD8O    OHSDTE
+400 DC*                    TIME           OHSTIM
+400 MCSR                   Z-ADDIMPDTE    OHSDTE
+400 MCSR                   Z-ADDIMPTIM    OHSTIM
+     C*
+     CSR                   ENDSR
+400 AC*----------------------------------------------------------------
+400 AC*
+400 AC*  FILLRH   Fill route header fields.
+400 AC*
+400 ACSR         FILLRH    BEGSR
+400 AC*
+400 AC*  Initialize record
+400 AC*
+400 ACSR                   CLEARRHREC
+400 AC*
+400 AC*  Update fields.
+400 AC*
+400 ACSR                   Z-ADDOIHWHS    RHWHSE
+400 ACSR                   CALL 'PIRRTE#'
+400 ACSR                   PARM RHWHSE    $RWHSE  30
+400 ACSR                   PARM ' '       RHRTID
+416aACSR                   MOVE RHRTID    NEWRTE
+400 ACSR                   MOVE OIHRTE    RHRTE
+416aACSR                   MOVE OIHRTE    NEWRTC
+400 ACSR                   MOVE OIHTYP    RHTYPE
+400 ACSR                   MOVE OIHTRK    RHTRUK
+400 ACSR                   MOVE '1'       RHSTAT
+400 ACSR                   Z-ADDIMPDTE    RHSTSD
+400 ACSR                   Z-ADDIMPTIM    RHSTST
+400 ACSR                   Z-ADDIMPDTE    RHIMPD
+400 ACSR                   Z-ADDIMPTIM    RHIMPT
+400 ACSR                   Z-ADDIMPDTE    RHRPTD
+400 AC*
+400 ACSR                   ENDSR
+416 AC*----------------------------------------------------------------
+416 AC*
+416 AC*  OPNPRT  Open printer file.
+416 AC*
+416 ACSR         OPNPRT    BEGSR
+416 AC*
+416 AC*   Get device and form type for department.
+416 AC*
+416 ACSR                   CALL 'GETRPT'
+416 ACSR                   PARM '*DEVFORM'$CMD    8
+416 ACSR                   PARM 'OI2251PR'$LRPT  10
+416 ACSR                   PARM $PWHSE    $WHSE   30
+416 ACSR                   PARM *BLANKS   $STYP   1
+416 ACSR                   PARM *BLANKS   $WHDP   5
+416 ACSR                   PARM           $DESC  50
+416 ACSR                   PARM           $DEV   10
+416 ACSR                   PARM           $FORM  10
+416 ACSR         $DEV      IFEQ *BLANKS
+416 ACSR                   MOVEL'*JOB'    $DEV
+416 ACSR                   ENDIF
+416 ACSR         $FORM     IFEQ *BLANKS
+416 ACSR                   MOVEL'*STD'    $FORM
+416 ACSR                   ENDIF
+416 AC*
+416 AC*   Open printer file for department.
+416 AC*
+416 ACSR         OPENED    IFNE *ON
+416 AC*
+416 AC*      If printer already open then close it.
+416 AC*
+416 ACSR         OPENED    IFEQ *ON
+416 ACSR                   CLOSEOI2251PR
+416 ACSR                   ENDIF
+416 AC*
+416 AC*      Override printer file.
+416 AC*
+416 AC*          OVRPRTF FILE(OI2251PR) OUTQ(*DEV) DEV($dev)
+416 AC*                  FORMTYPE($form)
+416 AC*
+416 ACSR                   MOVEAOVRPRT,1  A80
+416 ACSR                   MOVEA$DEV      A80,39
+416 ACSR                   MOVEA$FORM     A80,60
+416 ACSR                   MOVEAA80       QCMD
+416 AC*
+416 ACSR                   CALL 'QCMDEXC'
+416 ACSR                   PARM           QCMD   80
+416 ACSR                   PARM 80        QLEN   155
+416 AC*
+416 AC*      Open printer file.
+416 AC*
+416 ACSR                   OPEN OI2251PR
+416 ACSR                   MOVE *ON       OPENED  1
+416 AC*
+416 ACSR                   ENDIF
+416 AC*
+416 ACSR                   ENDSR
+400 AC*----------------------------------------------------------------
+400 AC*
+400 AC*  UPDSUM   Update route summary file with detail record.
+400 AC*
+400 ACSR         UPDSUM    BEGSR
+400 AC*
+400 AC*  Define work fields
+400 AC*
+400 ACSR         *LIKE     DEFN ITCUBE    TMPCUB
+400 ACSR         *LIKE     DEFN ITSWGT    TMPWGT
+400 AC*
+400 AC*  Try to get existing summary records for department.
+400 AC*
+416aACSR                   SELEC
+416aAC*    Update route summary for Open route when Open Order
+416aAC*    found and at correct status.
+416aACSR         MRGRTE    WHEQ *ON
+416aACSR         MRGORD    ANDEQ*ON
+416aACSR         WRGSTS    ANDEQ*OFF
+416aACSR         MRGITM    ANDEQ*ON
+416aAC*
+416aAC*    Update route summary for Open route when Open Order
+416aAC*    NOT found and at correct status.
+416aACSR         MRGRTE    OREQ *ON
+416aACSR         MRGORD    ANDEQ*OFF
+416aACSR         WRGSTS    ANDEQ*OFF
+416aACSR         MRGITM    ANDEQ*ON
+416aACSR                   MOVE OPNRTE    KYRTID
+416aAC*
+416aACSR                   OTHER
+416aACSR                   MOVE NEWRTE    KYRTID
+416aACSR                   ENDSL
+416aAC*
+400 ACSR         KEYRS     CHAINRTESUM               77
+400 AC*
+400 AC*     Record does not exist - Initialize fields.
+400 AC*
+400 ACSR         *IN77     IFEQ *ON
+400 ACSR                   Z-ADDRHWHSE    RSWHSE
+416aDC*R                   MOVE RHRTID    RSRTID
+416aMCSR                   MOVE KYRTID    RSRTID
+400 ACSR                   MOVE ITWHDP    RSWHDP
+400 ACSR                   Z-ADD0         RSORDC
+400 ACSR                   Z-ADD0         RSORDW
+400 ACSR                   Z-ADD0         RSORDP
+400 ACSR                   Z-ADD0         RSPCKC
+400 ACSR                   Z-ADD0         RSPCKW
+400 ACSR                   Z-ADD0         RSPCKP
+400 ACSR                   ENDIF
+400 AC*
+400 AC*     Update department totals.
+400 AC*
+500aAC*     Get base item for alias item.
+500aACSR                   MOVE *BLANKS   #BITYP
+500aACSR         ITTYPE    IFEQ 'A'
+500aACSR                   CALL 'GETBASE'
+500aACSR                   PARM ITWHSE    $GWHSE  30
+500aACSR                   PARM ITITEM    $GITEM 15
+500aACSR                   PARM ' '       #BITEM 15
+500aACSR                   PARM           #BITYP  1
+500aACSR                   PARM           #BDESC 30
+500aACSR                   PARM           #BPDSC 15
+500aACSR                   PARM           #BWHDP  5
+500aACSR                   PARM           #BSTYP  1
+500aACSR                   PARM           #BUM1   2
+500aACSR                   PARM           #BUM2   2
+500aACSR                   PARM           #BUMQ2  30
+500aACSR                   PARM           #BUM3   2
+500aACSR                   PARM           #BUMQ3  30
+500aACSR                   PARM ' '       #BCITM 15
+500aACSR                   PARM           #BCTYP  1
+500aACSR                   PARM           #BCDSC 30
+500aACSR                   PARM           #BCPDS 15
+500aACSR                   PARM           #BCWDP  5
+500aACSR                   PARM           #BCSTP  1
+500aACSR                   PARM           #BCUM1  2
+500aACSR                   PARM           #BCUM2  2
+500aACSR                   PARM           #BCUQ2  30
+500aACSR                   PARM           #BCUM3  2
+500aACSR                   PARM           #BCUQ3  30
+500aACSR                   PARM           #BRTN   8
+500aACSR                   ENDIF
+500aAC*
+416aDC*R                   ADD  ODQOR1    RSORDP
+416aMCSR                   ADD  DIFQY1    RSORDP
+416aDC*R         ITCUBE    MULT ODQOR1    TMPCUB
+500aACSR         #BITYP    IFEQ 'S'
+500aACSR         ITTYPE    OREQ 'S'
+500aACSR         ITUMQ2    IFLE 0
+500aACSR         TMPCUB    MULT DIFQY1    TMPCUB
+500aACSR                   ELSE
+500aACSR         ITCUBE    DIV  ITUMQ2    TMPCUB    H
+500aACSR         TMPCUB    MULT DIFQY1    TMPCUB
+500aACSR                   ENDIF
+500aACSR                   ELSE
+416aMCSR         ITCUBE    MULT DIFQY1    TMPCUB
+500aACSR                   ENDIF
+500aAC*
+400 ACSR                   ADD  TMPCUB    RSORDC
+416aDC*R         ITSWGT    MULT ODQOR1    TMPWGT
+416aMCSR         ITSWGT    MULT DIFQY1    TMPWGT
+400 ACSR                   ADD  TMPWGT    RSORDW
+400 AC*
+416aDC*R                   ADD  ODQOR2    RSORDP
+416aMCSR                   ADD  DIFQY2    RSORDP
+416aDC*R         ODQOR2    IFNE 0
+416aMCSR         DIFQY2    IFNE 0
+400 ACSR         ITUMQ2    ANDGT0
+400 ACSR         ITCUBE    DIV  ITUMQ2    TMPCUB    H
+416aDC*R         TMPCUB    MULT ODQOR2    TMPCUB
+416aMCSR         TMPCUB    MULT DIFQY2    TMPCUB
+400 ACSR                   ADD  TMPCUB    RSORDC
+400 ACSR         ITSWGT    DIV  ITUMQ2    TMPWGT    H
+416aDC*R         TMPWGT    MULT ODQOR2    TMPWGT
+416aMCSR         TMPWGT    MULT DIFQY2    TMPWGT
+400 ACSR                   ADD  TMPWGT    RSORDW
+400 ACSR                   ENDIF
+400 AC*
+416aDC*R                   ADD  ODQOR3    RSORDP
+416aMCSR                   ADD  DIFQY3    RSORDP
+416aDC*R         ODQOR3    IFNE 0
+416aMCSR         DIFQY3    IFNE 0
+400 ACSR         ITUMQ3    ANDGT0
+400 ACSR         ITCUBE    DIV  ITUMQ3    TMPCUB    H
+416aDC*R         TMPCUB    MULT ODQOR3    TMPCUB
+416aMCSR         TMPCUB    MULT DIFQY3    TMPCUB
+400 ACSR                   ADD  TMPCUB    RSORDC
+400 ACSR         ITSWGT    DIV  ITUMQ3    TMPWGT    H
+416aDC*R         TMPWGT    MULT ODQOR3    TMPWGT
+416aMCSR         TMPWGT    MULT DIFQY3    TMPWGT
+400 ACSR                   ADD  TMPWGT    RSORDW
+400 ACSR                   ENDIF
+400 AC*
+400 AC*     Add/Update summary record.
+400 AC*
+400 ACSR         *IN77     IFEQ *ON
+400 ACSR                   WRITERSREC
+400 ACSR                   ELSE
+400 ACSR                   UPDATRSREC
+400 ACSR                   ENDIF
+400 AC*
+400 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+214 AC*
+214 AC*  ZZBKDN  Check breakdown quanties.
+214 AC*
+214 ACSR         ZZBKDN    BEGSR
+214 ACSR         OIDQ2     IFNE 0
+213 ACSR         ITFLG1    ANDNE'Y'
+213 ACSR                   MOVE DESC,3    DETMSG
+213 ACSR                   ADD  1         BADBRK
+213 ACSR                   ENDIF
+214 AC*
+214 ACSR         OIDQ3     IFNE 0
+213 ACSR         ITFLG2    ANDNE'Y'
+213 ACSR                   MOVE DESC,3    DETMSG
+213 ACSR                   ADD  1         BADBRK
+213 ACSR                   ENDIF
+214 AC*
+214 AC*  Move fields from download file to purchase order header fields
+214 AC*
+214 ACSR         OIDQ1     IFNE 0
+213 ACSR                   MOVE 'Y'       GOOD1   1
+213 ACSR                   ELSE
+214 ACSR         OIDQ2     IFNE 0
+214 ACSR         ITFLG1    ANDEQ'Y'
+214 ACSR                   MOVE 'Y'       GOOD1
+214 ACSR                   ELSE
+214 ACSR         OIDQ3     IFNE 0
+214 ACSR         ITFLG2    ANDEQ'Y'
+214 ACSR                   MOVE 'Y'       GOOD1
+214 ACSR                   ENDIF
+214 ACSR                   ENDIF
+214 ACSR                   ENDIF
+214 AC*
+214 ACSR                   ENDSR
+416aAC*----------------------------------------------------------------
+416aAC*
+416aAC*  ZZCKRT  Check if route still at Open Status.
+416aAC*
+416aACSR         ZZCKRT    BEGSR
+416aAC*
+416aAC*    Position past last route, then read backward to get last route.
+416aAC*    If Regular route and status is Open, then allow orders to be
+416aAC*    merged to existing route.
+416aAC*
+416aAC*    NOTE: If we find the route that is being merged in,
+416aAC*          and the route is at Open status, we will leave the
+416aAC*          route header record locked till the merge is com-
+416aAC*          plete or we process a new route.  Leaving the record
+416aAC*          locked will prevent anyone from Allocating the route
+416aAC*          while we are importing new orders.
+416aAC*
+416aACSR         RH1KEY    SETGTRTEHED1
+416aACSR         RH1KEY    REDPERTEHED1                  73
+416aACSR                   SELEC
+416aACSR         *IN73     WHEQ *OFF
+416aACSR         RHTYPE    ANDEQ' '
+416aACSR         RHSTAT    ANDEQ'1'
+416aACSR                   MOVE *ON       MRGRTE
+416aACSR                   MOVE RHRTID    OPNRTE
+416aACSR                   MOVE RHRTE     OPNRTC
+416aAC*
+416aACSR                   OTHER
+416aACSR                   MOVE *OFF      MRGRTE
+416aACSR                   UNLCKRTEHED1
+416aAC*
+416aACSR                   ENDSL
+416aAC*
+416aACSR                   ENDSR
+416aAC*----------------------------------------------------------------
+416aAC*
+416aAC*  ZZCKR1  Check if NEW route has any orders attached.
+416aAC*
+416aACSR         ZZCKR1    BEGSR
+416aAC*
+416aAC*    Check to see if any orders attached to NEW Route Header.
+416aAC*    If none found, then Delete NEW Route Header record.
+416aACSR         OH3KEY    SETLLORDH4                    77
+416aACSR         *IN77     IFEQ *OFF
+416aACSR         RH2KEY    CHAINRTEHED1              73
+416aACSR         *IN73     IFEQ *OFF
+416aACSR                   DELETRHREC1
+416aACSR                   ENDIF
+416aACSR                   ENDIF
+416aAC*
+416aACSR                   ENDSR
+416aAC*----------------------------------------------------------------
+416aAC*
+416aAC*  ZZCKOR  Check if order header still at Open status.
+416aAC*
+416aACSR         ZZCKOR    BEGSR
+416aAC*
+416aACSR         OH5KEY    SETLLORDH4
+416aACSR         FOREVR    DOWEQFOREVR
+416aACSR         OH5KEY    READEORDH4                    77
+416aACSR                   SELEC
+416aACSR         *IN77     WHEQ *ON
+416aAC*
+416aACSR                   LEAVE
+416aAC*
+416aAC*    In order to merge an order being imported, the following have
+416aAC*    to match: Must be the same type, existing order must be open,
+416aAC*    same customer and for GFG ONLY: Memo codes must match.
+416aACSR         *IN77     WHEQ *OFF
+416aACSR         OIHTYP    ANDEQ' '
+416aACSR         OHTYPE    ANDEQ' '
+416aACSR         OHSTAT    ANDEQ'O'
+416aAC*    Next line is for GFG ONLY: Memo codes must match.
+416aACSR         OIHMEC    ANDEQOHMEMC
+416aACSR                   MOVE *ON       MRGORD
+416aACSR                   Z-ADDOHORD     OPNORD
+416aACSR                   Z-ADDOHCORD    OPNORC
+416aACSR                   LEAVE
+416aAC*
+416aACSR                   OTHER
+416aACSR                   MOVE *ON       WRGSTS
+416aACSR                   LEAVE
+416aAC*
+416aACSR                   ENDSL
+416aACSR                   ENDDO
+416aAC*
+416aACSR                   ENDSR
+416aAC*----------------------------------------------------------------
+416aAC*
+416aAC*  ZZCKO1  Check if NEW order header has items attached.
+416aAC*
+416aACSR         ZZCKO1    BEGSR
+416aAC*
+416aAC*    Check to see if any Items attached to NEW Order Header.
+416aAC*    If none found, then Delete NEW Order Header record.
+416aACSR         ODKEY     SETLLORDD1                    75
+416aACSR         *IN75     IFEQ *OFF
+416aACSR         OHKEY     CHAINORDH                 74
+416aACSR         *IN74     IFEQ *OFF
+416aACSR                   DELETOHREC
+416aACSR                   ENDIF
+416aACSR                   ENDIF
+416aAC*
+416aACSR                   ENDSR
+416aAC*----------------------------------------------------------------
+416aAC*
+416aAC*  ZZGTOD  Get order detail record. (with/without) record lock.
+416aAC*
+416aACSR         ZZGTOD    BEGSR
+416aAC*
+416aACSR                   SELEC
+416aACSR         RCDLCK    WHEQ *OFF
+416aACSR         OD1KEY    CHAINORDD1               N75
+416aAC*
+416aACSR         RCDLCK    WHEQ *ON
+416aACSR         OD1KEY    CHAINORDD1                75
+416aAC*
+416aACSR                   ENDSL
+416aAC*
+416aAC*    Order detail line item not found. Clear qty fields.
+416aACSR         *IN75     IFEQ *ON
+416aACSR                   MOVE *ZEROS    ODQOR1
+416aACSR                   MOVE *ZEROS    ODQOR2
+416aACSR                   MOVE *ZEROS    ODQOR3
+416aACSR                   ENDIF
+416aAC*
+416aACSR                   ENDSR
+     C*----------------------------------------------------------------
+404 AC*
+404 AC*  ZZXDCK  Attach cross dock item to PO detail line.
+404 AC*
+404 ACSR         ZZXDCK    BEGSR
+416aAC*
+416aAC*    Retrieve Open item order detail line
+416aACSR         MRGRTE    IFEQ *ON
+416aACSR         MRGORD    ANDEQ*ON
+416aACSR                   MOVE *OFF      RCDLCK
+416aACSR                   EXSR ZZGTOD
+416aACSR                   ENDIF
+416aAC*
+416aAC*    If we find this item on an existing Open Order and the codes
+416aAC*    don't match or this is a cross dock item, force item to New
+416aAC*    Route, New Order.
+416aACSR         MRGRTE    IFEQ *ON
+416aACSR         MRGORD    ANDEQ*ON
+416aACSR         *IN75     ANDEQ*ON
+416aACSR         OIDSPC    ANDNEODSPCL
+416aAC*
+416aACSR         OIDSPC    OREQ 'XD'
+416aACSR                   MOVE *ON       WRGSTS
+416aACSR                   ENDIF
+416aAC*
+     C* Only work with cross dock items.
+     CSR         OIDSPC    IFNE 'XD'
+     CSR                   MOVE 'Y'       GOOD2
+     CSR                   GOTO ENDXD
+     CSR                   ENDIF
+     C* Loop through P.O. detail records looking for item.
+     CSR         KEYPD1    SETLLPODTL1
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYPD1    READEPODTL1                   79
+404 DC* Error if none found.
+404 ACSR         *IN79     IFEQ *ON
+404 ACSR                   Z-ADD0         PDSEQ
+404 ACSR                   MOVE OIDPO     PDPO
+404 DC*R                   MOVE DESC,4    DETMSG
+404 DC*R                   ADD  1         BADPO
+404 DC*R                   LEAVE
+404 ACSR                   ENDIF
+405 AC* If cross dock slot record exists, update
+405 ACSR                   MOVEL'XDK'     KYDISP
+405 ACSR         KEYSL4    SETLLSLOT4
+405 ACSR         FOREVR    DOWEQFOREVR                                     DO2
+405 ACSR                   READ SLOT4                    79
+405 ACSR         *IN79     IFEQ *OFF
+407 DC*R         SLSTAT    ANDEQ'A '
+407 MCSR         SLSTAT    ANDEQ'XD'
+405 ACSR         SLWHSE    ANDEQ$PWHSE
+405 ACSR         SLWHDP    ANDEQITWHDP
+405 ACSR         SLITEM    ANDEQOIDITM
+405 ACSR         SLAISL    ANDEQ'XDK'
+405 AC* Pre-allocate product in case receiving is done before picking.
+405 ACSR                   ADD  OIDQ1     SLALC1
+405 ACSR         ITFLG1    IFEQ 'Y'
+405 ACSR                   ADD  OIDQ2     SLALC2
+405 ACSR                   ENDIF
+405 ACSR         ITFLG2    IFEQ 'Y'
+405 ACSR                   ADD  OIDQ3     SLALC3
+405 ACSR                   ENDIF
+405 ACSR                   UPDATSLREC4
+405 ACSR                   GOTO ADDXDK
+405 ACSR                   ELSE
+406 ACSR                   UNLCKSLOT4
+405 ACSR                   LEAVE
+405 ACSR                   ENDIF
+405 ACSR                   ENDDO                                          END2
+     C* Create cross dock slot record.
+     CSR                   Z-ADD1         TMPLOC  30
+     CSR                   MOVE 'XDK'     KYAISL
+     CSR         KEYSL1    SETLLSLOT1
+     CSR         FOREVR    DOWEQFOREVR
+     CSR         KEYSL1    READESLOT1               N    79
+     CSR         *IN79     IFEQ *ON
+     CSR         SLLOC     ORGT TMPLOC
+     CSR                   LEAVE
+     CSR                   ENDIF
+     CSR         SLLOC     ADD  1         TMPLOC
+     CSR                   ENDDO
+     C*
+     CSR                   CLEARSLREC
+     CSR                   Z-ADDOIDWHS    SLWHSE
+     CSR                   MOVE ITWHDP    SLWHDP
+     CSR                   MOVE 'XDK'     SLAISL
+     CSR                   Z-ADDTMPLOC    SLLOC
+     CSR                   Z-ADD1         SLRLVL
+     CSR                   MOVE *BLANKS   SLHAND
+     CSR                   MOVE 'X'       SLSTYP
+     CSR                   Z-ADDTMPLOC    SLPSEQ
+     CSR                   MOVE OIDITM    SLITEM
+406 DC*                    MOVE 'A '      SLSTAT
+406 MCSR                   MOVE OIDSPC    SLSTAT
+     CSR                   Z-ADDTODAY     SLSDTE
+     CSR                   TIME           SLSTIM
+     CSR                   MOVE 'N'       SLPICK
+     CSR                   MOVE 'N'       SLRSRV
+     C* Format display slot.
+     CSR                   CALL 'FRMTSL'
+     CSR                   PARM           SLWHSE
+     CSR                   PARM           SLWHDP
+     CSR                   PARM           SLAISL
+     CSR                   PARM           SLLOC
+     CSR                   PARM           SLRLVL
+     CSR                   PARM           SLHAND
+     CSR                   PARM           SLSTYP
+     CSR                   PARM           SLPSEQ
+     CSR                   PARM           SLDISP
+     C* Pre-allocate product in case receiving is done before picking.
+     CSR                   Z-ADDOIDQ1     SLALC1
+     CSR         ITFLG1    IFEQ 'Y'
+     CSR                   Z-ADDOIDQ2     SLALC2
+     CSR                   ENDIF
+     CSR         ITFLG2    IFEQ 'Y'
+     CSR                   Z-ADDOIDQ3     SLALC3
+     CSR                   ENDIF
+     C* Add record
+     CSR         SLLOC     DIV  2         DUMMY   30
+     CSR                   MVR            SLSIDE
+     CSR         SLSIDE    IFLT 0
+     CSR                   Z-SUBSLSIDE    SLSIDE
+     CSR                   ENDIF
+     CSR                   WRITESLREC                  77
+     C* Error if slot not created.
+     CSR         *IN77     IFEQ *ON
+404 ACSR                   MOVE DESC,5    DETMSG
+404 ACSR                   ADD  1         BADPO
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C* Create cross dock record.
+405 ACSR         ADDXDK    TAG
+     CSR                   Z-ADDSLWHSE    CDWHSE
+     CSR                   MOVE SLWHDP    CDWHDP
+     CSR                   MOVE SLDISP    CDSLOT
+     CSR                   Z-ADDOHORD     CDORD
+     CSR                   Z-ADDOIDSEQ    CDORSQ
+     CSR                   Z-ADD0         CDORT#
+     CSR                   Z-ADD0         CDORL#
+     CSR                   MOVE PDPO      CDPO
+     CSR                   Z-ADDPDSEQ     CDPOSQ
+     CSR                   Z-ADD0         CDPOT#
+     CSR                   Z-ADD0         CDPOL#
+     CSR                   WRITECDREC                  79
+     CSR         *IN79     IFEQ *ON
+404 ACSR                   MOVE DESC,6    DETMSG
+404 ACSR                   ADD  1         BADPO
+     CSR                   ELSE
+     CSR                   MOVE 'Y'       GOOD2   1
+     CSR                   ENDIF
+     CSR                   LEAVE
+     CSR                   ENDDO
+     C*
+404 ACSR         ENDXD     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ZRHEAD   Print report headings.
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         COUNT     IFGE LINPPG
+     CSR                   SETON                     81
+     CSR                   Z-ADD0         COUNT
+     CSR                   WRITEHEAD1
+     CSR                   ADD  3         COUNT
+     CSR                   WRITEHEAD2
+     CSR                   ADD  2         COUNT
+     CSR                   WRITEHEAD3
+     CSR                   ADD  2         COUNT
+     CSR                   WRITEHEAD4
+     CSR                   ADD  2         COUNT
+     CSR                   SETOF                     81
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     O*----------------------------------------------------------------*********
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+*EXIST*
+*INVALID ITEM*
+*BREAKDOWN INVALID*
+*INVALID X-DOCK PO*
+*XDK SLOT ERROR*
+*NO XDK REC CREATED*
+**   OVRPRTF statment
+OVRPRTF FILE(OI2251PR) OUTQ(*DEV) DEV(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)

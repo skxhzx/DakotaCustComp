@@ -1,0 +1,143 @@
+/*-------------------------------------------------------------------*/
+/*   Copyright (C) 2019 BFC Software, Inc. - All Rights Reserved     */
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  UT911CL     Email QSYSOPR Errors                                 */
+/*  August 26, 2019                                                  */
+/*  Rod Roller                                                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions                                                        */
+/*                                                                   */
+/*    08/26/19  RTR  7.30                                            */
+/*     - Created.                                                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ UT911CL:    PGM
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(UT911CL)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&CUTOFF)     TYPE(*DEC) LEN(4 0) VALUE(2345)
+             DCL        VAR(&DELAYMIN)   TYPE(*DEC) LEN(4 0) VALUE(2)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&NEWTIME)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&NUMHOUR)    TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&NUMMIN)     TYPE(*DEC) LEN(2 0)
+             DCL        VAR(&SYSTIME)    TYPE(*CHAR) LEN(6)
+             DCL        VAR(&TEXT1)      TYPE(*CHAR) LEN(80)
+             DCL        VAR(&TEXT2)      TYPE(*CHAR) LEN(200)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&SENDER)     TYPE(*CHAR) LEN(80)
+             DCL        VAR(&SYSNAME)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&EMLTO)      TYPE(*CHAR) LEN(1000)
+             DCL        VAR(&EMLSUB)     TYPE(*CHAR) LEN(100)
+             DCL        VAR(&EMLBODY)    TYPE(*CHAR) LEN(5000)
+             DCL        VAR(&OPTSYS)     TYPE(*CHAR) LEN(12) +
+                                          VALUE('System')
+             DCL        VAR(&OPTTYPE)    TYPE(*CHAR) LEN(20) +
+                                          VALUE('UT911CL')
+             DCL        VAR(&OPTNAME)    TYPE(*CHAR) LEN(20)
+             DCL        VAR(&OPTVALT)    TYPE(*CHAR) LEN(1)
+             DCL        VAR(&OPTVALN)    TYPE(*DEC) LEN(15 5)
+             DCL        VAR(&OPTVALA)    TYPE(*CHAR) LEN(100)
+             DCL        VAR(&OPTRET)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&RUNJOBQ)    TYPE(*CHAR) LEN(10)
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/*  Set variables  */
+             ADDLIBLE   LIB(BFCSUPPORT)
+             MONMSG     MSGID(CPF0000)
+
+      /* get system name */
+             RTVNETA    SYSNAME(&SYSNAME)
+
+      /* get email list from BFCSUPPORT/OPTIONINT */
+             CHGVAR     VAR(&OPTNAME) VALUE('Email List          ')
+             CALL       PGM(GETOPTINT) PARM(&OPTSYS &OPTTYPE +
+                          &OPTNAME &OPTVALT &OPTVALN &OPTVALA &OPTRET)
+             IF         COND(&OPTRET *NE '*OK') THEN(GOTO +
+                          CMDLBL(NOMSG))
+             CHGVAR     VAR(&EMLTO) VALUE(&OPTVALA)
+
+      /* get jobq for program */
+             CHGVAR     VAR(&OPTNAME) VALUE('Job Queue           ')
+             CALL       PGM(GETOPTINT) PARM(&OPTSYS &OPTTYPE +
+                          &OPTNAME &OPTVALT &OPTVALN &OPTVALA &OPTRET)
+             IF         COND(&OPTRET *NE '*OK') THEN(GOTO +
+                          CMDLBL(NOMSG))
+             CHGVAR     VAR(&RUNJOBQ) VALUE(&OPTVALA)
+
+/*  Look for inquiry messages  */
+             RCVMSG     MSGQ(QSYSOPR) MSGTYPE(*INQ) WAIT(1) +
+                          RMV(*KEEPEXCP) MSG(&TEXT1) MSGDTA(&TEXT2) +
+                          MSGID(&MSGID) SENDER(&SENDER)
+
+/*  Skip if nothing retrieved  */
+             IF         COND(&MSGID *EQ '       ') THEN(GOTO +
+                          CMDLBL(SKIP))
+
+/*  Skip journal receiver messages  */
+             IF         COND(&MSGID *EQ 'CPA7025') THEN(GOTO +
+                          CMDLBL(SKIP))
+
+/*  Compose email */
+             CHGVAR     VAR(&EMLSUB) VALUE('QSYSOPR Message on' +
+                          *BCAT &SYSNAME)
+             CHGVAR     VAR(&EMLBODY) VALUE(&TEXT1 *BCAT &SENDER +
+                          *BCAT &MSGID *BCAT &TEXT2)
+
+/*  Send email */
+             BFCEMAIL   EMAILTO(&EMLTO) SUBJECT(&EMLSUB) BODY(&EMLBODY)
+
+/* Determine next run time and put back on job queue. */
+SKIP:
+             RTVSYSVAL  SYSVAL(QTIME) RTNVAR(&SYSTIME)
+             CHGVAR     VAR(&NUMHOUR) VALUE(%SST(&SYSTIME 1 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(%SST(&SYSTIME 3 2))
+             CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN + &DELAYMIN)
+             IF         COND(&NUMMIN *GE 60) THEN(DO)
+               CHGVAR     VAR(&NUMMIN) VALUE(&NUMMIN - 60)
+               CHGVAR     VAR(&NUMHOUR) VALUE(&NUMHOUR + 1)
+             ENDDO
+
+             IF         COND(&NUMHOUR *GE 24) THEN(GOTO CMDLBL(NOMSG))
+             IF         COND(((&NUMHOUR * 100) + &NUMMIN) *GE +
+                          &CUTOFF) THEN(GOTO CMDLBL(NOMSG))
+
+             CHGVAR     VAR(%SST(&SYSTIME 1 2)) VALUE(&NUMHOUR)
+             CHGVAR     VAR(%SST(&SYSTIME 3 2)) VALUE(&NUMMIN)
+             CHGVAR     VAR(&NEWTIME) VALUE(%SST(&SYSTIME 1 2) *CAT +
+                          ':' *CAT %SST(&SYSTIME 3 2) *CAT ':00')
+
+             SBMJOB     CMD(CALL PGM(&SBMPGM)) JOB(MONQSYSOPR) +
+                          JOBQ(&RUNJOBQ) LOG(4 0 *NOLIST) +
+                          SCDTIME(&NEWTIME) MSGQ(*NONE)
+
+/*  Clean up before leaving */
+ NOMSG:
+
+             DLTOVR     FILE(*ALL)
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

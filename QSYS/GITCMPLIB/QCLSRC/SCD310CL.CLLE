@@ -1,0 +1,212 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  SCD310CL  Slots without Check Digit Report                       */
+/*  04 January, 2001                                               */
+/*  Kenneth Elder                                                    */
+/*                                                                   */
+/*  Revisions                                                        */
+/*                                                                   */
+/*   04/15/04  DAS  4.17                                             */
+/*     - Added parms &STAT and &HEAD.                                */
+/*   09/22/04  MLB  4.17a                                            */
+/*     - Enh: Revised program to omit virtual slots during  opnqryf. */
+/*   07/31/07  RBD  5.10                                             */
+/*     - Fix: If view, ignore whse and dept selections, as all       */
+/*       whse's and dept's must be included so that user may         */
+/*       position to any whse or dept within the view pgm, SCD312.   */
+/*   04/07/09  RBD  5.20                                             */
+/*     - Undo 5.10 fix, it was not necessary.                        */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+/*CD310CL:   PGM        PARM(&WHSE &WHDP &RETURN &DEV &FORM)  417D */
+ SCD310CL:   PGM        PARM(&WHSE &WHDP &SLTYP &STAT +
+                             &RETURN &DEV &FORM &HEAD)     /* 417M */
+
+/*-------------------------------------------------------------------*/
+/*  Constant declarations                                            */
+/*-------------------------------------------------------------------*/
+
+  /* Name of this program. */
+
+             DCL        VAR(&SBMPGM) TYPE(*CHAR) LEN(10) +
+                          VALUE(SCD310CL)
+
+  /* Option program. */
+
+             DCL        VAR(&OPTPGM) TYPE(*CHAR) LEN(10) VALUE(SCD310)
+
+  /* Report program and printer file name. */
+
+             DCL        VAR(&FILE) TYPE(*CHAR) LEN(10) VALUE(SLOT)
+             DCL        VAR(&FILE2) TYPE(*CHAR) LEN(10) VALUE(SLOTDGT)
+             DCL        VAR(&PRTF) TYPE(*CHAR) LEN(10) VALUE(SCD311PR)
+
+  /* Informational message. */
+
+             DCL        VAR(&CANCELMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Slots without Check digit Report')
+             DCL        VAR(&WORKINGMSG) TYPE(*CHAR) LEN(60) +
+                          VALUE('Printing Slots without Check Digit +
+                          Report')
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&DEV)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&JOBQ)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&MEMBER)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&QRYSLT)     TYPE(*CHAR) LEN(2000)
+             DCL        VAR(&QUOTE)      TYPE(*CHAR) LEN(1) VALUE('"')
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&UNQKEY)     TYPE(*CHAR) LEN(50)
+             DCL        VAR(&WHSE)       TYPE(*CHAR) LEN(3)
+             DCL        VAR(&WHDP)       TYPE(*CHAR) LEN(5)
+             DCL        VAR(&SLTYP)      TYPE(*CHAR) LEN(1)
+             DCL        VAR(&STAT)       TYPE(*CHAR) LEN(4) /* 417A */
+             DCL        VAR(&VP)         TYPE(*CHAR) LEN(1)
+             DCL        VAR(&HEAD)       TYPE(*CHAR) LEN(50) /*417A*/
+
+             MONMSG     MSGID(CPF0000)   EXEC(GOTO CMDLBL(GETOUT))
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+/*  Don't get options, if being run from JOBQ. */
+
+             RTVJOBA    TYPE(&TYPE)
+             IF (&TYPE = '0') THEN(GOTO REPORT)
+
+/*  Get report options. */
+
+         /*  CALL       PGM(&OPTPGM) PARM(&WHSE &WHDP &SLTYP &RETURN + */
+         /*               &VP &JOBQ &DEV &FORM)                  417D  */
+             CALL       PGM(&OPTPGM) PARM(&WHSE &WHDP &SLTYP &STAT +
+                          &RETURN &VP &JOBQ &DEV &FORM &HEAD)  /* 417M */
+
+/*  See if user wants to proceed. */
+
+             IF (&RETURN = '*EXIT' *OR &RETURN = '*CANCEL') THEN(DO)
+
+               SNDPGMMSG  MSGID(PIR9801) MSGF(PIRMSGF) +
+                          MSGDTA(&CANCELMSG) +
+                          MSGTYPE(*INFO)
+               RETURN
+               ENDDO
+
+
+/* See if user wants to put report on jobq. */
+
+             IF (&JOBQ = 'Y') THEN(DO)
+         /*  SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&WHSE &WHDP +    */
+         /*               &RETURN &DEV &FORM)) JOB(&SBMPGM)    417D */
+             SBMJOB     CMD(CALL PGM(&SBMPGM) PARM(&WHSE &WHDP &SLTYP +
+                          &STAT &RETURN &DEV &FORM &HEAD)) +
+                          JOB(&SBMPGM) /*417M*/
+             GOTO       CMDLBL(GETOUT)
+             ENDDO
+
+/*  Otherwise, run program. */
+
+ REPORT:
+
+   /* Override printer file. */
+
+             OVRPRTF    FILE(&PRTF) DEV(&DEV) OUTQ(*DEV) +
+                          FORMTYPE(&FORM)
+
+   /* Create selection criteria string. */
+
+             CHGVAR     VAR(&QRYSLT) VALUE('SLRSRV *NE ' +
+                          *BCAT &QUOTE *CAT 'V ' *CAT &QUOTE) /*(417aA)*/
+
+             IF (&SLTYP = 'O') THEN(DO)
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLPICK +
+                          *NE' *BCAT &QUOTE *CAT 'Y' *CAT &QUOTE)
+             ENDDO
+
+             IF (&SLTYP = 'P') THEN(DO)
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLPICK +
+                          *EQ' *BCAT &QUOTE *CAT 'Y' *CAT &QUOTE)
+             ENDDO
+
+   /* 417 A  Begin */
+             IF (&STAT *NE '*ALL') THEN(DO)
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLSTAT +
+                          *EQ' *BCAT &QUOTE *CAT &STAT *CAT &QUOTE)
+             ENDDO
+   /* 417 A  End */
+
+   /* If viewing the report, skip warehouse & department selection. * 520 D */
+
+  /*510 M    IF         COND(&VP *EQ 'V') THEN(GOTO CMDLBL(VIEW)) * 520 D  */
+
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLWHSE *EQ +
+                          ' *BCAT &QUOTE *CAT &WHSE *CAT &QUOTE)
+
+             IF (&WHDP *NE '*ALL') THEN(DO)
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT '*AND')
+             CHGVAR     VAR(&QRYSLT) VALUE(&QRYSLT *BCAT 'SLWHDP *EQ +
+                          ' *BCAT &QUOTE *CAT &WHDP *CAT &QUOTE)
+             ENDDO
+
+ /* VIEW: 520 D */
+
+   /* Use OPNQRYF to select and order the records we need */
+
+             OVRDBF     FILE(SCD311) TOFILE(&FILE) SHARE(*YES)
+             OPNQRYF    FILE((&FILE) (&FILE2)) FORMAT(SCD311) +
+                          QRYSLT(&QRYSLT) KEYFLD((SLOT/SLWHSE) +
+                          (SLOT/SLWHDP) (SLOT/SLDISP)) JFLD((SLWHSE +
+                          SCDWHS) (SLWHDP SCDWHD) (SLDISP SCDDSP)) +
+                          JDFTVAL(*ONLYDFT) SEQONLY(*NO) +
+                          OPTIMIZE(*FIRSTIO)
+
+/*  If user viewed the data then we are done so exit. */
+
+             IF (&VP = 'V') THEN(DO)
+        /*   CALL       PGM(SCD312) PARM(&WHSE &WHDP &SLTYP)  417D */
+             CALL       PGM(SCD312) PARM(&WHSE &WHDP &SLTYP &STAT +
+                          &HEAD) /*417M*/
+               GOTO       CMDLBL(OUT)
+             ENDDO
+
+
+             RMVMSG     CLEAR(*ALL)
+             MSGBFC     MESSAGE(&WORKINGMSG)
+
+       /*    CALL       PGM(SCD311)   417D */
+             CALL       PGM(SCD311) PARM(&HEAD)  /*417M*/
+
+ /* Receive any messages and pass them on */
+
+ GETOUT:
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+             SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                        MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ OUT:
+ NOMSG:
+
+   /* Clean up before leaving */
+
+             RCLRSC     LVL(*CALLER)
+
+             ENDPGM

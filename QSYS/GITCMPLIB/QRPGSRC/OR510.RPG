@@ -1,0 +1,2469 @@
+     F*----------------------------------------------------------------
+     F*
+     F*  OR510     Pick orders - Select orders
+     F*  18 March 1993
+     F*  Dave Sommerville
+     F*
+     F*  Revisions
+     F*
+     F*    08/26/94 DAS
+     F*      - Major revisions.
+     F*
+     F*    11/01/94 DAS
+     F*      - Changed tie/high calculation to take into account
+     F*        a zero tie or high value.
+     F*
+     F*    11/29/94 DAS
+     F*      - Changed to ignore bulk pick if percentage is zero.
+     F*
+     F*    12/05/94 DAS
+     F*      - Changed to not update the pick quantities. This will
+     F*        be done by the transaction closing program PT132.
+     F*
+     F*    12/07/94 DAS
+     F*      - Modified PICKF routine to work with items that don't
+     F*        have a picking slot. Also made minor modifications to
+     F*        the BULKPK routine to handle the special case of
+     F*        BLKPCT=0.
+     F*
+     F*    12/18/94 DAS
+     F*      - Fixed problems with OPBPCK = 0.
+     F*
+     F*    02/21/95 DAS  2.09
+     F*      - Revised routine PICKF to get the picking slot after
+     F*        returning from the BULKPK routine.
+     F*      - Revised program to work with *PICK options by dept.
+     F*        This effected files OPTIONS and RTEOPT and routines
+     F*        *INZSR, GETOPT and GETOD.
+     F*      - Revised BULKPK routine to loop for next slot when
+     F*        available qty is not greater than zero.
+     F*
+     F*    03/09/95 DAS  2.10
+     F*      - Revised KEYID1 KLIST to use KYUM instead of IDUM.
+     F*      - Added full key definition KEYDEF for file ITEMDEF1.
+     F*
+     F*    03/23/95 DAS  FIX
+     F*      - Revised PICKF routine to call PICKRP instead of BULKPK
+     F*        when an item does not have a pick slot.
+     F*      - Added a line before each EXSR POST to define the label
+     F*        type to be used.
+     F*      - Copied PICKP routine to PICKRP for picking items with
+     F*        no pick slot.
+     F*      - Revised PICKRP to read active non-pick slots.
+     F*
+     F*    06/21/95 DAS  FX2
+     F*      - Added KEYS3B and KEYS3C to *INZSR.
+     F*      - Revised PICKP and PICKRP routines to pick from slot
+     F*        with the smallest quantity first when the priority
+     F*        code, expiration date and entered date are identical.
+     F*
+     F*    06/23/95 DAS  FX3
+     F*      - Created new routine PICK0 to call PICK1,2,3.
+     F*      - Revised PICKP and PICKRP to call PICK0 instead of
+     F*        PICK1,2,3.
+     F*      - Revised PICKP and PICKRP to look at pick quantity
+     F*        instead of available quantity.
+     F*
+213 AF*    05/21/96 DAS
+     F*      - Initialized new label fields LBGRP1, LBGRP2, LBRDTE
+     F*        and LBQAVL.
+     F*      - Added parameter $POTYP to identify the type of orders
+     F*        to work with (Normal, transfers ...).
+     F*      - File ORDH2 was modified to include order type.
+     F*      - Made $POTYP part of partial key for ORDH2.
+     F*      - Changed option OPBPCK to 3.0 from 2.0.
+     F*      - Added option OPPBRK (Break by aisle in PIR section).
+     F*
+215 AF*    07/19/96 HNK
+     F*      - Program OR534 called to replenish PIR slot, for broken
+     F*        case item.  Subroutine REPLNS added.
+215 AF*    08/02/96 HNK
+     F*      - Bulk pick conditioned on ITFLGB flag.
+     F*
+216 AF*    08/05/96 HNK
+     F*      - Bulk pick subroutine changed to base bulk pick on cube.
+     F*
+217 AF*    10/07/96 HNK
+     F*      - Revised OR510PR by changing ODORD to OHCORD in DETAIL1.
+     F*
+219 AF*    03/03/97 DAS  2.19
+     F*      - Revised BULKPK routine. Change OPBPCK to BLKPCT.
+     F*      - Removed line to divide S#CUBE by 100.
+     F*
+219 AF*    03/18/97 DAS  2.19
+     F*      - Revised BULKPK routine to compare AVAIL1 against DSQMAX.
+     F*
+408 AF*    12/22/97 DAS  4.08
+     F*      - Revised PICKF routine to check for expired pick slot date.
+     F*        If expired, item will be picked as if no pick slot existed.
+408 AF*    12/31/97 DAS  4.08
+     F*      - Change to unalocate item qty after replenishment for    e.
+     F*        broken case.
+409 AF*    03/12/98 DAS/RH 4.09
+     F*      - Revised ALLOC routine to repeat the call to REPLNS untile.
+     F*        the return qty doesn't change indicating that nothing
+     F*        was replenished.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        CHAIN INDICATOR
+     F*  90        OVERFLOW INDICATOR FOR EXCEPTION REPORT
+     F*  91        OVERFLOW INDICATOR FOR CATCH WEIGHT REPORT
+     F*  99        UNIVERSAL RECORD INDICATOR (VERY TEMPORARY USAGE)
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FORDH2   UF  E           K        DISK
+     FORDD1   UF  E           K        DISK
+     FSLOT3   UF  E           K        DISK
+     FPIRITEM IF  E           K        DISK
+     FITEMDEF1IF  E           K        DISK
+209 DF*OPTIONS IF  E           K        DISK
+209 MFOPTIOND IF  E           K        DISK
+209 DF*RTEOPT  IF  E           K        DISK
+209 MFRTEOPTD IF  E           K        DISK
+     FLABEL   O   E           K        DISK                      A
+     FOR510PR O   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+     E                    A40        40  1
+     E                    $MD       128  1
+     E                    MSG     1   5 40
+     I*----------------------------------------------------------------
+     I*  Tie/High definitions data structure.
+     I*
+     IDEFS        DS                          9
+     I                                        1   2 DSSDEF
+     I                                        3   60DSTIE
+     I                                        7   80DSHIGH
+     I                                        9  150DSQMAX
+     I                                       16  220DSQMIN
+     I                                       23  23 DSMTCH
+     I*----------------------------------------------------------------
+     I*  Redefinition data structures
+     I*
+     I$AERM       DS
+     I                                        1  60 XAERM
+     I                                        1   4 $AMSG
+     I$CERM       DS
+     I                                        1  60 XCERM
+     I                                        1   4 $CMSG
+     I*----------------------------------------------------------------
+     I*  *PICK  -  Picking options
+     I*----------------------------------------------------------------
+     I*
+     I* Fields
+     I*
+     I*    OPNXTP  -  Next pallet number.
+     I*    OPBPCK  -  Bulk pick definition.
+     I*    OPPCUB  -  Maximum cube for PIR.
+     I*    OPFPAL  -  Pallets on fixed fork lift.
+     I*    OPFCUB  -  Maximum cube per fixed pallet.
+     I*    OPFSTP  -  Maximum stops per fixed pallet.
+     I*    OPINCL  -  Include PIR in fixed cube.
+     I*    OPSRCH  -  Number of previous pallets to search for space.
+     I*    OPFBLD  -  Fixed pallet building method.
+     I*                1 = By piece without concern for splitting stop.
+     I*                2 = By stop without splitting stop between plts.
+213 AI*    OPPBRK  -  Break pallets by aisle (Y,N).
+     I*
+     I* Data structure
+     I*
+209 DI*OPDATA      DS
+209 MIOPDDTA      DS
+     I I            0                         1   70OPNXTP
+213 DI*I            0                         8   90OPBPCK
+     I I            0                        10  142OPPCUB
+     I I            0                        15  150OPFPAL
+     I I            0                        16  202OPFCUB
+    DI*I            0                        21  210OPFSTP
+     I                                       22  22 OPINCL
+     I I            0                        23  240OPSRCH
+     I I            0                        25  260OPFSTP
+209 AI I            0                        27  270OPFBLD
+213 AI I            0                        28  300OPBPCK
+213 AI                                       31  31 OPPBRK
+209 DI*                                     117 117 OPTEND
+209 MI                                      117 117 OPDEND
+     I*
+209 DI*RTDATA      DS
+209 MIRTDDTA      DS
+     I I            0                         1   70RTNXTP
+213 DI*I            0                         8   90RTBPCK
+     I I            0                        10  142RTPCUB
+     I I            0                        15  150RTFPAL
+     I I            0                        16  202RTFCUB
+    DI*I            0                        21  210RTFSTP
+     I                                       22  22 RTINCL
+     I I            0                        23  240RTSRCH
+     I I            0                        25  260RTFSTP
+209 AI I            0                        27  270RTFBLD
+213 AI I            0                        28  300RTBPCK
+213 AI                                       31  31 RTPBRK
+209 DI*                                     117 117 RTTEND
+209 MI                                      117 117 RTDEND
+209 AI*----------------------------------------------------------------
+209 AI*  Multiple occurance data structure for department options
+209 AI*
+209 AIOPTS        DS                         50
+209 AI                                        1   5 #DWHDP
+213 DI*                                       6   70#DBPCK
+213 DI*                                       6   72#DBPCT
+213 MI                                        6   80#DBPCK
+213 MI                                        6   82#DBPCT
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I*----------------------------------------------------------------
+     I*  Called program parameters
+     I*
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*  Data structure for error message parameters
+     I*
+     I$MDT        DS
+     I                                        1  50 ERRMSG
+     I                                        1  10 ERRCL1
+     I                                       11  16 ERRCL2
+     I            DS
+     I                                    P   1   20$EC
+     I*----------------------------------------------------------------
+     I*  Message control
+     I*
+     I              'PIRMSGF   '          C         #MSGF
+     I*
+     I            DS
+     I                                        1 128 #MSGDT
+     I                                        1 128 $MD
+     I*----------------------------------------------------------------
+     I*  Program info data structure
+     I*
+     I           SDS
+     I                                     *PROGRAM #PROG
+     I                                      244 253 #JOB
+     I                                      254 263 #USER
+     I                                      264 269 #JOBN
+     I                                      276 2810#JOBDT
+     I                                      282 2870#JOBTM
+     I*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $PCMD   *PICK    - Picking new orders.
+     C*              *RESTART - Restarting abnormally ended batch.
+     C*      $PPRG   Program to send messages back to.
+     C*      $PWHSE  Warehouse
+     C*      $PBAT   Batch number
+213 AC*      $POTYP  Order type.
+     C*      $PRTE   Route
+     C*      $PORD   Order
+     C*
+     C*    Returned Parameters
+     C*      $PRTN   blank    - No problem encountered.
+     C*              *ERROR   - Error occured. Message sent to pgmq.
+     C*
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PBAT   70
+     C                     PARM           $PWHSE  30
+213 AC                     PARM           $POTYP  1
+     C                     PARM           $PRTE   5
+     C                     PARM           $PORD   70
+     C                     PARM           $PRTN   8
+     C                     PARM           $PMSG   4
+     C*----------------------------------------------------------------
+     C*  Main line
+     C*
+     C                     MOVE *BLANKS   $PRTN
+209 DC*
+209 DC* Get picking options for route.
+209 DC*
+209 DC*                    EXSR GETOPT
+     C*
+     C* Loop through orders for the batch.
+     C*
+     C                     MOVE *OFF      PRFLAG  1
+     C                     MOVE *OFF      OHFLAG  1
+     C                     MOVE *OFF      EOFOH   1
+     C           EOFOH     DOUEQ*ON
+     C                     EXSR GETOH
+     C           EOFOH     CABEQ*ON       ENDOH
+     C*
+     C*    Loop through detail records for order.
+     C*
+     C                     MOVE *OFF      ODFLAG  1
+     C                     MOVE *OFF      EOFOD   1
+     C           EOFOD     DOUEQ*ON
+     C                     EXSR GETOD
+     C           EOFOD     CABEQ*ON       ENDOD
+     C*
+     C*       Do general allocation first (except for special orders).
+     C*
+     C           ODSPCL    IFEQ *BLANKS
+     C                     EXSR ALLOC
+     C                     ENDIF
+     C*
+     C*       Then allocate from slots.
+     C*
+     C           LEFTQ1    IFGT 0
+     C           LEFTQ2    ORGT 0
+     C           LEFTQ3    ORGT 0
+     C           ODSPCL    CASNE*BLANKS   PICKS
+     C           ITSTYP    CASEQ'P'       PICKP
+     C                     CAS            PICKF
+     C                     ENDCS
+     C                     ENDIF
+     C*
+     C*       Update detail record with allocated quantities.
+     C*
+     C                     MOVE 'P'       ODSTAT
+     C*                    Z-ADDTTLPK1    ODQPK1
+     C*                    Z-ADDTTLPK2    ODQPK2
+     C*                    Z-ADDTTLPK3    ODQPK3
+     C                     UPDATODREC
+     C*
+     C           ENDOD     TAG
+     C                     ENDDO
+     C*
+     C*    Update header record.
+     C*
+     C                     MOVE 'P'       OHSTAT
+     C                     Z-ADDTODAY     OHSDTE
+     C                     TIME           OHSTIM
+     C                     Z-ADD$PBAT     OHPBAT
+     C                     UPDATOHREC
+     C*
+     C           ENDOH     TAG
+     C                     ENDDO
+     C*
+     C* Close up shop and return home.
+     C*
+     C           ENDPGM    TAG
+     C           PRFLAG    IFEQ *ON
+     C                     WRITEFOOT1
+     C                     ENDIF
+     C                     MOVE *ON       *INLR
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+     CSR                   MOVE 'O'       KYOPEN  1
+     C*
+     C*  Define partial key for ORDH2 file.
+     C*
+     CSR         KEYOH2    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           KYOPEN
+213 ACSR                   KFLD           $POTYP
+     CSR                   KFLD           $PRTE
+     C*
+     C*  Define partial key for ORDD1 file.
+     C*
+     CSR         KEYOD1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           OHORD
+     CSR                   KFLD           KYOPEN
+     C*
+     C*  Define key for PIRITEM file.
+     C*
+     CSR         KEYIT     KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           ODITEM
+     C*
+     C*  Define partial key for ITEMDEF1 file.
+     C*
+210 ACSR         *LIKE     DEFN IDUM      KYUM
+     CSR         KEYID1    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           ODITEM
+210 DC*                    KFLD           IDUM
+210 MCSR                   KFLD           KYUM
+210 DC*                    MOVE 'N'       IDUM
+210 MCSR                   MOVE 'N'       KYUM
+210 AC*
+210 AC*  Define key for ITEMDEF1 file.
+210 AC*
+210 ACSR         KEYDEF    KLIST
+210 ACSR                   KFLD           $PWHSE
+210 ACSR                   KFLD           ODITEM
+210 ACSR                   KFLD           KYUM
+210 ACSR                   KFLD           SLSDEF
+     C*
+     C*  Define partial key for SLOT3 file.
+     C*
+     CSR         *LIKE     DEFN SLSTAT    KYSTAT
+     CSR         *LIKE     DEFN SLPICK    KYPICK
+     CSR         KEYSL3    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           ODITEM
+     CSR                   KFLD           KYSTAT
+     CSR                   KFLD           KYPICK
+FX2 AC*
+FX2 AC*  Define partial key for SLOT3 file including dates.
+FX2 AC*
+FX2 ACSR         *LIKE     DEFN SLPRTY    KYPRTY
+FX2 ACSR         *LIKE     DEFN SLEXPD    KYEXPD
+FX2 ACSR         *LIKE     DEFN SLENTD    KYENTD
+FX2 ACSR         KEYS3B    KLIST
+FX2 ACSR                   KFLD           $PWHSE
+FX2 ACSR                   KFLD           ODITEM
+FX2 ACSR                   KFLD           KYSTAT
+FX2 ACSR                   KFLD           KYPICK
+FX2 ACSR                   KFLD           KYPRTY
+FX2 ACSR                   KFLD           KYEXPD
+FX2 ACSR                   KFLD           KYENTD
+FX2 AC*
+FX2 AC*  Define full key for SLOT3 file.
+FX2 AC*
+FX2 ACSR         *LIKE     DEFN SLWHDP    KYWHDP
+FX2 ACSR         *LIKE     DEFN SLSTYP    KYSTYP
+FX2 ACSR         *LIKE     DEFN SLAISL    KYAISL
+FX2 ACSR         *LIKE     DEFN SLPSEQ    KYPSEQ
+FX2 ACSR         *LIKE     DEFN SLRLVL    KYRLVL
+FX2 ACSR         *LIKE     DEFN SLHAND    KYHAND
+FX2 ACSR         KEYS3C    KLIST
+FX2 ACSR                   KFLD           $PWHSE
+FX2 ACSR                   KFLD           ODITEM
+FX2 ACSR                   KFLD           KYSTAT
+FX2 ACSR                   KFLD           KYPICK
+FX2 ACSR                   KFLD           KYPRTY
+FX2 ACSR                   KFLD           KYEXPD
+FX2 ACSR                   KFLD           KYENTD
+FX2 ACSR                   KFLD           KYWHDP
+FX2 ACSR                   KFLD           KYSTYP
+FX2 ACSR                   KFLD           KYAISL
+FX2 ACSR                   KFLD           KYPSEQ
+FX2 ACSR                   KFLD           KYRLVL
+FX2 ACSR                   KFLD           KYHAND
+     C*
+     C*  Define partial key for SLOT3 file for special orders.
+     C*
+     CSR         KEYSPC    KLIST
+     CSR                   KFLD           $PWHSE
+     CSR                   KFLD           ODITEM
+     CSR                   KFLD           KYSTAT
+     C*
+     C*  Define partial key for options file.
+     C*
+209 ACSR         *LIKE     DEFN OPDCOD    KYCODE
+209 DC*          KEYOP     KLIST
+209 DC*                    KFLD           $PWHSE
+209 DC*                    KFLD           OPCODE
+209 MCSR         KEYOPD    KLIST
+209 MCSR                   KFLD           KYCODE
+209 MCSR                   KFLD           $PWHSE
+     C*
+     C*  Define key for route option file.
+     C*
+209 DC*          KEYRO     KLIST
+209 DC*                    KFLD           $PWHSE
+209 DC*                    KFLD           OPCODE
+209 DC*                    KFLD           $PRTE
+209 MCSR         KEYRTD    KLIST
+209 MCSR                   KFLD           OPDCOD
+209 MCSR                   KFLD           $PWHSE
+209 MCSR                   KFLD           $PRTE
+209 ACSR                   KFLD           OPDWDP
+     C*
+     C*  Variables and constants.
+     C*
+     CSR                   MOVE *OFF      FOREVR  1
+     CSR         *LIKE     DEFN ODQOR1    DIFFQ1
+     CSR         *LIKE     DEFN ODQOR2    DIFFQ2
+     CSR         *LIKE     DEFN ODQOR3    DIFFQ3
+     CSR         *LIKE     DEFN ODQOR1    LSTQTY
+     CSR         *LIKE     DEFN ODQOR1    QTYLFT
+     CSR         *LIKE     DEFN ODQOR1    TOPICK
+     C*
+     C*  Convert today's date into century format.
+     C*
+     CSR                   MOVE '*CURCMD '$CVCMD
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD8O    TODAY   80
+     C*
+     C*  Create report heading.
+     C*
+     C*    Start with batch number ...
+     C*
+     CSR                   MOVE $PBAT     TEMP30 30
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$ACMD   8
+     CSR                   PARM           TEMP30
+     CSR         'BATCH:'  CAT  TEMP30:1  HEDLN2
+     C*
+     C*    Then add warehouse ...
+     C*
+     CSR         HEDLN2    CAT  'WARE':2  HEDLN2
+     CSR         HEDLN2    CAT  'HOUSE:':0HEDLN2
+     CSR                   MOVE *BLANKS   TEMP30
+     CSR                   MOVE $PWHSE    TEMP30
+     CSR                   CALL 'ADJUST'
+     CSR                   PARM '*LEFT   '$ACMD
+     CSR                   PARM           TEMP30
+     CSR         HEDLN2    CAT  TEMP30:1  HEDLN2
+     C*
+     C*    Finish with route.
+     C*
+     CSR         HEDLN2    CAT  'ROUTE:':2HEDLN2
+     CSR         HEDLN2    CAT  $PRTE:1   HEDLN2
+     C*
+     C*    Center it so it will look pretty.
+     C*
+     CSR                   CALL 'CENTER'
+     CSR                   PARM           HEDLN2
+     CSR                   PARM 60        $CLEN   30
+209 AC*
+209 AC*    Get department options and save in data structure.
+209 AC*
+209 ACSR                   MOVE '*PICK   'KYCODE
+209 ACSR         KEYOPD    SETLLOPTIOND
+209 ACSR                   Z-ADD0         LSTOPT  20
+209 ACSR         FOREVR    DOUNEFOREVR
+209 ACSR         KEYOPD    READEOPTIOND                  79
+209 ACSR         *IN79     IFEQ *ON
+209 ACSR                   LEAVE
+209 ACSR                   ENDIF
+209 AC*
+209 AC*       Save options in data structure.
+209 AC*
+209 ACSR                   ADD  1         LSTOPT
+209 ACSR         LSTOPT    OCUR OPTS
+209 ACSR                   MOVE OPDWDP    #DWHDP
+209 ACSR                   Z-ADDOPBPCK    #DBPCK
+209 AC*
+209 AC*       Get overrides.
+209 AC*
+209 ACSR         KEYRTD    CHAINRTEOPTD              78
+209 ACSR         *IN78     IFEQ *OFF
+209 ACSR                   Z-ADDRTBPCK    #DBPCK
+209 ACSR                   ENDIF
+209 ACSR                   ENDDO
+209 AC*
+209 AC*       Initialize a "catch all" default.
+209 AC*
+209 ACSR                   ADD  1         LSTOPT
+209 ACSR         LSTOPT    OCUR OPTS
+209 ACSR                   MOVE *BLANKS   #DWHDP
+209 ACSR                   Z-ADD0         #DBPCK
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  ALLOC   Allocate item from ITEMQTY file.
+     C*
+     CSR         ALLOC     BEGSR
+     CSR                   MOVE *OFF      TRIED   1
+     CSR         TRYAGN    TAG
+     C*
+     C*   Allocate quantity needed from the warehouse qty (ITEMQTY).
+     C*
+     CSR                   MOVE '*ALLOC  '$ACMD
+     CSR                   MOVE #PROG     $APRG
+     CSR                   MOVE '*BATCH  '$ATYPE
+     CSR                   Z-ADD$PWHSE    $AWHSE
+     CSR                   MOVE ODITEM    $AITEM
+     CSR                   Z-ADDLEFTQ1    $AQTY1
+     CSR                   Z-ADDLEFTQ2    $AQTY2
+     CSR                   Z-ADDLEFTQ3    $AQTY3
+     C*
+     CSR                   CALL 'ADJQTY'
+     CSR                   PARM           $ACMD   8
+     CSR                   PARM           $APRG  10
+     CSR                   PARM           $ATYPE  8
+     CSR                   PARM           $AWHSE  30
+     CSR                   PARM           $AITEM 15
+     CSR                   PARM           $AQTY1  70
+     CSR                   PARM           $AQTY2  70
+     CSR                   PARM           $AQTY3  70
+     CSR                   PARM           $ARTQ1  70
+     CSR                   PARM           $ARTQ2  70
+     CSR                   PARM           $ARTQ3  70
+     CSR                   PARM           $ARTN   8
+     CSR                   PARM           $AERM
+     C*
+     C*   Convert allocated quantity to string for error msg.
+     C*
+     CSR                   MOVE '*QTY2STR'$CCMD
+     CSR                   MOVE '#PROG   '$CPRG
+     CSR                   Z-ADD$ARTQ1    $CQTY1
+     CSR                   Z-ADD$ARTQ2    $CQTY2
+     CSR                   Z-ADD$ARTQ3    $CQTY3
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD
+     CSR                   PARM           $CPRG
+     CSR                   PARM           $CQTY1
+     CSR                   PARM           $CQTY2
+     CSR                   PARM           $CQTY3
+     CSR                   PARM           $CUM1
+     CSR                   PARM           $CUM2
+     CSR                   PARM           $CUM3
+     CSR                   PARM           $CQSTR
+     CSR                   PARM           $CUSTR
+     CSR                   PARM           $CRTN
+     CSR                   PARM           $CERM
+     CSR                   MOVE $CQSTR    P1QALC
+     C*
+     C*   Print error message if entire qty could not be allocated.
+     C*
+     CSR         LEFTQ1    IFNE $ARTQ1
+     CSR         LEFTQ2    ORGT $ARTQ2
+     CSR         LEFTQ3    ORGT $ARTQ3
+409 AC*
+409 AC*   If return qty's are fidderent it means that something was
+409 AC*   replenished last time but that we still do not have enough
+409 AC*   quantity to fullfill order.  Therefore, set the TRIED flag
+409 AC*   off so we can do another replenishment.
+409 ACSR         $ARTQ1    IFNE SVRTQ1
+409 ACSR         $ARTQ2    ORGT SVRTQ2
+409 ACSR         $ARTQ3    ORGT SVRTQ3
+409 ACSR                   MOVE *OFF      TRIED
+409 ACSR                   ENDIF
+409 AC*   Save return qty's
+409 ACSR         *LIKE     DEFN $ARTQ1    SVRTQ1
+409 ACSR         *LIKE     DEFN $ARTQ2    SVRTQ2
+409 ACSR         *LIKE     DEFN $ARTQ3    SVRTQ3
+409 ACSR                   Z-ADD$ARTQ1    SVRTQ1
+409 ACSR                   Z-ADD$ARTQ2    SVRTQ2
+409 ACSR                   Z-ADD$ARTQ3    SVRTQ3
+215 AC*
+215 ACSR         ITTYPE    IFEQ 'B'
+215 ACSR         TRIED     ANDEQ*OFF
+215 ACSR                   EXSR REPLNS
+408 ACSR                   MOVE '*UNALLOC'$ACMD
+408 ACSR                   Z-ADD$ARTQ1    $AQTY1
+408 ACSR                   Z-ADD$ARTQ2    $AQTY2
+408 ACSR                   Z-ADD$ARTQ3    $AQTY3
+     C*
+408 ACSR                   CALL 'ADJQTY'
+408 ACSR                   PARM           $ACMD   8
+408 ACSR                   PARM           $APRG  10
+408 ACSR                   PARM           $ATYPE  8
+408 ACSR                   PARM           $AWHSE  30
+408 ACSR                   PARM           $AITEM 15
+408 ACSR                   PARM           $AQTY1  70
+408 ACSR                   PARM           $AQTY2  70
+408 ACSR                   PARM           $AQTY3  70
+408 ACSR                   PARM           $ARTQ1  70
+408 ACSR                   PARM           $ARTQ2  70
+408 ACSR                   PARM           $ARTQ3  70
+408 ACSR                   PARM           $ARTN   8
+408 ACSR                   PARM           $AERM
+     C*
+215 ACSR                   MOVE *ON       TRIED
+215 ACSR                   GOTO TRYAGN
+215 ACSR                   ENDIF
+215 AC*
+     CSR                   MOVE MSG,3     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ENDIF
+     C*
+     C*   Use the actual quantity allocated for picking from the slots.
+     C*     The quantity in the slots should always equal the quantity
+     C*     in the warehouse (ITEMQTY).
+     C*
+     CSR                   Z-ADD$ARTQ1    LEFTQ1
+     CSR                   Z-ADD$ARTQ2    LEFTQ2
+     CSR                   Z-ADD$ARTQ3    LEFTQ3
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  AVAIL   Calculate available quantities for slot.
+     C*
+     CSR         AVAIL     BEGSR
+     C*
+     C*  Call program to calculate availabe slot quantities.
+     C*
+     CSR                   CALL 'SLOTQTY'
+     CSR                   PARM           SLSTK1
+     CSR                   PARM           SLSTK2
+     CSR                   PARM           SLSTK3
+     C*
+     CSR                   PARM           SLALC1
+     CSR                   PARM           SLALC2
+     CSR                   PARM           SLALC3
+     C*
+     CSR                   PARM           SLTFR1
+     CSR                   PARM           SLTFR2
+     CSR                   PARM           SLTFR3
+     C*
+     CSR                   PARM           SLPCK1
+     CSR                   PARM           SLPCK2
+     CSR                   PARM           SLPCK3
+     C*
+     CSR                   PARM           SLRCV1
+     CSR                   PARM           SLRCV2
+     CSR                   PARM           SLRCV3
+     C*
+     CSR                   PARM           STOCK1  50
+     CSR                   PARM           STOCK2  30
+     CSR                   PARM           STOCK3  30
+     C*
+     CSR                   PARM           AVAIL1  50
+     CSR                   PARM           AVAIL2  30
+     CSR                   PARM           AVAIL3  30
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  BULKPK  Bulk pick.
+     C*
+     C*    12/09/94 DAS
+     C*      - Added special case: BLKPCT = 0.  This is used when an
+     C*        item does not have a pick slot. Essentially this routine
+     C*        will go through the replenishment slots and pick what
+     C*        is needed instead of just bulk pick quantities.
+     C*
+     C*
+     CSR         BULKPK    BEGSR
+216 ACSR         *LIKE     DEFN ITCUBE    C#CUBE
+216 ACSR         *LIKE     DEFN ITCUBE    S#CUBE
+     C*
+     CSR                   Z-ADDTOPICK    QTYLFT
+     C*
+     C*   Get "Normal" Tie/High definitions for item.
+     C*
+     CSR                   Z-ADD0         LSTDEF  10
+     CSR                   Z-ADD0         CURDEF  10
+     CSR                   MOVE *OFF      TMPFLG  1
+216 AC*
+216 AC*     Calculate threshold cube.
+216 AC*
+219 MCSR         OPFCUB    MULT BLKPCT    S#CUBE
+219 DC*          OPFCUB    MULT OPBPCK    S#CUBE
+219 DC*          S#CUBE    DIV  100       S#CUBE
+     C*
+216 DC*R         KEYID1    SETLLITEMDEF1
+216 DC*
+216 DC*R         LSTDEF    DOUEQ9
+216 DC*R         KEYID1    READEITEMDEF1                 77
+216 DC*R         *IN77     IFEQ *ON
+216 DC*R                   LEAVE
+216 DC*R                   ENDIF
+216 DC*R                   ADD  1         LSTDEF
+216 DC*R         LSTDEF    OCUR DEFS
+216 DC*R                   MOVE IDSDEF    DSSDEF
+216 DC*R                   Z-ADDIDTIE     DSTIE
+216 DC*R                   Z-ADDIDHIGH    DSHIGH
+216 DC*R                   SELEC
+216 DC*R         IDTIE     WHEQ 0
+216 DC*R                   Z-ADDIDHIGH    DSQMAX
+216 DC*R         IDHIGH    WHEQ 0
+216 DC*R                   Z-ADDIDTIE     DSQMAX
+216 DC*R                   OTHER
+216 DC*R         IDTIE     MULT IDHIGH    DSQMAX
+216 DC*R                   ENDSL
+216 DC*R         DSQMAX    MULT BLKPCT    DSQMIN    H
+216 DC*R                   MOVE *OFF      DSMTCH
+216 DC*R                   ENDDO
+     C*
+     C*   Loop while ....
+     C*
+216 DC*
+216 MC*       There is quantity left to be picked
+     C*       And something was picked last time through.
+     C*
+     CSR                   Z-ADD0         LSTQTY
+     C*
+216 DC**         LSTDEF    DOWGT0
+216 MCSR         LEFTQ1    DOWNE0                          DO - OUTER
+     CSR         LEFTQ1    ANDNELSTQTY
+216 AC*
+216 AC*   TMPFLG=*ON We did not find any slot that met bulk pick
+216 AC*              criteria.
+216 AC*
+216 ACSR         TMPFLG    IFEQ *ON
+216 ACSR                   LEAVE
+216 ACSR                   ENDIF
+216 AC*
+216 AC*   Quantity left is not enough for bulk pick. Go home.
+216 AC*
+216 ACSR         LEFTQ1    MULT ITCUBE    C#CUBE
+216 ACSR         C#CUBE    IFLT S#CUBE
+216 ACSR                   LEAVE
+216 ACSR                   ENDIF
+     C*
+     CSR                   Z-ADDLEFTQ1    LSTQTY
+216 DC*
+216 DC*     See if quantity meets criteria for bulk pick.
+216 DC*
+216 DC*R                   MOVE *OFF      TMPFLG
+216 DC*R         1         DO   LSTDEF    CURDEF
+216 DC*R         CURDEF    OCUR DEFS
+216 DC*R         LEFTQ1    IFGE DSQMIN
+216 DC*R                   MOVE *ON       TMPFLG
+216 DC*R                   MOVE *ON       DSMTCH
+216 DC*R                   ELSE
+216 DC*R                   MOVE *OFF      DSMTCH
+216 DC*R                   ENDIF
+216 DC*R                   ENDDO
+216 DC*
+216 DC*     Quit if it doesn't.
+216 DC*
+216 DC*R         TMPFLG    IFEQ *OFF
+216 DC*R                   LEAVE
+216 DC*R                   ENDIF
+     C*
+     C*     Loop through reserved slots to fulfill bulk pick.
+     C*
+     CSR                   MOVE 'A '      KYSTAT
+     CSR                   MOVE 'N'       KYPICK
+     CSR         KEYSL3    SETLLSLOT3
+     CSR         FOREVR    DOUNEFOREVR                     DO - IN1
+     CSR         KEYSL3    READESLOT3                    77
+     CSR         *IN77     IFEQ *ON
+216 ACSR                   MOVE *ON       TMPFLG
+     CSR                   LEAVE                           LEAVE - IN1
+     CSR                   ENDIF
+     C*
+     C*        Ignore slot if no normal stock or past expiration date.
+     C*
+     CSR         SLSTK1    IFLE 0
+     CSR         SLEXPD    ORNE 0
+     CSR         SLEXPD    ANDLTTODAY
+     CSR                   ITER
+     CSR                   ENDIF
+216 AC*
+216 AC*     Calculate quantity available in slot.
+216 AC*
+216 ACSR                   EXSR AVAIL
+216 AC*
+216 ACSR         AVAIL1    IFLE 0
+216 ACSR                   ITER
+216 ACSR                   ENDIF
+216 AC*
+216 AC*     Save slot information and available quantities.
+216 AC*
+216 ACSR                   Z-ADDSLPRTY    KYPRTY
+216 ACSR                   Z-ADDSLEXPD    KYEXPD
+216 ACSR                   Z-ADDSLENTD    KYENTD
+216 ACSR                   MOVE SLWHDP    KYWHDP
+216 ACSR                   MOVE SLSTYP    KYSTYP
+216 ACSR                   MOVE SLAISL    KYAISL
+216 ACSR                   Z-ADDSLPSEQ    KYPSEQ
+216 ACSR                   Z-ADDSLRLVL    KYRLVL
+216 ACSR                   MOVE SLHAND    KYHAND
+216 AC*
+216 AC*     Calculate available cube.
+216 AC*
+216 ACSR         AVAIL1    MULT ITCUBE    C#CUBE
+216 AC*
+216 AC*     Slot does not have enough for bulk pick.  Look for other
+216 AC*     slot with same date.
+216 AC*
+216 ACSR                   MOVE *OFF      FOUND
+216 ACSR         C#CUBE    IFLT S#CUBE
+216 AC*
+216 AC*     Loop through slots with same priority and dates.
+216 AC*
+216 ACSR         FOREVR    DOUNEFOREVR                     DO - IN2
+216 ACSR         KEYS3B    READESLOT3                    76
+216 ACSR         *IN76     IFEQ *ON
+216 ACSR                   LEAVE
+216 ACSR                   ENDIF
+216 AC*
+216 AC*        Ignore slot if past expiration date.
+216 AC*
+216 ACSR         SLSTK1    IFLE 0
+216 MCSR         SLEXPD    ORNE 0
+216 ACSR         SLEXPD    ANDLTTODAY
+216 ACSR                   ITER
+216 ACSR                   ENDIF
+216 AC*
+216 AC*        Calculate quantity available in slot.
+216 AC*
+216 ACSR                   EXSR AVAIL
+216 ACSR         AVAIL1    IFLE 0
+216 ACSR                   ITER
+216 ACSR                   ENDIF
+216 AC*
+216 AC*     Calculate available cube.
+216 AC*
+216 ACSR         AVAIL1    MULT ITCUBE    C#CUBE
+216 AC*
+216 AC*     Found enough for bulk pick.  Take and run.
+216 AC*
+216 ACSR         C#CUBE    IFGE S#CUBE
+216 ACSR                   MOVE *ON       FOUND
+216 ACSR                   LEAVE
+216 ACSR                   ENDIF
+216 AC*
+216 ACSR                   ENDDO                           ENDDO - IN2 R
+216 AC*
+216 AC*     Found enough for bulk pick.  Take and run.
+216 AC*
+216 ACSR                   ELSE
+216 ACSR                   MOVE *ON       FOUND
+216 ACSR                   ENDIF
+216 AC*
+216 AC*   We did not find any slot that met bulk pick criteria.
+216 AC*
+216 ACSR         FOUND     IFEQ *OFF
+216 ACSR                   MOVE *ON       TMPFLG
+216 ACSR                   LEAVE                           Leave IN1 loop
+216 ACSR                   ENDIF
+216 DC*
+216 DC*        Get matching slot tie/high definition.
+216 DC*
+216 DC*R                   MOVE *OFF      TMPFLG
+216 DC*R         1         DO   LSTDEF    CURDEF
+216 DC*R         CURDEF    OCUR DEFS
+216 DC*R         SLSDEF    IFEQ DSSDEF
+216 DC*R         DSMTCH    ANDEQ*ON
+216 DC*R                   MOVE *ON       TMPFLG
+216 DC*R                   LEAVE
+216 DC*R                   ENDIF
+216 DC*R                   ENDDO
+216 DC*
+216 DC*       Ignore slot if no matching definition.
+216 DC*
+216 DC*R         TMPFLG    IFEQ *OFF
+216 DC*R                   ITER
+216 DC*R                   ENDIF
+216 AC*
+216 AC*   Get "Normal" Tie/High definitions for item.
+216 AC*
+216 ACSR         KEYDEF    CHAINITEMDEF1             77
+216 ACSR         *IN77     IFEQ *OFF
+216 ACSR         1         OCUR DEFS
+216 ACSR                   MOVE IDSDEF    DSSDEF
+216 ACSR                   Z-ADDIDTIE     DSTIE
+216 ACSR                   Z-ADDIDHIGH    DSHIGH
+216 ACSR                   SELEC
+216 ACSR         IDTIE     WHEQ 0
+216 ACSR                   Z-ADDIDHIGH    DSQMAX
+216 ACSR         IDHIGH    WHEQ 0
+216 ACSR                   Z-ADDIDTIE     DSQMAX
+216 ACSR                   OTHER
+216 ACSR         IDTIE     MULT IDHIGH    DSQMAX
+216 ACSR                   ENDSL
+219 ACSR         AVAIL1    IFLT DSQMAX
+219 ACSR                   Z-ADDAVAIL1    DSQMAX
+219 ACSR                   ENDIF
+216 AC*
+216 AC*   If no tie/high defined, then consider qty available as
+216 AC*   one full pallet load.
+216 AC*
+216 ACSR                   ELSE
+216 ACSR                   Z-ADDAVAIL1    DSQMAX
+216 ACSR                   Z-ADD0         IDTIE
+216 ACSR                   Z-ADD0         IDHIGH
+216 ACSR                   Z-ADD0         DSTIE
+216 ACSR                   Z-ADD0         DSHIGH
+216 ACSR                   ENDIF
+     C*
+     C*       Calculate quantity to pick.
+     C*
+     CSR         DSQMAX    IFLE LEFTQ1
+     CSR                   Z-ADDDSQMAX    PICKQ1
+     CSR                   Z-ADD0         REMAIN
+     CSR                   ELSE
+     CSR                   Z-ADDLEFTQ1    PICKQ1
+     CSR         DSQMAX    SUB  LEFTQ1    REMAIN
+     CSR                   ENDIF
+216 DC*
+216 DC*       Ignore remaining qty if item doesn't have a pick slot.
+216 DC*
+216 DC*R         BLKPCT    IFEQ 0
+216 DC*R                   Z-ADD0         REMAIN
+216 DC*R                   ENDIF
+216 DC*
+216 DC*       Ignore slot if it doesn't have enough stock.
+216 DC*
+216 DC*R                   EXSR AVAIL
+216 DC*R         AVAIL1    IFLT PICKQ1
+216 DC*R         BLKPCT    IFEQ 0
+216 DC*R         AVAIL1    ANDGT0
+216 DC*R                   Z-ADDAVAIL1    PICKQ1
+216 DC*R                   ELSE
+216 DC*R                   ITER
+216 DC*R                   ENDIF
+216 DC*R                   ENDIF
+     C*
+     C*       Create label for bulk pick.
+     C*
+     CSR                   CLEARLBREC
+     CSR                   Z-ADDSLWHSE    LBWHSE
+     CSR                   MOVE SLWHDP    LBWHDP
+     CSR                   MOVE SLAISL    LBAISL
+     CSR                   Z-ADDSLLOC     LBLOC
+     CSR                   Z-ADDSLRLVL    LBRLVL
+     CSR                   MOVE SLHAND    LBHAND
+     CSR                   Z-ADDSLPSEQ    LBPSEQ
+     CSR                   MOVE SLSTYP    LBSTYP
+     CSR         LBSTYP    IFEQ 'P'
+     CSR                   Z-ADD1         LBQRYF
+     CSR                   ELSE
+     CSR                   Z-ADD0         LBQRYF
+     CSR                   ENDIF
+     CSR                   MOVE SLDISP    LBDISP
+213 ACSR                   Z-ADDAVAIL1    LBQAVL
+     CSR                   MOVE OHRTE     LBRTE
+     CSR                   Z-ADDOHSTOP    LBSTOP
+     CSR                   Z-ADDOHORD     LBORD
+     CSR                   Z-ADDODSEQ     LBSEQ
+     CSR                   MOVE ODITEM    LBITEM
+     CSR                   Z-ADD$PBAT     LBPBAT
+     CSR                   MOVE 'N'       LBUTYP
+     CSR                   MOVE ITUM1     LBUCOD
+     CSR                   Z-ADDITCUBE    LBUCUB
+     CSR         LBUCUB    MULT PICKQ1    LBCUBE
+     CSR                   Z-ADDITSWGT    LBUWGT
+     CSR         LBUWGT    MULT PICKQ1    LBSWGT
+     CSR                   Z-ADDPICKQ1    LBQALC
+     CSR                   Z-ADDREMAIN    LBQRMN
+     CSR                   Z-ADDDSTIE     LBTIE
+     CSR                   Z-ADDDSHIGH    LBHIGH
+213 ACSR                   MOVE 'S'       LBGRP1
+213 ACSR                   MOVE $POTYP    LBGRP2
+     CSR                   MOVE 'B'       LBTYPE
+     CSR                   MOVE 'A'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+213 ACSR                   Z-ADDTODAY     LBRDTE
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   WRITELBREC
+     C*
+     C*       Update slot allocation.
+     C*
+     CSR                   ADD  PICKQ1    SLALC1
+     CSR                   UPDATSLREC
+     C*
+     C*       Reduce quantity left to pick.
+     C*
+     CSR                   SUB  PICKQ1    LEFTQ1
+     CSR                   ADD  PICKQ1    TTLPK1
+     C*
+     C*       Leave slot reading loop.
+     C*
+     CSR                   LEAVE
+     CSR                   ENDDO                           ENDDO - IN1
+     C*
+     CSR                   ENDDO                           ENDDO - OUTER
+     CSR         ENDBP     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETOPT  Get picking options for department.
+     C*
+     CSR         GETOPT    BEGSR
+209 AC*
+209 AC*   Go through data structure to find options for department.
+209 AC*   If department hasn't changed then there is nothing to do.
+209 AC*
+209 ACSR         ITWHDP    IFNE #DWHDP
+209 ACSR         1         DO   LSTOPT    XOPT    20
+209 ACSR         XOPT      OCUR OPTS
+209 ACSR         #DWHDP    IFEQ ITWHDP
+209 ACSR                   LEAVE
+209 ACSR                   ENDIF
+209 ACSR                   ENDDO
+209 ACSR                   ENDIF
+209 DC*
+209 DC*   First get options from options file.
+209 DC*
+209 DC*                    MOVE '*PICK   'OPCODE
+209 DC*          KEYOP     CHAINOPTIONS              79
+209 DC*          *IN79     IFEQ *ON
+    DC*          OPBPCK    OREQ 0
+    DC*                    Z-ADD1         OPBPCK
+209 DC*                    Z-ADD0         OPBPCK
+209 DC*                    ENDIF
+209 DC*
+209 DC*   Then see if there are any overrides for the route.
+209 DC*
+209 DC*          KEYRO     CHAINRTREC                79
+209 DC*          *IN79     IFEQ *ON
+209 DC*                    MOVE OPDATA    RTDATA
+209 DC*                    ENDIF
+209 DC*
+209 DC*   Calculate bulk pick percentage.
+209 DC*
+209 DC*          RTBPCK    IFLE 0
+209 DC*                    Z-ADD0         BLKPCT  32
+209 DC*                    ELSE
+209 DC*          RTBPCK    DIV  100       BLKPCT
+209 DC*                    ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETOD   Get order detail record.
+     C*
+     CSR         GETOD     BEGSR
+     C*
+     C*   If first time, set record pointer.
+     C*
+     CSR         ODFLAG    IFEQ *OFF
+     CSR         KEYOD1    SETLLORDD1
+     CSR                   MOVE *ON       ODFLAG
+     CSR                   ENDIF
+     C*
+     C*   Try to get a 'open' detail record for order.
+     C*
+     CSR                   MOVE *OFF      STOP    1
+     CSR         STOP      DOUEQ*ON
+     CSR         EOFOD     OREQ *ON
+     CSR         KEYOD1    READEORDD1                    79
+     C*
+     C*   Set flag if there are no more detail records.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       EOFOD   1
+     CSR                   GOTO ENDODL
+     CSR                   ENDIF
+     C*
+     C*   Get item master record.
+     C*
+     CSR         KEYIT     CHAINPIRITEM              79
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE MSG,1     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ELSE
+209 ACSR                   EXSR GETOPT
+     CSR                   MOVE *ON       STOP
+     CSR                   ENDIF
+     C*
+     CSR         ENDODL    TAG
+     CSR                   ENDDO
+     C*
+     C*   If a record was found then get quantities.
+     C*
+     CSR         EOFOD     IFNE *ON
+     C*
+     C*      Convert ordered quantity to string for error msg.
+     C*
+     CSR                   MOVE '*QTY2STR'$CCMD
+     CSR                   MOVE '#PROG   '$CPRG
+     CSR                   Z-ADDODQOR1    $CQTY1
+     CSR                   Z-ADDODQOR2    $CQTY2
+     CSR                   Z-ADDODQOR3    $CQTY3
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD   8
+     CSR                   PARM           $CPRG  10
+     CSR                   PARM           $CQTY1  70
+     CSR                   PARM           $CQTY2  70
+     CSR                   PARM           $CQTY3  70
+     CSR                   PARM           $CUM1   2
+     CSR                   PARM           $CUM2   2
+     CSR                   PARM           $CUM3   2
+     CSR                   PARM           $CQSTR 10
+     CSR                   PARM           $CUSTR 17
+     CSR                   PARM           $CRTN   8
+     CSR                   PARM           $CERM
+     CSR                   MOVE $CQSTR    P1QORD
+     CSR                   MOVE *BLANKS   P1QALC
+     CSR                   MOVE *BLANKS   P1QPCK
+     C*
+     C*      Initialize quantities for picking.
+     C*
+     CSR                   Z-ADDODQOR1    LEFTQ1  50
+     CSR                   Z-ADDODQOR2    LEFTQ2  50
+     CSR                   Z-ADDODQOR3    LEFTQ3  50
+     CSR                   Z-ADD0         PICKQ1  50
+     CSR                   Z-ADD0         PICKQ2  50
+     CSR                   Z-ADD0         PICKQ3  50
+     CSR                   Z-ADD0         TTLPK1  50
+     CSR                   Z-ADD0         TTLPK2  50
+     CSR                   Z-ADD0         TTLPK3  50
+     CSR                   Z-ADD0         REMAIN  50
+     C*
+     C*      Make sure breakdown qty's are not greater than
+     C*        quantity in the unit of measure.
+     C*
+     CSR         LEFTQ3    DOWGEITUMQ3
+     CSR         ITUMQ3    ANDNE0
+     CSR                   SUB  ITUMQ3    LEFTQ3
+     CSR                   ADD  1         LEFTQ2
+     CSR                   ENDDO
+     C*
+     CSR         LEFTQ2    DOWGEITUMQ2
+     CSR         ITUMQ2    ANDNE0
+     CSR                   SUB  ITUMQ2    LEFTQ2
+     CSR                   ADD  1         LEFTQ1
+     CSR                   ENDDO
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  GETOH   Get order header record.
+     C*
+     CSR         GETOH     BEGSR
+     C*
+     C*   If first time, set record pointer.
+     C*
+     CSR         OHFLAG    IFEQ *OFF
+     CSR         KEYOH2    SETLLORDH2
+     CSR                   MOVE *ON       OHFLAG
+     CSR                   ENDIF
+     C*
+     C*   Try to get a 'open' header record.
+     C*
+     CSR         KEYOH2    READEORDH2                    79
+     C*
+     C*   Set flag if there are no more header records.
+     C*
+     CSR         *IN79     IFEQ *ON
+     CSR                   MOVE *ON       EOFOH
+     CSR                   ENDIF
+     C*
+     CSR                   MOVELOHCNAM    P1CNAM
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PICKF   Pick fixed item.
+     C*
+     C*  Note:
+     C*
+     C*    A fixed item is only allowed to have one picking slot.
+     C*    The entire quantity needed is allocated from this slot
+     C*    whether or not there is enough physical stock in the slot.
+     C*    Because a general allocation has already been done we know
+     C*    that there should be enough quantity in the warehouse to
+     C*    fill the quantity that is needed. Replenishments will be
+     C*    determined when the labels are printed.
+     C*
+     C*    During general allocation a check was made to see if a
+     C*    carton needed to be broken to fill the order. If one did
+     C*    the stock quantity was adjusted to reflect this. However,
+     C*    since we allocate everything from one picking slot we will
+     C*    not know what is actually in the slot until picking time.
+     C*    Therefore, we wait until then to break a carton for the
+     C*    slot.
+     C*
+     CSR         PICKF     BEGSR
+     C*
+     C*   Get the picking slot for the item.
+     C*
+     CSR                   MOVE 'A '      KYSTAT
+     CSR                   MOVE 'Y'       KYPICK
+     CSR         KEYSL3    SETLLSLOT3
+     CSR         KEYSL3    READESLOT3                    77
+408 AC*
+408 AC*      Make sure picking slot date is not expired.
+408 AC*      If it is treat as if picking slot does not exist.
+408 AC*
+408 ACSR         *IN77     IFEQ *OFF
+408 ACSR         ITFLGD    ANDEQ'Y'
+408 ACSR         SLEXPD    ANDNE0
+408 ACSR         SLEXPD    ANDLTTODAY
+408 ACSR                   MOVE *ON       *IN77
+408 ACSR                   ENDIF
+     C*
+     CSR                   SELEC
+     C*
+     C*   Picking slot does not exist.  Use bulk pick routine to pick
+     C*   everything from replenishment slots. If everything could not
+     C*   be picked then print an error.
+     C*
+     CSR         *IN77     WHEQ *ON
+     C*
+     C*      Pick everything from replenishment slots.
+     C*
+FIX ACSR                   EXSR PICKRP
+     C*
+209 DC*          *LIKE     DEFN BLKPCT    SAVPCT
+209 DC*                    Z-ADDBLKPCT    SAVPCT
+     C*
+209 ACSR         *LIKE     DEFN #DBPCT    BLKPCT
+     C*
+FIX DC*                    Z-ADD0         BLKPCT
+FIX DC*                    EXSR BULKPK
+209 DC*                    Z-ADDSAVPCT    BLKPCT
+FIX DC*
+FIX DC*      If everything wasn't picked then print an error.
+FIX DC*
+FIX DC*          LEFTQ1    IFNE 0
+FIX DC*          LEFTQ2    ORNE 0
+FIX DC*          LEFTQ3    ORNE 0
+FIX DC*
+FIX DC*         Unallocate qty left because it couldn't be allocated.
+FIX DC*
+FIX DC*                    EXSR UNALOC
+FIX DC*
+FIX DC*         Convert picked quantity to string for error msg.
+FIX DC*
+FIX DC*                    MOVE '*QTY2STR'$CCMD
+FIX DC*                    MOVE '#PROG   '$CPRG
+FIX DC*                    Z-ADDPICKQ1    $CQTY1
+FIX DC*                    Z-ADDPICKQ2    $CQTY2
+FIX DC*                    Z-ADDPICKQ3    $CQTY3
+FIX DC*                    CALL 'CVTQTY'
+FIX DC*                    PARM           $CCMD
+FIX DC*                    PARM           $CPRG
+FIX DC*                    PARM           $CQTY1
+FIX DC*                    PARM           $CQTY2
+FIX DC*                    PARM           $CQTY3
+FIX DC*                    PARM           $CUM1
+FIX DC*                    PARM           $CUM2
+FIX DC*                    PARM           $CUM3
+FIX DC*                    PARM           $CQSTR
+FIX DC*                    PARM           $CUSTR
+FIX DC*                    PARM           $CRTN
+FIX DC*                    PARM           $CERM
+FIX DC*                    MOVE $CQSTR    P1QPCK
+FIX DC*
+FIX DC*        Print error message.
+FIX DC*
+FIX DC*                    MOVE MSG,4     P1MSG
+FIX DC*                    EXSR PRTERR
+FIX DC*                    ENDIF
+     C*
+     C*    Picking slot exists so allocate everything.
+     C*
+     CSR                   OTHER
+     C*
+     C*      Check for bulk pick for normal quantity.
+     C*
+209 DC*          BLKPCT    IFGT 0
+215 ACSR         ITFLGB    IFEQ 'Y'
+215 MCSR         #DBPCT    ANDGT0
+     CSR         LEFTQ1    ANDGT0
+209 ACSR                   Z-ADD#DBPCT    BLKPCT
+     CSR                   EXSR BULKPK
+209 ACSR                   MOVE 'A '      KYSTAT
+209 ACSR                   MOVE 'Y'       KYPICK
+209 ACSR         KEYSL3    SETLLSLOT3
+209 ACSR         KEYSL3    READESLOT3                    77
+     CSR                   ENDIF
+     C*
+     C*      Then allocate the rest from the pick slot.
+     C*
+     CSR                   Z-ADDLEFTQ1    PICKQ1
+     CSR                   Z-ADDLEFTQ2    PICKQ2
+     CSR                   Z-ADDLEFTQ3    PICKQ3
+     C*
+     C*      Create picking label(s) and update totals.
+     C*
+FIX ACSR                   MOVE 'O'       LBLTYP  1
+213 ACSR                   Z-ADD0         LBLQAV  50
+     CSR                   EXSR POST
+     CSR                   Z-ADD0         LEFTQ1
+     CSR                   Z-ADD0         LEFTQ2
+     CSR                   Z-ADD0         LEFTQ3
+     CSR                   ADD  PICKQ1    TTLPK1
+     CSR                   ADD  PICKQ2    TTLPK2
+     CSR                   ADD  PICKQ3    TTLPK3
+     C*
+     CSR                   ENDSL
+     C*
+     CSR         PICKFE    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PICKP   Pick PIR item.
+     C*
+     C*  Note:  All PIR slots are picking slots. There are no
+     C*         replenishment slots for a PIR item. Therefore, we
+     C*         allocate as much as we can from a slot and then move
+     C*         on to the next one until the entire quantity is
+     C*         allocated. Because a general allocation has already
+     C*         been done we should be able to allocate everything.
+     C*         If we can't then there is an error between the ITEMQTY
+     C*         totals and the slot totals for the item.
+     C*
+     C*         If a carton has to be broken the stock quantity is
+     C*         adjusted for the slot. This adjustment has already
+     C*         been done at the warehouse level when the item was
+     C*         initially allocated.
+     C*
+     CSR         PICKP     BEGSR
+     C*
+     C*   Loop through picking slots for item.
+     C*
+     CSR                   MOVE 'A '      KYSTAT
+     CSR                   MOVE 'Y'       KYPICK
+     CSR         KEYSL3    SETLLSLOT3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYSL3    READESLOT3                    77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Ignore slot if past expiration date.
+     C*
+     CSR         SLEXPD    IFNE 0
+     CSR         SLEXPD    ANDLTTODAY
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Calculate quantity available in slot.
+     C*
+     CSR                   EXSR AVAIL
+FX3 ACSR         *LIKE     DEFN AVAIL1    TMAVL1
+FX3 ACSR         *LIKE     DEFN AVAIL2    TMAVL2
+FX3 ACSR         *LIKE     DEFN AVAIL3    TMAVL3
+FX3 ACSR                   Z-ADDAVAIL1    TMAVL1
+FX3 ACSR                   Z-ADDAVAIL2    TMAVL2
+FX3 ACSR                   Z-ADDAVAIL3    TMAVL3
+FX3 DC*
+FX3 DC*     Ignore slot if nothing is available.
+FX3 DC*
+FX3 DC*          AVAIL1    IFLE 0
+FX3 DC*          AVAIL2    ANDLE0
+FX3 DC*          AVAIL3    ANDLE0
+FX3 DC*                    ITER
+FX3 DC*                    ENDIF
+FX3 AC*
+FX3 AC*     Ignore slot if nothing can be picked.
+FX3 AC*
+FX3 ACSR                   EXSR PICK0
+FX3 ACSR         PICKQ1    IFEQ 0
+FX3 ACSR         PICKQ2    ANDEQ0
+FX3 ACSR         PICKQ3    ANDEQ0
+FX3 DCSR                   ITER
+FX3 ACSR                   ENDIF
+FX3 ACSR                   Z-ADDTMAVL1    AVAIL1
+FX3 ACSR                   Z-ADDTMAVL2    AVAIL2
+FX3 ACSR                   Z-ADDTMAVL3    AVAIL3
+FX2 AC*
+FX2 AC*     Save slot information and available quantities.
+FX2 AC*
+FX2 ACSR                   Z-ADDSLPRTY    KYPRTY
+FX2 ACSR                   Z-ADDSLEXPD    KYEXPD
+FX2 ACSR                   Z-ADDSLENTD    KYENTD
+FX2 ACSR                   MOVE SLWHDP    KYWHDP
+FX2 ACSR                   MOVE SLSTYP    KYSTYP
+FX2 ACSR                   MOVE SLAISL    KYAISL
+FX2 ACSR                   Z-ADDSLPSEQ    KYPSEQ
+FX2 ACSR                   Z-ADDSLRLVL    KYRLVL
+FX2 ACSR                   MOVE SLHAND    KYHAND
+FX2 AC*
+FX2 ACSR         *LIKE     DEFN AVAIL1    SVAVL1
+FX2 ACSR         *LIKE     DEFN AVAIL2    SVAVL2
+FX2 ACSR         *LIKE     DEFN AVAIL3    SVAVL3
+FX3 ACSR                   Z-ADDAVAIL1    SVAVL1
+FX3 ACSR                   Z-ADDAVAIL2    SVAVL2
+FX3 ACSR                   Z-ADDAVAIL3    SVAVL3
+FX2 AC*
+FX2 AC*     Loop through slots with same priority and dates.
+FX2 AC*     We want the slot with the least quantity available.
+FX2 AC*
+FX2 ACSR         FOREVR    DOUNEFOREVR
+FX2 ACSR         KEYS3B    READESLOT3                    76
+FX2 ACSR         *IN76     IFEQ *ON
+FX2 ACSR                   LEAVE
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*        Ignore slot if past expiration date.
+FX2 AC*
+FX2 ACSR         SLEXPD    IFNE 0
+FX2 ACSR         SLEXPD    ANDLTTODAY
+FX2 ACSR                   ITER
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*        Calculate quantity available in slot.
+FX2 AC*
+FX2 ACSR                   EXSR AVAIL
+FX3 ACSR                   Z-ADDAVAIL1    TMAVL1
+FX3 ACSR                   Z-ADDAVAIL2    TMAVL2
+FX3 ACSR                   Z-ADDAVAIL3    TMAVL3
+FX3 DC*
+FX3 DC*        Ignore slot if nothing is available.
+FX3 DC*
+FX3 DC*          AVAIL1    IFLE 0
+FX3 DC*          AVAIL2    ANDLE0
+FX3 DC*          AVAIL3    ANDLE0
+FX3 DC*                    ITER
+FX3 DC*                    ENDIF
+FX3 AC*
+FX3 AC*     Ignore slot if nothing can be picked.
+FX3 AC*
+FX3 ACSR                   EXSR PICK0
+FX3 ACSR         PICKQ1    IFEQ 0
+FX3 ACSR         PICKQ2    ANDEQ0
+FX3 ACSR         PICKQ3    ANDEQ0
+FX3 DCSR                   ITER
+FX3 ACSR                   ENDIF
+FX3 ACSR                   Z-ADDTMAVL1    AVAIL1
+FX3 ACSR                   Z-ADDTMAVL2    AVAIL2
+FX3 ACSR                   Z-ADDTMAVL3    AVAIL3
+FX2 AC*
+FX2 AC*        If this slot has the least qty available then
+FX2 AC*        save slot information and available quantities.
+FX2 AC*
+FX2 ACSR         AVAIL1    IFLT SVAVL1
+FX2 ACSR         AVAIL1    OREQ SVAVL1
+FX2 ACSR         AVAIL2    ANDLTSVAVL2
+FX2 ACSR         AVAIL1    OREQ SVAVL1
+FX2 ACSR         AVAIL2    ANDEQSVAVL2
+FX2 ACSR         AVAIL3    ANDLTSVAVL3
+FX2 AC*
+FX2 ACSR                   MOVE SLWHDP    KYWHDP
+FX2 ACSR                   MOVE SLSTYP    KYSTYP
+FX2 ACSR                   MOVE SLAISL    KYAISL
+FX2 ACSR                   Z-ADDSLPSEQ    KYPSEQ
+FX2 ACSR                   Z-ADDSLRLVL    KYRLVL
+FX2 ACSR                   MOVE SLHAND    KYHAND
+FX2 AC*
+FX2 ACSR                   Z-ADDAVAIL1    SVAVL1
+FX2 ACSR                   Z-ADDAVAIL2    SVAVL2
+FX2 ACSR                   Z-ADDAVAIL3    SVAVL3
+FX2 AC*
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 ACSR                   ENDDO
+FX2 AC*
+FX2 AC*     Get the selected slot.
+FX2 AC*
+FX2 ACSR         KEYS3C    CHAINSLOT3                76
+FX2 ACSR         *IN76     IFEQ *ON
+FX2 ACSR                   ITER
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*     Ignore slot if past expiration date.
+FX2 AC*
+FX2 ACSR         SLEXPD    IFNE 0
+FX2 ACSR         SLEXPD    ANDLTTODAY
+FX2 ACSR                   ITER
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*     Calculate quantity available in slot.
+FX2 AC*
+FX2 ACSR                   EXSR AVAIL
+FX3 AC*
+FX3 AC*     Pick quantity needed.
+FX3 AC*
+FX3 ACSR                   EXSR PICK0
+FX3 DC*
+FX3 DC*     Initialize pick quantities.
+FX3 DC*
+FX3 DC*                    Z-ADD0         PICKQ1
+FX3 DC*                    Z-ADD0         PICKQ2
+FX3 DC*                    Z-ADD0         PICKQ3
+FX3 DC*
+FX3 DC*     Try to pick normal quantity.
+FX3 DC*
+FX3 DC*          LEFTQ1    IFGT 0
+FX3 DC*                    EXSR PICK1
+FX3 DC*                    ENDIF
+FX3 DC*
+FX3 DC*     Try to pick breakdown 1 quantity.
+FX3 DC*
+FX3 DC*          LEFTQ2    IFGT 0
+FX3 DC*                    EXSR PICK2
+FX3 DC*                    ENDIF
+FX3 DC*
+FX3 DC*     Try to pick breakdown 2 quantity.
+FX3 DC*
+FX3 DC*          LEFTQ3    IFGT 0
+FX3 DC*                    EXSR PICK3
+FX3 DC*                    ENDIF
+     C*
+     C*     If something was picked create picking label(s).
+     C*
+     CSR         PICKQ1    IFNE 0
+     CSR         PICKQ2    ORNE 0
+     CSR         PICKQ3    ORNE 0
+FIX ACSR                   MOVE 'O'       LBLTYP
+213 ACSR                   Z-ADD0         LBLQAV
+     CSR                   EXSR POST
+     CSR                   SUB  PICKQ1    LEFTQ1
+     CSR                   SUB  PICKQ2    LEFTQ2
+     CSR                   SUB  PICKQ3    LEFTQ3
+     CSR                   ADD  PICKQ1    TTLPK1
+     CSR                   ADD  PICKQ2    TTLPK2
+     CSR                   ADD  PICKQ3    TTLPK3
+     CSR                   ENDIF
+     C*
+     C*     No need to look further, if no quantity left to pick.
+     C*
+     CSR         LEFTQ1    IFEQ 0
+     CSR         LEFTQ2    ANDEQ0
+     CSR         LEFTQ3    ANDEQ0
+     CSR                   LEAVE
+     CSR                   ENDIF
+FX2 AC*
+FX2 AC*     Reset pointer to slot file to the first slot that has
+FX2 AC*     the priority and dates of the slot just used.
+FX2 AC*
+FX2 ACSR         KEYS3B    SETLLSLOT3
+     C*
+     CSR                   ENDDO
+     C*
+     C*   If everything wasn't picked then print an error.
+     C*
+     CSR         LEFTQ1    IFNE 0
+     CSR         LEFTQ2    ORNE 0
+     CSR         LEFTQ3    ORNE 0
+     C*
+     C*      Unallocate quantity left because it couldn't be allocated.
+     C*
+     CSR                   EXSR UNALOC
+     C*
+     C*      Convert picked quantity to string for error msg.
+     C*
+     CSR                   MOVE '*QTY2STR'$CCMD
+     CSR                   MOVE '#PROG   '$CPRG
+     CSR                   Z-ADDPICKQ1    $CQTY1
+     CSR                   Z-ADDPICKQ2    $CQTY2
+     CSR                   Z-ADDPICKQ3    $CQTY3
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD
+     CSR                   PARM           $CPRG
+     CSR                   PARM           $CQTY1
+     CSR                   PARM           $CQTY2
+     CSR                   PARM           $CQTY3
+     CSR                   PARM           $CUM1
+     CSR                   PARM           $CUM2
+     CSR                   PARM           $CUM3
+     CSR                   PARM           $CQSTR
+     CSR                   PARM           $CUSTR
+     CSR                   PARM           $CRTN
+     CSR                   PARM           $CERM
+     CSR                   MOVE $CQSTR    P1QPCK
+     C*
+     C*      Print error message.
+     C*
+     CSR                   MOVE MSG,4     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ENDIF
+     C*
+     CSR         PICKPE    ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PICKRP  Pick item without a pick slot.
+     C*
+     C*  Note:  Fixed items without a pick slot are allocated like PIR
+     C*         items but picked as a bulk pick.    Therefore, we
+     C*         allocate as much as we can from a slot and then move
+     C*         on to the next one until the entire quantity is
+     C*         allocated. Because a general allocation has already
+     C*         been done we should be able to allocate everything.
+     C*         If we can't then there is an error between the ITEMQTY
+     C*         totals and the slot totals for the item.
+     C*
+     C*         If a carton has to be broken the stock quantity is
+     C*         adjusted for the slot. This adjustment has already
+     C*         been done at the warehouse level when the item was
+     C*         initially allocated.
+     C*
+     CSR         PICKRP    BEGSR
+     C*
+     C*   Loop through picking slots for item.
+     C*
+     CSR                   MOVE 'A '      KYSTAT
+FIX DC*                    MOVE 'Y'       KYPICK
+FIX MCSR                   MOVE 'N'       KYPICK
+     CSR         KEYSL3    SETLLSLOT3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYSL3    READESLOT3                    77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Ignore slot if past expiration date.
+     C*
+     CSR         SLEXPD    IFNE 0
+     CSR         SLEXPD    ANDLTTODAY
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Calculate quantity available in slot.
+     C*
+     CSR                   EXSR AVAIL
+FX3 ACSR                   Z-ADDAVAIL1    TMAVL1
+FX3 ACSR                   Z-ADDAVAIL2    TMAVL2
+FX3 ACSR                   Z-ADDAVAIL3    TMAVL3
+FX3 DC*
+FX3 DC*     Ignore slot if nothing is available.
+FX3 DC*
+FX3 DC*          AVAIL1    IFLE 0
+FX3 DC*          AVAIL2    ANDLE0
+FX3 DC*          AVAIL3    ANDLE0
+FX3 DC*                    ITER
+FX3 DC*                    ENDIF
+FX3 AC*
+FX3 AC*     Ignore slot if nothing can be picked.
+FX3 AC*
+FX3 ACSR                   EXSR PICK0
+FX3 ACSR         PICKQ1    IFEQ 0
+FX3 ACSR         PICKQ2    ANDEQ0
+FX3 ACSR         PICKQ3    ANDEQ0
+FX3 ACSR                   ITER
+FX3 ACSR                   ENDIF
+FX3 ACSR                   Z-ADDTMAVL1    AVAIL1
+FX3 ACSR                   Z-ADDTMAVL2    AVAIL2
+FX3 ACSR                   Z-ADDTMAVL3    AVAIL3
+FX2 AC*
+FX2 AC*     Save slot information and available quantities.
+FX2 AC*
+FX2 ACSR                   Z-ADDSLPRTY    KYPRTY
+FX2 ACSR                   Z-ADDSLEXPD    KYEXPD
+FX2 ACSR                   Z-ADDSLENTD    KYENTD
+FX2 ACSR                   MOVE SLWHDP    KYWHDP
+FX2 ACSR                   MOVE SLSTYP    KYSTYP
+FX2 ACSR                   MOVE SLAISL    KYAISL
+FX2 ACSR                   Z-ADDSLPSEQ    KYPSEQ
+FX2 ACSR                   Z-ADDSLRLVL    KYRLVL
+FX2 ACSR                   MOVE SLHAND    KYHAND
+FX2 AC*
+FX2 ACSR                   Z-ADDAVAIL1    SVAVL1
+FX2 ACSR                   Z-ADDAVAIL2    SVAVL2
+FX2 ACSR                   Z-ADDAVAIL3    SVAVL3
+FX2 AC*
+FX2 AC*     Loop through slots with same priority and dates.
+FX2 AC*     We want the slot with the least quantity available.
+FX2 AC*
+FX2 ACSR         FOREVR    DOUNEFOREVR
+FX2 ACSR         KEYS3B    READESLOT3                    76
+FX2 ACSR         *IN76     IFEQ *ON
+FX2 ACSR                   LEAVE
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*        Ignore slot if past expiration date.
+FX2 AC*
+FX2 ACSR         SLEXPD    IFNE 0
+FX2 ACSR         SLEXPD    ANDLTTODAY
+FX2 ACSR                   ITER
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*        Calculate quantity available in slot.
+FX2 AC*
+FX2 ACSR                   EXSR AVAIL
+FX3 ACSR                   Z-ADDAVAIL1    TMAVL1
+FX3 ACSR                   Z-ADDAVAIL2    TMAVL2
+FX3 ACSR                   Z-ADDAVAIL3    TMAVL3
+FX3 DC*
+FX3 DC*        Ignore slot if nothing is available.
+FX3 DC*
+FX3 DC*          AVAIL1    IFLE 0
+FX3 DC*          AVAIL2    ANDLE0
+FX3 DC*          AVAIL3    ANDLE0
+FX3 DC*                    ITER
+FX3 DC*                    ENDIF
+FX3 AC*
+FX3 AC*     Ignore slot if nothing can be picked.
+FX3 AC*
+FX3 ACSR                   EXSR PICK0
+FX3 ACSR         PICKQ1    IFEQ 0
+FX3 ACSR         PICKQ2    ANDEQ0
+FX3 ACSR         PICKQ3    ANDEQ0
+FX3 ACSR                   ITER
+FX3 ACSR                   ENDIF
+FX3 ACSR                   Z-ADDTMAVL1    AVAIL1
+FX3 ACSR                   Z-ADDTMAVL2    AVAIL2
+FX3 ACSR                   Z-ADDTMAVL3    AVAIL3
+FX2 AC*
+FX2 AC*        If this slot has the least qty available then
+FX2 AC*        save slot information and available quantities.
+FX2 AC*
+FX2 ACSR         AVAIL1    IFLT SVAVL1
+FX2 ACSR         AVAIL1    OREQ SVAVL1
+FX2 ACSR         AVAIL2    ANDLTSVAVL2
+FX2 ACSR         AVAIL1    OREQ SVAVL1
+FX2 ACSR         AVAIL2    ANDEQSVAVL2
+FX2 ACSR         AVAIL3    ANDLTSVAVL3
+FX2 AC*
+FX2 ACSR                   MOVE SLWHDP    KYWHDP
+FX2 ACSR                   MOVE SLSTYP    KYSTYP
+FX2 ACSR                   MOVE SLAISL    KYAISL
+FX2 ACSR                   Z-ADDSLPSEQ    KYPSEQ
+FX2 ACSR                   Z-ADDSLRLVL    KYRLVL
+FX2 ACSR                   MOVE SLHAND    KYHAND
+FX2 AC*
+FX2 ACSR                   Z-ADDAVAIL1    SVAVL1
+FX2 ACSR                   Z-ADDAVAIL2    SVAVL2
+FX2 ACSR                   Z-ADDAVAIL3    SVAVL3
+FX2 AC*
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 ACSR                   ENDDO
+FX2 AC*
+FX2 AC*     Get the selected slot.
+FX2 AC*
+FX2 ACSR         KEYS3C    CHAINSLOT3                76
+FX2 ACSR         *IN76     IFEQ *ON
+FX2 ACSR                   ITER
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*     Ignore slot if past expiration date.
+FX2 AC*
+FX2 ACSR         SLEXPD    IFNE 0
+FX2 ACSR         SLEXPD    ANDLTTODAY
+FX2 ACSR                   ITER
+FX2 ACSR                   ENDIF
+FX2 AC*
+FX2 AC*     Calculate quantity available in slot.
+FX2 AC*
+FX2 ACSR                   EXSR AVAIL
+213 ACSR                   Z-ADDAVAIL1    TMAVL1
+213 ACSR                   Z-ADDAVAIL2    TMAVL2
+213 ACSR                   Z-ADDAVAIL3    TMAVL3
+FX3 AC*
+FX3 AC*     Pick needed quantity.
+FX3 AC*
+FX3 ACSR                   EXSR PICK0
+FX3 DC*
+FX3 DC*     Initialize pick quantities.
+FX3 DC*
+FX3 DC*
+FX3 DC*                    Z-ADD0         PICKQ1
+FX3 DC*                    Z-ADD0         PICKQ2
+FX3 DC*                    Z-ADD0         PICKQ3
+FX3 DC*
+FX3 DC*     Try to pick normal quantity.
+FX3 DC*
+FX3 DC*          LEFTQ1    IFGT 0
+FX3 DC*                    EXSR PICK1
+FX3 DC*                    ENDIF
+FX3 DC*
+FX3 DC*     Try to pick breakdown 1 quantity.
+FX3 DC*
+FX3 DC*          LEFTQ2    IFGT 0
+FX3 DC*                    EXSR PICK2
+FX3 DC*                    ENDIF
+FX3 DC*
+FX3 DC*     Try to pick breakdown 2 quantity.
+FX3 DC*
+FX3 DC*          LEFTQ3    IFGT 0
+FX3 DC*                    EXSR PICK3
+FX3 DC*                    ENDIF
+     C*
+     C*     If something was picked create picking label(s).
+     C*
+     CSR         PICKQ1    IFNE 0
+     CSR         PICKQ2    ORNE 0
+     CSR         PICKQ3    ORNE 0
+FIX DC*                    MOVE 'O'       LBLTYP
+FIX MCSR                   MOVE 'B'       LBLTYP
+213 ACSR                   Z-ADDTMAVL1    LBLQAV
+     CSR                   EXSR POST
+     CSR                   SUB  PICKQ1    LEFTQ1
+     CSR                   SUB  PICKQ2    LEFTQ2
+     CSR                   SUB  PICKQ3    LEFTQ3
+     CSR                   ADD  PICKQ1    TTLPK1
+     CSR                   ADD  PICKQ2    TTLPK2
+     CSR                   ADD  PICKQ3    TTLPK3
+     CSR                   ENDIF
+     C*
+     C*     No need to look further, if no quantity left to pick.
+     C*
+     CSR         LEFTQ1    IFEQ 0
+     CSR         LEFTQ2    ANDEQ0
+     CSR         LEFTQ3    ANDEQ0
+     CSR                   LEAVE
+     CSR                   ENDIF
+FX2 AC*
+FX2 AC*     Reset pointer to slot file to the first slot that has
+FX2 AC*     the priority and dates of the slot just used.
+FX2 AC*
+FX2 ACSR         KEYS3B    SETLLSLOT3
+     C*
+     CSR                   ENDDO
+     C*
+     C*   If everything wasn't picked then print an error.
+     C*
+     CSR         LEFTQ1    IFNE 0
+     CSR         LEFTQ2    ORNE 0
+     CSR         LEFTQ3    ORNE 0
+     C*
+     C*      Unallocate quantity left because it couldn't be allocated.
+     C*
+     CSR                   EXSR UNALOC
+     C*
+     C*      Convert picked quantity to string for error msg.
+     C*
+     CSR                   MOVE '*QTY2STR'$CCMD
+     CSR                   MOVE '#PROG   '$CPRG
+     CSR                   Z-ADDPICKQ1    $CQTY1
+     CSR                   Z-ADDPICKQ2    $CQTY2
+     CSR                   Z-ADDPICKQ3    $CQTY3
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD
+     CSR                   PARM           $CPRG
+     CSR                   PARM           $CQTY1
+     CSR                   PARM           $CQTY2
+     CSR                   PARM           $CQTY3
+     CSR                   PARM           $CUM1
+     CSR                   PARM           $CUM2
+     CSR                   PARM           $CUM3
+     CSR                   PARM           $CQSTR
+     CSR                   PARM           $CUSTR
+     CSR                   PARM           $CRTN
+     CSR                   PARM           $CERM
+     CSR                   MOVE $CQSTR    P1QPCK
+     C*
+     C*      Print error message.
+     C*
+     CSR                   MOVE MSG,4     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PICKS   Pick special order item.
+     C*
+     C*  Note: Special order items will be treated similarly too
+     C*        PIR items.  However, we are not limited to picking
+     C*        slots (although non-picking slots will be searched
+     C*        first) but we are limited to slots with a matching
+     C*        status code. Also, a general allocation was not done
+     C*        because these slots are considered inactive slots which
+     C*        can't be allocated from. Because this is a special order
+     C*        we should be able to allocate everything. If we can't,
+     C*        someone will have to determine why we were told to
+     C*        pick more stock than was set aside for the special
+     C*        orders.
+     C*
+     C*        If a carton has to be broken the stock quantity is
+     C*        adjusted for the slot. This adjustment will be made
+     C*        at the warehouse level when the item is picked.
+     C*
+     CSR         PICKS     BEGSR
+     C*
+     C*   Loop through picking slots for item.
+     C*
+     C*     Note: This looks at both pick and reserve slots.
+     C*
+     CSR                   MOVE ODSPCL    KYSTAT
+     CSR         KEYSPC    SETLLSLOT3
+     CSR         FOREVR    DOUNEFOREVR
+     CSR         KEYSPC    READESLOT3                    77
+     CSR         *IN77     IFEQ *ON
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     C*     Ignore slot if past expiration date.
+     C*
+     CSR         SLEXPD    IFNE 0
+     CSR         SLEXPD    ANDLTTODAY
+     CSR                   ITER
+     CSR                   ENDIF
+     C*
+     C*     Calculate quantity available in slot.
+     C*
+     CSR                   EXSR AVAIL
+     C*
+     CSR                   Z-ADD0         PICKQ1
+     CSR                   Z-ADD0         PICKQ2
+     CSR                   Z-ADD0         PICKQ3
+     C*
+     C*     Try to pick normal quantity.
+     C*
+     CSR         LEFTQ1    IFGT 0
+     CSR                   EXSR PICK1
+     CSR                   ENDIF
+     C*
+     C*     Try to pick breakdown 1 quantity.
+     C*
+     CSR         LEFTQ2    IFGT 0
+     CSR                   EXSR PICK2
+     CSR                   ENDIF
+     C*
+     C*     Try to pick breakdown 2 quantity.
+     C*
+     CSR         LEFTQ3    IFGT 0
+     CSR                   EXSR PICK3
+     CSR                   ENDIF
+     C*
+     C*     If something was picked create picking label(s).
+     C*
+     CSR         PICKQ1    IFNE 0
+     CSR         PICKQ2    ORNE 0
+     CSR         PICKQ3    ORNE 0
+FIX ACSR                   MOVE 'O'       LBLTYP
+213 ACSR                   Z-ADD0         LBLQAV
+     CSR                   EXSR POST
+     CSR                   SUB  PICKQ1    LEFTQ1
+     CSR                   SUB  PICKQ2    LEFTQ2
+     CSR                   SUB  PICKQ3    LEFTQ3
+     CSR                   ADD  PICKQ1    TTLPK1
+     CSR                   ADD  PICKQ2    TTLPK2
+     CSR                   ADD  PICKQ3    TTLPK3
+     CSR                   ENDIF
+     C*
+     C*     No need to look further, if no quantity left to pick.
+     C*
+     CSR         LEFTQ1    IFEQ 0
+     CSR         LEFTQ2    ANDEQ0
+     CSR         LEFTQ3    ANDEQ0
+     CSR                   LEAVE
+     CSR                   ENDIF
+     C*
+     CSR                   ENDDO
+     C*
+     C*   If everything wasn't picked then print an error.
+     C*
+     CSR         LEFTQ1    IFNE 0
+     CSR         LEFTQ2    ORNE 0
+     CSR         LEFTQ3    ORNE 0
+     C*
+     C*      We do not have to unallocate anything becuase warehouse
+     C*      allocation isn't done for special orders.
+     C*
+     C*      Convert picked quantity to string for error msg.
+     C*
+     CSR                   MOVE '*QTY2STR'$CCMD
+     CSR                   MOVE '#PROG   '$CPRG
+     CSR                   Z-ADDPICKQ1    $CQTY1
+     CSR                   Z-ADDPICKQ2    $CQTY2
+     CSR                   Z-ADDPICKQ3    $CQTY3
+     CSR                   CALL 'CVTQTY'
+     CSR                   PARM           $CCMD
+     CSR                   PARM           $CPRG
+     CSR                   PARM           $CQTY1
+     CSR                   PARM           $CQTY2
+     CSR                   PARM           $CQTY3
+     CSR                   PARM           $CUM1
+     CSR                   PARM           $CUM2
+     CSR                   PARM           $CUM3
+     CSR                   PARM           $CQSTR
+     CSR                   PARM           $CUSTR
+     CSR                   PARM           $CRTN
+     CSR                   PARM           $CERM
+     CSR                   MOVE $CQSTR    P1QPCK
+     C*
+     C*      Print error message.
+     C*
+     CSR                   MOVE MSG,4     P1MSG
+     CSR                   EXSR PRTERR
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+FX3 AC*----------------------------------------------------------------
+FX3 AC*
+FX3 AC*  PICK0   Pick quantity needed.
+FX3 AC*
+FX3 ACSR         PICK0     BEGSR
+FX3 AC*
+FX3 AC*     Initialize pick quantities.
+FX3 AC*
+FX3 ACSR                   Z-ADD0         PICKQ1
+FX3 ACSR                   Z-ADD0         PICKQ2
+FX3 ACSR                   Z-ADD0         PICKQ3
+FX3 AC*
+FX3 AC*     Try to pick normal quantity.
+FX3 AC*
+FX3 ACSR         LEFTQ1    IFGT 0
+FX3 ACSR                   EXSR PICK1
+FX3 ACSR                   ENDIF
+FX3 AC*
+FX3 AC*     Try to pick breakdown 1 quantity.
+FX3 AC*
+FX3 ACSR         LEFTQ2    IFGT 0
+FX3 ACSR                   EXSR PICK2
+FX3 ACSR                   ENDIF
+FX3 AC*
+FX3 AC*     Try to pick breakdown 2 quantity.
+FX3 AC*
+FX3 ACSR         LEFTQ3    IFGT 0
+FX3 ACSR                   EXSR PICK3
+FX3 ACSR                   ENDIF
+FX3 AC*
+FX3 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PICK1  Pick normal quantity.
+     C*
+     CSR         PICK1     BEGSR
+     C*
+     C*   If there is enough normal qty available then grab it.
+     C*     Otherwise, just grab what is available.
+     C*
+     CSR         LEFTQ1    IFLE AVAIL1
+     CSR                   Z-ADDLEFTQ1    PICKQ1
+     CSR                   ELSE
+     CSR                   Z-ADDAVAIL1    PICKQ1
+     CSR                   ENDIF
+     C*
+     CSR                   SUB  PICKQ1    AVAIL1
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PICK2  Pick breakdown 1 quantity.
+     C*
+     CSR         PICK2     BEGSR
+     C*
+     C*   If there is enough breakdown 1 qty available then grab it.
+     C*
+     CSR                   SELEC
+     CSR         LEFTQ2    WHLE AVAIL2
+     CSR                   Z-ADDLEFTQ2    PICKQ2
+     C*
+     C*   Otherwise try to break a larger unit to get qty needed.
+     C*
+     C*     Note: The qty needed will always be less than the qty
+     C*           in a normal unit.
+     C*
+     CSR                   OTHER
+     C*
+     C*      Try to break a normal unit and grab what's needed.
+     C*
+     CSR                   SELEC
+     CSR         AVAIL1    WHGT 0
+     CSR                   SUB  1         AVAIL1
+     CSR                   ADD  ITUMQ2    AVAIL2
+     CSR                   SUB  1         SLSTK1
+     CSR                   ADD  ITUMQ2    SLSTK2
+     CSR                   Z-ADDLEFTQ2    PICKQ2
+     C*
+     C*      Otherwise, just grab what is available for breakdown 1.
+     C*
+     CSR                   OTHER
+     CSR                   Z-ADDAVAIL2    PICKQ2
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   SUB  PICKQ2    AVAIL2
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PICK3  Pick breakdown 2 quantity.
+     C*
+     CSR         PICK3     BEGSR
+     C*
+     C*   If there is enough breakdown 2 qty available then grab it.
+     C*
+     CSR                   SELEC
+     CSR         LEFTQ3    WHLE AVAIL3
+     CSR                   Z-ADDLEFTQ3    PICKQ3
+     C*
+     C*   Otherwise try to break a larger unit to get qty needed.
+     C*
+     C*     Note: The qty needed will always be less than the qty
+     C*           in a breakdown 1 unit.
+     C*
+     CSR                   OTHER
+     C*
+     C*      Try to break a breakdown 1 unit and grab what's needed.
+     C*
+     CSR                   SELEC
+     CSR         AVAIL2    WHGT 0
+     CSR                   SUB  1         AVAIL2
+     CSR                   ADD  ITUMQ3    AVAIL3
+     CSR                   SUB  1         SLSTK2
+     CSR                   ADD  ITUMQ3    SLSTK3
+     CSR                   Z-ADDLEFTQ3    PICKQ3
+     C*
+     C*      Then try to break a normal unit and grab what's needed.
+     C*
+     CSR         AVAIL1    WHGT 0
+     CSR                   SUB  1         AVAIL1
+     CSR                   ADD  ITUMQ2    AVAIL2
+     CSR                   SUB  1         SLSTK1
+     CSR                   ADD  ITUMQ2    SLSTK2
+     CSR                   SUB  1         AVAIL2
+     CSR                   ADD  ITUMQ3    AVAIL3
+     CSR                   SUB  1         SLSTK2
+     CSR                   ADD  ITUMQ3    SLSTK3
+     CSR                   Z-ADDLEFTQ3    PICKQ3
+     C*
+     C*      Otherwise, just grab what is available for breakdown 2.
+     C*
+     CSR                   OTHER
+     CSR                   Z-ADDAVAIL3    PICKQ3
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   ENDSL
+     C*
+     CSR                   SUB  PICKQ3    AVAIL3
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  POST    Post picking labels.
+     C*
+     CSR         POST      BEGSR
+     C*
+     C*   Create picking labels - one for each quantity breakdown.
+     C*
+     C*      Initialize label fields.
+     C*
+     CSR                   CLEARLBREC
+     CSR                   Z-ADDSLWHSE    LBWHSE
+     CSR                   MOVE SLWHDP    LBWHDP
+     CSR                   MOVE SLAISL    LBAISL
+     CSR                   Z-ADDSLLOC     LBLOC
+     CSR                   Z-ADDSLRLVL    LBRLVL
+     CSR                   MOVE SLHAND    LBHAND
+     CSR                   Z-ADDSLPSEQ    LBPSEQ
+     CSR                   MOVE SLSTYP    LBSTYP
+     CSR         LBSTYP    IFEQ 'P'
+     CSR                   Z-ADD1         LBQRYF
+     CSR                   ELSE
+     CSR                   Z-ADD0         LBQRYF
+     CSR                   ENDIF
+     CSR                   MOVE SLDISP    LBDISP
+213 ACSR                   Z-ADDLBLQAV    LBQAVL
+     CSR                   MOVE OHRTE     LBRTE
+     CSR                   Z-ADDOHSTOP    LBSTOP
+     CSR                   Z-ADDOHORD     LBORD
+     CSR                   Z-ADDODSEQ     LBSEQ
+     CSR                   MOVE ODITEM    LBITEM
+     CSR                   Z-ADD$PBAT     LBPBAT
+213 ACSR                   MOVE 'S'       LBGRP1
+213 ACSR                   MOVE OHTYPE    LBGRP2
+FIX DC*                    MOVE 'O'       LBTYPE
+FIX MCSR                   MOVE LBLTYP    LBTYPE
+     CSR                   MOVE 'A'       LBSTAT
+     CSR                   Z-ADDTODAY     LBSDTE
+     CSR                   TIME           LBSTIM
+213 ACSR                   Z-ADDTODAY     LBRDTE
+     CSR                   MOVE ODSPCL    LBSPCL
+     CSR                   Z-ADD0         LBUCUB
+     CSR                   Z-ADD0         LBCUBE
+     CSR                   Z-ADD0         LBUWGT
+     CSR                   Z-ADD0         LBSWGT
+     C*
+     C*      Create label for normal quantity.
+     C*
+     CSR         PICKQ1    IFGT 0
+     CSR                   MOVE 'N'       LBUTYP
+     CSR                   MOVE ITUM1     LBUCOD
+     CSR                   Z-ADDITCUBE    LBUCUB
+     CSR         LBUCUB    MULT PICKQ1    LBCUBE
+     CSR                   Z-ADDITSWGT    LBUWGT
+     CSR         LBUWGT    MULT PICKQ1    LBSWGT
+     CSR                   Z-ADDPICKQ1    LBQALC
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   WRITELBREC
+     CSR                   ENDIF
+     C*
+     C*      Create label for breakdown 1 quantity.
+     C*
+     CSR         PICKQ2    IFGT 0
+     CSR                   MOVE '1'       LBUTYP
+     CSR                   MOVE ITUM2     LBUCOD
+     CSR         ITUMQ2    IFNE 0
+     CSR         ITCUBE    DIV  ITUMQ2    LBUCUB    H
+     CSR         LBUCUB    MULT PICKQ2    LBCUBE
+     CSR         ITSWGT    DIV  ITUMQ2    LBUWGT    H
+     CSR         LBUWGT    MULT PICKQ2    LBSWGT
+     CSR                   ENDIF
+     CSR                   Z-ADDPICKQ2    LBQALC
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   WRITELBREC
+     CSR                   ENDIF
+     C*
+     C*      Create label for breakdown 2 quantity.
+     C*
+     CSR         PICKQ3    IFGT 0
+     CSR                   MOVE '2'       LBUTYP
+     CSR                   MOVE ITUM3     LBUCOD
+     CSR         ITUMQ2    IFNE 0
+     CSR         ITUMQ3    ANDNE0
+     CSR         ITCUBE    DIV  ITUMQ2    LBUCUB    H
+     CSR         LBCUBE    DIV  ITUMQ3    LBUCUB    H
+     CSR         LBUCUB    MULT PICKQ3    LBCUBE
+     CSR         ITSWGT    DIV  ITUMQ2    LBUWGT    H
+     CSR         LBSWGT    DIV  ITUMQ3    LBUWGT    H
+     CSR         LBUWGT    MULT PICKQ3    LBSWGT
+     CSR                   ENDIF
+     CSR                   Z-ADDPICKQ3    LBQALC
+     CSR                   CALL 'PIRLBL#'
+     CSR                   PARM           LBLBL#
+     CSR                   WRITELBREC
+     CSR                   ENDIF
+     C*
+     C*   Update slot allocation.
+     C*
+     CSR                   ADD  PICKQ1    SLALC1
+     CSR                   ADD  PICKQ2    SLALC2
+     CSR                   ADD  PICKQ3    SLALC3
+     CSR                   UPDATSLREC
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  PRTERR  Print error exception.
+     C*
+     CSR         PRTERR    BEGSR
+     C*
+     C*  See if we should printer header.
+     C*
+     CSR         PRFLAG    IFNE *ON
+     CSR         *IN90     OREQ *ON
+     CSR                   WRITEHEAD1
+     CSR         *IN90     IFEQ *ON
+     CSR                   WRITEHEAD2
+     CSR                   END
+     CSR                   WRITECOLUMNS
+     CSR                   MOVE *ON       PRFLAG
+     CSR                   MOVE *OFF      *IN90
+     CSR                   END
+     C*
+     C*   Print detail line.
+     C*
+     CSR                   WRITEDETAIL1
+     CSR                   ENDSR
+215 AC*----------------------------------------------------------------
+215 AC*
+215 AC*  REPLNS  Replenish PIR slot.
+215 AC*
+215 ACSR         REPLNS    BEGSR
+215 AC*
+215 AC*   Loop through picking slots for item.
+215 AC*
+215 ACSR                   MOVE *OFF      FOUND   1
+215 ACSR                   MOVE 'A '      KYSTAT
+215 ACSR                   MOVE 'Y'       KYPICK
+215 ACSR         KEYSL3    SETLLSLOT3
+215 ACSR         FOREVR    DOUNEFOREVR
+215 ACSR         KEYSL3    READESLOT3               N    77
+215 ACSR         *IN77     IFEQ *ON
+215 ACSR         FOUND     OREQ *ON
+215 ACSR                   LEAVE
+215 ACSR                   ENDIF
+215 AC*
+215 AC*     Ignore slot if
+215 AC*
+215 ACSR         SLRSRV    IFNE 'Y'
+215 ACSR                   ITER
+215 ACSR                   ENDIF
+215 AC*
+215 AC*     Ignore slot if past expiration date.
+215 AC*
+215 ACSR         SLEXPD    IFNE 0
+215 ACSR         SLEXPD    ANDLTTODAY
+215 ACSR                   ITER
+215 ACSR                   ENDIF
+215 AC*
+215 AC*     Calculate quantity available in slot.
+215 AC*
+215 ACSR                   EXSR AVAIL
+215 AC*
+215 AC*     Replenish slot if not enough available.
+215 AC*
+215 ACSR         AVAIL1    IFLT LEFTQ1
+215 ACSR                   Z-ADD$PWHSE    $LWHSE
+215 ACSR                   MOVE SLWHDP    $LWHDP
+215 ACSR                   MOVE SLAISL    $LTAIL
+215 ACSR                   MOVE SLDISP    $LTDIS
+215 ACSR                   MOVE SLITEM    $LITEM
+215 ACSR                   Z-ADDLEFTQ1    $LQTY
+215 ACSR                   MOVE SLSDEF    $LSDEF
+215 ACSR                   Z-ADDSLLOC     $LLOC
+215 ACSR                   Z-ADDSLRLVL    $LRLVL
+215 ACSR                   MOVE SLHAND    $LHAND
+215 ACSR                   MOVE SLSTYP    $LSTYP
+215 ACSR                   MOVE ITTYPE    $LTYPE
+215 ACSR                   Z-ADD0         $LAVL1
+215 ACSR                   Z-ADD0         $LAVL2
+215 ACSR                   Z-ADD0         $LAVL3
+215 ACSR                   MOVE *BLANKS   $LRTN
+215 ACSR                   CALL 'OR534'
+215 ACSR                   PARM           $LWHSE  30
+215 ACSR                   PARM           $LWHDP  5
+215 ACSR                   PARM           $PRTE
+215 ACSR                   PARM           $PBAT
+215 ACSR                   PARM           $LTAIL  3
+215 ACSR                   PARM           $LTDIS 12
+215 ACSR                   PARM           $LITEM 15
+215 ACSR                   PARM           $LQTY   30
+215 ACSR                   PARM           $LSDEF  2
+215 ACSR                   PARM           $LLOC   30
+215 ACSR                   PARM           $LRLVL  20
+215 ACSR                   PARM           $LHAND  2
+215 ACSR                   PARM           $LSTYP  1
+215 ACSR                   PARM           $LTYPE  1
+215 ACSR                   PARM           $LAVL1  30
+215 ACSR                   PARM           $LAVL2  30
+215 ACSR                   PARM           $LAVL3  30
+215 ACSR                   PARM           $LRTN   8
+215 ACSR                   ENDIF
+215 ACSR                   MOVE *ON       FOUND
+215 AC*
+215 ACSR                   ENDDO
+215 AC*
+215 ACSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  UNALOC  Unallocate quantity from ITEMQTY file.
+     C*
+     CSR         UNALOC    BEGSR
+     C*
+     C*   Allocate quantity needed from the warehouse qty (ITEMQTY).
+     C*
+     CSR                   MOVE '*UNALLOC'$ACMD
+     CSR                   MOVE #PROG     $APRG
+     CSR                   MOVE '*BATCH  '$ATYPE
+     CSR                   Z-ADD$PWHSE    $AWHSE
+     CSR                   MOVE ODITEM    $AITEM
+     CSR                   Z-ADDLEFTQ1    $AQTY1
+     CSR                   Z-ADDLEFTQ2    $AQTY2
+     CSR                   Z-ADDLEFTQ3    $AQTY3
+     C*
+     CSR                   CALL 'ADJQTY'
+     CSR                   PARM           $ACMD   8
+     CSR                   PARM           $APRG  10
+     CSR                   PARM           $ATYPE  8
+     CSR                   PARM           $AWHSE  30
+     CSR                   PARM           $AITEM 15
+     CSR                   PARM           $AQTY1  70
+     CSR                   PARM           $AQTY2  70
+     CSR                   PARM           $AQTY3  70
+     CSR                   PARM           $ARTQ1  70
+     CSR                   PARM           $ARTQ2  70
+     CSR                   PARM           $ARTQ3  70
+     CSR                   PARM           $ARTN   8
+     CSR                   PARM           $AERM
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C*  SUBROUTINE ZMxxxx  Control message display subfile
+     C*
+     C*
+     C*    ZMSMSG  Send program message to a different program msgq
+     C*
+     CSR         ZMSMSG    BEGSR
+     CSR         $MSGF     IFEQ *BLANKS
+     CSR                   MOVE #MSGF     $MSGF  10
+     CSR                   END
+     CSR                   CALL 'PUTMSG'
+     CSR                   PARM           $MSGF
+     CSR                   PARM           #MSGID  7
+     CSR                   PARM           #MSGTP  7
+     CSR                   PARM           #MSGDT
+     CSR                   PARM $PPRG     #PGMQ  10
+     CSR                   PARM           #MSGK   4
+     CSR                   MOVE *BLANKS   #MSGDT
+     CSR                   MOVE *BLANKS   $MSGF
+     CSR                   ENDSR
+     C*
+     C*    ZMnnnn  Build and send message nnnn to this program
+     O*----------------------------------------------------------------
+     O*
+     O*  Compile time tables
+     O*
+**   Error messages
+Item master record not on file
+First item after restarting batch
+Not enough stock available for order
+Slots did not contain enough stock
+No picking slot defined for item

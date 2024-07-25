@@ -1,0 +1,1261 @@
+/*-------------------------------------------------------------------*/
+/*                                                                   */
+/*  PIRFTPIMP   Gateway for FTP import                               */
+/*  07 July 1999                                                     */
+/*  Dave Sommerville                                                 */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Revisions:                                                       */
+/*                                                                   */
+/*   03/30/00  4.13  DAS                                             */
+/*     - Added import of quantity ordered for priority replenishments*/
+/*                                                                   */
+/*   05/10/00  4.14  DAS                                             */
+/*     - Revised call to OI250CL for *WILL to user NEWMBR.           */
+/*                                                                   */
+/*   07/29/00  4.14b KDE                                             */
+/*     - Revised to allow a new option of "PO2".  Program call for   */
+/*       "PO2" will be PI260CL instead of PI250CL.                   */
+/*                                                                   */
+/*   06/06/00  4.14a DAS                                             */
+/*     - Added import of Home Slot Changes                           */
+/*   09/15/00  4.14b DAS                                             */
+/*     - Commented out DSPLIBL command                               */
+/*                                                                   */
+/*   06/05/02  4.16  DAS                                             */
+/*     - Added *SINGLE orders.                                       */
+/*                                                                   */
+/*   06/16/03  4.17  MLB                                             */
+/*     - Added *ITEM2 to call new item import program.               */
+/*                                                                   */
+/*   08/30/04  5.00   MLB                                            */
+/*     - Added *UPC to call new UPC code import program.             */
+/*   06/14/05  5.00a  MLB                                            */
+/*     - Enh: Added call to II270CL - Item Import for Stand-Alone    */
+/*       Truck Builder.                                              */
+/*   09/08/05  5.00b  MLB                                            */
+/*     - Enh: Added call to OI270CL - FTP Import Customer Orders w/  */
+/*       Pick Slot.                                                  */
+/*   11/17/05  5.00c  MLB                                            */
+/*     - Enh: Added new option *SAROUTE - Import Customer Orders w/  */
+/*       Host Generated Labels. This option will call OI270CL.       */
+/*   02/06/06  5.00d  MLB                                            */
+/*     - Enh: Added new option *WILL3 - Import Customer Orders w/    */
+/*       Pick Slot. This option will call OI270CL.                   */
+/*       NOTE: *WILL3 will be converted to *WILL prior to call       */
+/*             to OI270CL.                                           */
+/*   02/11/06  5.00e  MLB                                            */
+/*     - Enh: Revised options, *ROUTE3, *SAROUTE to ignore rename    */
+/*       error on file IMPFORDM. IMPFORDM is an optional file.       */
+/*   02/24/06  5.00f  MLB                                            */
+/*     - Enh: Revised option, *ROUTE, *WILL to ignore rename         */
+/*       error on file IMPFORDM. IMPFORDM is an optional file.       */
+/*                                                                   */
+/*   06/09/06  MLB  5.10                                             */
+/*     - Enh: Revised option, *ROUTE, *WILL to ignore rename         */
+/*       error on file IMPFORDHM. IMPFORDHM is an optional file.     */
+/*   07/18/06  MLB  5.10a                                            */
+/*     - Enh: Revised option, *ITEM2, *ITEM3 to ignore rename        */
+/*       error on file IMPFITMM. IMPFITMM is an optional file.       */
+/*   09/27/06  MLB  5.10b                                            */
+/*     - Enh: Revised option, *PO2 to ignore rename error on         */
+/*       file IMPFPOHM. IMPFPOHM is an optional file.                */
+/*                                                                   */
+/*   02/23/07  DAS  5.10c                                            */
+/*     - Added *ITEM4 to call new item import program.               */
+/*                                                                   */
+/*   10/28/08  MLB  5.20                                             */
+/*     - Enh: Revised option, *ITM2xxx to ignore rename error on     */
+/*       file IMPFITMM. IMPFITMM is an optional file.                */
+/*   01/21/09  MLB  5.20a                                            */
+/*     - Enh: Revised program to add 6 new options: *ROUTE4, *WILL4, */
+/*       *ROUTE5, *WILL5 and *SINGLE4, and *SARTE5.                  */
+/*       These 6 new versions are being added to provide extended    */
+/*       numbers coming from the Host system.                        */
+/*   09/15/09  MLB  5.20b                                            */
+/*     - Added *PCKADJ to call new program, HQ245CL/HQ245            */
+/*   10/02/09  MLB  5.20c                                            */
+/*     - Added *GOALTIM to call new program, GT150CL/GT150            */
+/*   10/16/09  MLB  5.20d                                            */
+/*     - Enh: Added new cmd, *ROUTE6 to support new customer order   */
+/*       import interface where orders from multiple divisions are   */
+/*       combined on the same route.  Packer's project.              */
+/*                                                                   */
+/*   10/25/09  MLB  5.30                                             */
+/*     - Enh: Revised options, *ADJDEMD and *DEMDOLY cmds to direct  */
+/*       calls to HQ240CL. *ADJDEMD will create adjustments to pick  */
+/*       slots and feed item adjustment info into ITEMSLS file.      */
+/*       Cmd *DEMDOLY will direct item adjustment into into ITEMSLS  */
+/*       file only. No adjustments to pick slot(s) will occur.       */
+/*   03/12/10  MLB  5.30a                                            */
+/*     - Enh: Added new options, *CKDGTUP - Check Digit Update and   */
+/*       *CKDGTRP - Check Digit Replace that will process check      */
+/*       digit updates using import file, IMPFCKDGT and pgm call to  */
+/*       SD250CL.                                                    */
+/*   05/12/10  MLB  5.30b  *Note: Was missed in v5.20 update.        */
+/*     - Fix: Revised option, *PO2 to ignore rename error on         */
+/*       file IMPFPODM. IMPFPODM is an optional file.                */
+/*   05/21/10  MLB  5.30c  *Note: Was missed in v5.20 update.        */
+/*     - Enh: Revised program to add 1 new options: *RETURN.         */
+/*       This new option is being added to allow Host systems to     */
+/*       customer returns to Dakota instead of using BFC return pgms.*/
+/*   09/16/10  MLB  5.30d                                            */
+/*     - Enh: Revised program to add 1 new options: *RPKDEMD.        */
+/*       This new option is being added to allow Host systems to     */
+/*       repack item demand to save time manually entering demand    */
+/*       to create repack item work orders.                          */
+/*   03/20/12  RTR  6.40                                             */
+/*     - Enh: Revised program to add 1 new options: *RTESAP.         */
+/*       This option is being added to read an SAP IDoc file and     */
+/*       build import files, then run the imports in sequence.       */
+/*   03/07/12  MLB  6.40a                                            */
+/*     - Enh: Revised program to add support for multi-warehouse     */
+/*       import processing in a single batch.                        */
+/*     - The following new cmds will be added: *PO2MP, *PO2MT.       */
+/*                                                                   */
+/*   01/31/13  RBD  6.50                                             */
+/*     - Enh: Added optional file IMPFORSF, Trax Stop Flags.         */
+/*   03/23/13  MLB  6.50a                                            */
+/*     - Fix: Removed If stmt that was checking for *WILL5 and       */
+/*       then changing &TYPE to *WILL. Leave &TYPE = *WILL5.         */
+/*   06/06/13  RTR  6.50b                                            */
+/*     - Enh: Added new cmd, *ROUTE8/*WILL8/*SINGLE8 for order       */
+/*       import interface where customers may have multiple          */
+/*       drops on the same stop.  Originally for Get Fresh.          */
+/*   06/19/14  RTR  6.50c                                            */
+/*     - Enh: Revised program to add 1 new options: *POSD1.          */
+/*       This option is to process a PO Smartdock import.            */
+/*                                                                   */
+/*   09/07/18  RTR  7.20a                                            */
+/*     - Enh: Added new cmd, *ITM4STGF/*ITM4STGP to load incoming    */
+/*       Item 4 updates into Staging process.                        */
+/*                                                                   */
+/*   03/14/19  RTR  7.30a                                            */
+/*     - Enh: Added new cmd, *ROUTE9/*WILL9/*SINGLE9 for order       */
+/*       import interface. 30A Order Number originally for SWT.      */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Parameters:                                                      */
+/*                                                                   */
+/*    &TYPE  -  *ROUTE  Route of customer orders                     */
+/*              *ROUTE3 Route of customer orders w/pick slot (500bA) */
+/*              *ROUTE4 Route of customer orders Ver 4       (520aA) */
+/*              *ROUTE5 Route of customer orders w/pick slot (520aA) */
+/*              *ROUTE6 Route of customer orders Ver 6       (520dA) */
+/*              *ROUTE8 Route of customer orders Ver 8       (650bA) */
+/*              *ROUTE9 Route of customer orders Ver 9       (730aA) */
+/*              *WILL   Willcall order                               */
+/*    (500dA)   *WILL3  Willcall order w/pick slot.                  */
+/*              *WILL4  Willcall order Ver 4                 (520aA) */
+/*              *WILL5  Willcall order w/pick slot Ver 5     (520aA) */
+/*              *WILL6  Willcall order Ver 6                 (520dA) */
+/*              *WILL8  Willcall order Ver 8                 (650bA) */
+/*              *WILL9  Willcall order Ver 9                 (730aA) */
+/*              *PCKADJ Adjustments from pick slot           (520bA) */
+/*              *PO     Purchase orders                              */
+/*              *PO2    Purchase orders         510b                 */
+/*              *PO2MP  Purchase orders - Multi-Whse Prod    (640aA) */
+/*              *PO2MT  Purchase orders - Multi-Whse Test    (640aA) */
+/*              *POSD1  Purchase orders - Smartdock Import   (650cA) */
+/*              *ITEM   Item updates                                 */
+/*              *ITEM2  Item updates #2         417                  */
+/*              *ITEM3  Item updates #3         510a                 */
+/*              *ITM3PAR  Item updates #3       510a                 */
+/*              *ITM3FUL  Item updates #3       510a                 */
+/*              *ITEM4  Item updates #4         510c                 */
+/*              *ITM4PAR  Item updates #4       510c                 */
+/*              *ITM4FUL  Item updates #4       510c                 */
+/*              *ITM4STGP Item updates #4 - Staging Partial  (720aA) */
+/*              *ITM4STGF Item updates #4 - Staging Full     (720aA) */
+/*              *ORDQTY Total order quantity    413A                 */
+/*              *ADJDEMD  Import pick slot adj's/Daily Demand(530 A) */
+/*              *DEMDOLY  Import daily demand only.          (530 A) */
+/*              *GOALTIM  Import goal time for routes        (520cA) */
+/*              *HMSLT  Home slot changes       414aA                */
+/*              *RETURN Batch customer returns               (530cA) */
+/*              *RPKDEMD Repack Item Demand                  (530dA) */
+/*              *SAROUTE Route of customer orders w/Host Labels 500c */
+/*              *SARTE5  Route of customer orders w/Host Labels 520a */
+/*              *SINGLE  Single order           416                  */
+/*              *SINGLE4 Single order Ver 4                  (520aA) */
+/*              *SINGLE6 Single order Ver 6                  (520dA) */
+/*              *SINGLE8 Single order Ver 8                  (650bA) */
+/*              *SINGLE9 Single order Ver 9                  (730aA) */
+/*              *UPC    UPC Code updates        500                  */
+/*              *CKDGTUP Check Digit Update                  (530aA) */
+/*              *CKDGTRP Check Digit Replace                 (530aA) */
+/*              *RTESAP Build & Import from SAP IDoc File    (640 A) */
+/*    &MBR   -  Member to create. Must start with alpha character.   */
+/*    &RUN   -  *INTER  Run interactively                            */
+/*              *JOBQ   Run on Jobq                                  */
+/*    &OUTQ  -  Printer output queue (Default is *JOB)               */
+/*    &FORM  -  Printer form (Default is *STD)                       */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  FTP command sequence                                             */
+/*                                                                   */
+/*    PUT localfile PIRF/IMPFORDH.membername                         */
+/*    QUOTE RCMD PIR/FTPLIBL libltype                                */
+/*    QUOTE RCMD PIR/PIRFTPIMP (*ROUTE membername *INTER *JOB *STD)  */
+/*                                                                   */
+/*   Notes:                                                          */
+/*                                                                   */
+/*    - 'libltype' can be *PROD, *TEST, *900 or *BFC.                */
+/*                                                                   */
+/*    - 'localfile' is the name of the text file on the host system.  */
+/*                                                                   */
+/*    - 'membername' is the name of the member where the data        */
+/*     will be PUT.  This member will be renamed by this program.    */
+/*     Therefore, it makes no difference to this program what name   */
+/*     is used.  However, at the very least, each import type should */
+/*     have its own name. The following are member name suggestions  */
+/*     for each import type:                                         */
+/*                                                                   */
+/*         *CKDGTUP-  S01                                    (530aA) */
+/*         *CKDGTRP-  S01                                    (530aA) */
+/*         *ROUTE  -  R01                                            */
+/*         *ROUTE3 -  R01                                    (520aA) */
+/*         *ROUTE4 -  R01                                    (520aA) */
+/*         *ROUTE5 -  R01                                    (520aA) */
+/*         *ROUTE6 -  R01                                    (520dA) */
+/*         *ROUTE8 -  R01                                    (650bA) */
+/*         *ROUTE9 -  R01                                    (730aA) */
+/*         *RETURN -  R01                                    (530cA) */
+/*         *RKDEMD -  R01                                    (530dA) */
+/*         *SAROUTE-  R01                                    (520aA) */
+/*         *SARTE5 -  R01                                    (520aA) */
+/*         *SINGLE -  R01                                    (520aA) */
+/*         *SINGLE4-  R01                                    (520aA) */
+/*         *SINGLE6-  R01                                    (520dA) */
+/*         *SINGLE8-  R01                                    (650bA) */
+/*         *SINGLE9-  R01                                    (730aA) */
+/*         *WILL   -  W01                                            */
+/*         *WILL3  -  W01                                    (520aA) */
+/*         *WILL4  -  W01                                    (520aA) */
+/*         *WILL5  -  W01                                    (520aA) */
+/*         *WILL6  -  W01                                    (520dA) */
+/*         *WILL8  -  W01                                    (650bA) */
+/*         *WILL9  -  W01                                    (730aA) */
+/*         *PCKADJ -  K01                                    (520bA) */
+/*         *PO     -  P01                                            */
+/*         *PO2    -  P01                                    (640aA) */
+/*         *PO2MP  -  P01                                    (640aA) */
+/*         *PO2MT  -  P01                                    (640aA) */
+/*         *POSD1  -  P01                                    (650cA) */
+/*         *ADJDEMD-  H01                                    (530 A) */
+/*         *DEMDOLY-  H01                                    (530 A) */
+/*         *GOALTIM-  G01                                    (520cA) */
+/*         *ITEM   -  I01                                            */
+/*         *ITEM2  -  I01    417                                     */
+/*         *QTYORD -  Q01    413A                                    */
+/*         *UPC    -  U01    500                                     */
+/*                                                                   */
+/*     Also, when using a static name for all ftp's the host must    */
+/*     ensure that only one ftp can be done at a time in order to    */
+/*     prevent multiple ftp's from overwriting one another.          */
+/*     Once this program has finished successfully, another          */
+/*     ftp can be done because this program renames the member       */
+/*     that is initially created.                                    */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+/*  Notes:                                                           */
+/*                                                                   */
+/*   FTP orders are sent into a special FTP import file.  Unlike     */
+/*   the normal import where everything goes into a single member,   */
+/*   the FTP import files contain multiple members.  The member      */
+/*   that is used for a particular session is sent in as a           */
+/*   parameter.                                                      */
+/*                                                                   */
+/*   This is designed to be called from the command line or as a     */
+/*   remote command using the FTP Quote command. When called from    */
+/*   the command line the user will be prompted for the necessary    */
+/*   parameters.  When called as a remote command, the necessary     */
+/*   parameters are passed in.                                       */
+/*                                                                   */
+/*   Normally this program is called as a remote FTP command after   */
+/*   the data has been sent.  The option to call this from the       */
+/*   command line is mainly for testing and the instances when       */
+/*   something goes wrong with the import process.                   */
+/*                                                                   */
+/*   When called as a remote FTP command the job 'Type' is '0'       */
+/*   which means it looks like a batch job.                         */
+/*                                                                   */
+/*-------------------------------------------------------------------*/
+
+ PIRFTPIMP:  PGM        PARM(&IMPTYPE &MBR &RUN &OUTQ &FORM)
+
+/*-------------------------------------------------------------------*/
+/*  Field declarations                                               */
+/*-------------------------------------------------------------------*/
+
+             DCL        VAR(&ERRCNT)     TYPE(*DEC)  LEN(1 0)
+             DCL        VAR(&FINISHED)   TYPE(*LGL)
+             DCL        VAR(&FORM)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FTPMSGQ)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&FTPERRMSGQ) TYPE(*CHAR) LEN(10)
+             DCL        VAR(&IMPTYPE)    TYPE(*CHAR) LEN(8)
+             DCL        VAR(&JOB)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MBR)        TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGDTA)     TYPE(*CHAR) LEN(256)
+             DCL        VAR(&MSGF)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGFLIB)    TYPE(*CHAR) LEN(10)
+             DCL        VAR(&MSGID)      TYPE(*CHAR) LEN(7)
+             DCL        VAR(&NEWMBR)     TYPE(*CHAR) LEN(10)
+             DCL        VAR(&NXTNUM)     TYPE(*DEC)  LEN(7)
+             DCL        VAR(&NXTNUMA)    TYPE(*CHAR) LEN(7)
+             DCL        VAR(&OUTQ)       TYPE(*CHAR) LEN(10)
+             DCL        VAR(&RUN)        TYPE(*CHAR) LEN(8)
+             DCL        VAR(&RETURN)     TYPE(*CHAR) LEN(8)
+             DCL        VAR(&SEV)        TYPE(*DEC)  LEN(2 0)
+             DCL        VAR(&TYPE)       TYPE(*CHAR) LEN(1)
+             DCL        VAR(&USER)       TYPE(*CHAR) LEN(10)
+
+             MONMSG     MSGID(CPF0000) EXEC(GOTO GETOUT)
+             CHGVAR     VAR(&ERRCNT) VALUE(0)
+             CHGVAR     VAR(&FINISHED) VALUE('0')
+
+/*-------------------------------------------------------------------*/
+/*  Main line                                                        */
+/*-------------------------------------------------------------------*/
+
+      /*     DSPLIBL    OUTPUT(*PRINT)   */     /* 414b D */
+
+/* Get job information */
+
+             RTVJOBA    JOB(&JOB) USER(&USER) TYPE(&TYPE)
+/*                                                                   (530aA) */
+/* Type = *CKDGTUP & *CKDGTRP                                        (530aA) */
+
+             IF         COND(&IMPTYPE = '*CKDGTUP'  +
+                         *OR &IMPTYPE = '*CKDGTRP') THEN(DO)      /* (530aA) */
+
+   /* Define message queues to use                                   (530aA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPCDGT')          /* (530aA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPCDGTERR')    /* (530aA) */
+
+   /* Create new member name                                         (530aA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (530aA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (530aA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('S' *CAT &NXTNUMA)   /* (530aA) */
+
+   /* Rename members                                                 (530aA) */
+
+               RNMM       FILE(IMPFCKDGT) MBR(&MBR) NEWMBR(&NEWMBR) /*(530aA) */
+
+   /* Call program to do import                                      (530aA) */
+
+               CALL       PGM(SD250CL) PARM(&IMPTYPE &NEWMBR &RUN +
+                            &OUTQ &FORM)                          /* (530aA) */
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (530aA) */
+               GOTO BOTTOM                                        /* (530aA) */
+             ENDDO                                                /* (530aA) */
+
+/* Type = *RETURN                                                    (530cA) */
+
+             IF COND(&IMPTYPE = '*RETURN') THEN(DO)               /* (530cA) */
+
+   /* Define message queues to use                                /* (530cA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPRTN')           /* (530cA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPRTNERR')     /* (530cA) */
+
+   /* Create new member name                                      /* (530cA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (530cA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (530cA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)   /* (530cA) */
+
+   /* Rename member                                               /* (530cA) */
+
+               RNMM       FILE(IMPFRTN) MBR(&MBR) NEWMBR(&NEWMBR) /* (530cA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (530cA) */
+
+   /* Call program to do import */                                /* (530cA) */
+
+               CALL  PGM(RN230CL) PARM(&NEWMBR &RUN &OUTQ &FORM)  /* (530cA) */
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (530cA) */
+               GOTO BOTTOM                                        /* (530cA) */
+             ENDDO                                                /* (530cA) */
+
+/* Type = *RPKDEMD - Import Repack Item Demand                       (530dA) */
+
+             IF COND(&IMPTYPE = '*RPKDEMD') THEN(DO)              /* (530dA) */
+
+   /* Define message queues to use                                /* (530dA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPRPKD')          /* (530dA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPRPKDERR')    /* (530dA) */
+
+   /* Create new member name                                      /* (530dA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (530dA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (530dA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)   /* (530dA) */
+
+   /* Rename member                                               /* (530dA) */
+
+               RNMM       FILE(IMPFRPKDM) MBR(&MBR) NEWMBR(&NEWMBR) /*(530dA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (530dA) */
+
+   /* Call program to do import */                                /* (530dA) */
+
+               CALL       PGM(WR250CL) PARM(&IMPTYPE &NEWMBR &RUN +
+                            &OUTQ &FORM)                          /* (530dA) */
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (530dA) */
+               GOTO BOTTOM                                        /* (530dA) */
+             ENDDO                                                /* (530dA) */
+
+/* Type = *ROUTE */
+
+             IF COND(&IMPTYPE = '*ROUTE') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFORDH) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFORDHM) MBR(&MBR) NEWMBR(&NEWMBR) /* (510 A) */
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (510 A) */
+               RNMM       FILE(IMPFORDD) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFORDM) MBR(&MBR) NEWMBR(&NEWMBR) /* (500fA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (500fA) */
+               RNMM      FILE(IMPFORSF) MBR(&MBR) NEWMBR(&NEWMBR)  /* (650 A) */
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650 A) */
+
+   /* Call program to do import */
+
+               CALL  PGM(OI250CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+
+/* Type = *ROUTE3                                                    (500bA) */
+/* or Type = *SAROUTE                                                (500cA) */
+
+/*           IF COND(&IMPTYPE = '*ROUTE3') THEN(DO)                  (500cD) */
+/*           IF COND(&IMPTYPE = '*ROUTE3' *OR &IMPTYPE = '*SAROUTE') (500dD) */
+             IF         COND(&IMPTYPE = '*ROUTE3' *OR &IMPTYPE = +
+                          '*SAROUTE' *OR &IMPTYPE = '*WILL3') +
+                          THEN(DO)                                /* (500dM) */
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFORDH3) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM       FILE(IMPFORDD3) MBR(&MBR) NEWMBR(&NEWMBR)
+               IF         COND(&IMPTYPE = '*SAROUTE') THEN(DO)    /* (500cA) */
+                 RNMM       FILE(IMPFORDL) MBR(&MBR) NEWMBR(&NEWMBR) +
+                                                                  /* (500cA) */
+               ENDDO                                              /* (500cA) */
+               IF         COND(&IMPTYPE = '*WILL3') THEN(DO)      /* (500dA) */
+                 CHGVAR     VAR(&IMPTYPE) VALUE('*WILL   ')       /* (500dA) */
+               ENDDO                                              /* (500dA) */
+               RNMM      FILE(IMPFORDHM) MBR(&MBR) NEWMBR(&NEWMBR) /* (510 A) */
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (510 A) */
+               RNMM      FILE(IMPFORDM) MBR(&MBR) NEWMBR(&NEWMBR) /* (500eA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (500eA) */
+               RNMM      FILE(IMPFORSF) MBR(&MBR) NEWMBR(&NEWMBR)  /* (650 A) */
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650 A) */
+
+   /* Call program to do import */
+
+               CALL  PGM(OI270CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO                                                /* (500bA) */
+
+/* Type = *ROUTE4, *WILL4, *SINGLE4                                  (520aA) */
+
+             IF         COND(&IMPTYPE = '*ROUTE4' *OR &IMPTYPE = +
+                          '*SINGLE4' *OR &IMPTYPE = '*WILL4') +
+                          THEN(DO)                                /* (520aA) */
+
+   /* Define message queues to use                                   (520aA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')           /* (520aA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')     /* (520aA) */
+
+   /* Create new member name                                         (520aA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (520aA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (520aA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)   /* (520aA) */
+
+   /* Rename members                                                 (520aA) */
+
+               RNMM       FILE(IMPFORDH4) MBR(&MBR) NEWMBR(&NEWMBR) /*(520aA)*/
+               RNMM      FILE(IMPFORDHM) MBR(&MBR) NEWMBR(&NEWMBR) /* (520aA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (520aA)*/
+               RNMM       FILE(IMPFORDD4) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFORDDM) MBR(&MBR) NEWMBR(&NEWMBR) /* (520aA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (520aA) */
+               RNMM      FILE(IMPFORSF) MBR(&MBR) NEWMBR(&NEWMBR)  /* (650 A)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650 A)*/
+
+   /* Call program to do import                                      (520aA) */
+
+               CALL  PGM(OI280CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM) +
+                                                                  /* (520aA) */
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (520aA) */
+               GOTO BOTTOM                                        /* (520aA) */
+             ENDDO                                                /* (520aA) */
+
+/* Type = *ROUTE5, *WILL5, *SARTE5.                                  (520aA) */
+
+             IF         COND(&IMPTYPE = '*ROUTE5' *OR &IMPTYPE = +
+                          '*SARTE5' *OR &IMPTYPE = '*WILL5') +
+                          THEN(DO)                                /* (520aA) */
+
+   /* Define message queues to use                                   (520aA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')           /* (520aA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')     /* (520aA) */
+
+   /* Create new member name                                         (520aA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (520aA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (520aA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)   /* (520aA) */
+
+   /* Rename members                                                 (520aA) */
+
+               RNMM       FILE(IMPFORDH5) MBR(&MBR) NEWMBR(&NEWMBR) /*(520aA)*/
+               RNMM       FILE(IMPFORDD5) MBR(&MBR) NEWMBR(&NEWMBR) /*(520aA)*/
+               IF         COND(&IMPTYPE = '*SARTE5') THEN(DO  )   /* (520aA) */
+                 RNMM       FILE(IMPFORDL) MBR(&MBR) NEWMBR(&NEWMBR) +
+                                                                  /* (520aA) */
+               ENDDO                                              /* (520aA) */
+               IF         COND(&IMPTYPE = '*WILL5') THEN(DO)      /* (520aA) */
+/*               CHGVAR     VAR(&IMPTYPE) VALUE('*WILL   ')       /* (650aD) */
+               ENDDO                                              /* (520aA) */
+               RNMM      FILE(IMPFORDHM) MBR(&MBR) NEWMBR(&NEWMBR) /* (520aA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (520aA)*/
+               RNMM      FILE(IMPFORDDM) MBR(&MBR) NEWMBR(&NEWMBR) /* (520aA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (520aA)*/
+               RNMM      FILE(IMPFORSF) MBR(&MBR) NEWMBR(&NEWMBR)  /* (650 A)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650 A)*/
+
+   /* Call program to do import                                      (520aA) */
+
+               CALL  PGM(OI290CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM) +
+                                                                  /* (520aA) */
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (520aA) */
+               GOTO BOTTOM                                        /* (520aA) */
+             ENDDO                                                /* (520aA) */
+
+/* Type = *ROUTE6, *WILL6, *SINGLE6                                  (520dA) */
+
+             IF         COND(&IMPTYPE = '*ROUTE6' *OR &IMPTYPE = +
+                          '*SINGLE6' *OR &IMPTYPE = '*WILL6') +
+                          THEN(DO)                                /* (520dA) */
+
+   /* Define message queues to use                                   (520dA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')           /* (520dA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')     /* (520dA) */
+
+   /* Create new member name                                         (520dA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (520dA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (520dA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)   /* (520dA) */
+
+   /* Rename members                                                 (520dA) */
+
+               RNMM       FILE(IMPFORDH6) MBR(&MBR) NEWMBR(&NEWMBR) /*(520dA)*/
+               RNMM      FILE(IMPFORDHM6) MBR(&MBR) NEWMBR(&NEWMBR) /* (520dA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (520dA)*/
+               RNMM       FILE(IMPFORDD6) MBR(&MBR) NEWMBR(&NEWMBR) /* (520dA)*/
+               RNMM      FILE(IMPFORDDM6) MBR(&MBR) NEWMBR(&NEWMBR) /* (520dA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (520dA) */
+
+   /* Call program to do import                                      (520dA) */
+
+               CALL  PGM(OI310CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM) +
+                                                                  /* (520dA) */
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (520dA) */
+               GOTO BOTTOM                                        /* (520dA) */
+             ENDDO                                                /* (520dA) */
+
+/* Type = *ROUTE8, *WILL8, *SINGLE8                                  (650bA) */
+
+             IF         COND(&IMPTYPE = '*ROUTE8' *OR &IMPTYPE = +
+                          '*SINGLE8' *OR &IMPTYPE = '*WILL8') +
+                          THEN(DO)                                /* (650bA) */
+
+   /* Define message queues to use                                   (650bA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')           /* (650bA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')     /* (650bA) */
+
+   /* Create new member name                                         (650bA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (650bA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (650bA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)   /* (650bA) */
+
+   /* Rename members                                                 (650bA) */
+
+               RNMM       FILE(IMPFORDH8) MBR(&MBR) NEWMBR(&NEWMBR) /*(650bA)*/
+               RNMM       FILE(IMPFORDD8) MBR(&MBR) NEWMBR(&NEWMBR) /*(650bA)*/
+               IF         COND(&IMPTYPE = '*SINGLE8') THEN(DO  )   /*(650bA)*/
+                 RNMM       FILE(IMPFORDL) MBR(&MBR) NEWMBR(&NEWMBR) +
+                                                                  /* (650bA) */
+               ENDDO                                              /* (650bA) */
+               IF         COND(&IMPTYPE = '*WILL8') THEN(DO)      /* (650bA) */
+               ENDDO                                              /* (650bA) */
+               RNMM      FILE(IMPFORDHM8) MBR(&MBR) NEWMBR(&NEWMBR) /* (650bA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650bA)*/
+               RNMM      FILE(IMPFORDDM8) MBR(&MBR) NEWMBR(&NEWMBR) /* (650bA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650bA)*/
+               RNMM      FILE(IMPFORSF8) MBR(&MBR) NEWMBR(&NEWMBR)  /* (650bA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650bA)*/
+
+   /* Call program to do import                                      (650bA) */
+
+               CALL  PGM(OI320CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM) +
+                                                                  /* (650bA) */
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (650bA) */
+               GOTO BOTTOM                                        /* (650bA) */
+             ENDDO                                                /* (650bA) */
+
+/* Type = *ROUTE9, *WILL9, *SINGLE9                                  (730aA) */
+
+             IF         COND(&IMPTYPE = '*ROUTE9' *OR &IMPTYPE = +
+                          '*SINGLE9' *OR &IMPTYPE = '*WILL9') +
+                          THEN(DO)                                /* (730aA) */
+
+   /* Define message queues to use                                   (730aA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')           /* (730aA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')     /* (730aA) */
+
+   /* Create new member name                                         (730aA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (730aA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (730aA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('R' *CAT &NXTNUMA)   /* (730aA) */
+
+   /* Rename members                                                 (730aA) */
+
+               RNMM      FILE(IMPFORDH9) MBR(&MBR) NEWMBR(&NEWMBR) /* (730aA)*/
+               RNMM      FILE(IMPFORDHM9) MBR(&MBR) NEWMBR(&NEWMBR)/* (730aA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (730aA)*/
+               RNMM      FILE(IMPFORDD9) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFORDDM9) MBR(&MBR) NEWMBR(&NEWMBR)/* (730aA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (730aA)*/
+               RNMM      FILE(IMPFORSF) MBR(&MBR) NEWMBR(&NEWMBR)  /* (730aA)*/
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (730aA)*/
+
+   /* Call program to do import                                      (730aA) */
+
+               CALL  PGM(OI330CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM) +
+                                                                  /* (730aA) */
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (730aA) */
+               GOTO BOTTOM                                        /* (730aA) */
+             ENDDO                                                /* (730aA) */
+
+/* Type = *WILL */
+
+             IF COND(&IMPTYPE = '*WILL') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('W' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFORDH) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFORDHM) MBR(&MBR) NEWMBR(&NEWMBR) /* (510 A) */
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (510 A) */
+               RNMM       FILE(IMPFORDD) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFORDM) MBR(&MBR) NEWMBR(&NEWMBR) /* (500fA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (500fA) */
+               RNMM      FILE(IMPFORSF) MBR(&MBR) NEWMBR(&NEWMBR)  /* (650 A) */
+               MONMSG    MSGID(CPF3178 CPF0001)                    /* (650 A) */
+
+   /* Call program to do import */
+
+            /* CALL  PGM(OI250CL) PARM(&MBR &IMPTYPE &RUN &OUTQ &FORM)   414D*/
+            CALL  PGM(OI250CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM) /*414M*/
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+
+/* Type = *SINGLE */    /* 4.16 */
+
+             IF COND(&IMPTYPE = '*SINGLE') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPORD')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPORDERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('S' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFORDH) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM       FILE(IMPFORDD) MBR(&MBR) NEWMBR(&NEWMBR)
+
+   /* Call program to do import */
+
+            CALL  PGM(OI250CL) PARM(&NEWMBR &IMPTYPE &RUN &OUTQ &FORM) /*414M*/
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+/*                                                                   (520bA) */
+/* Type = *PCKADJ                                                    (520bA) */
+/*   or = *ADJDEMD or = *DEMDOLY.                                    (530 A) */
+
+/*           IF COND(&IMPTYPE = '*PCKADJ') THEN(DO)               /* (530 D) */
+             IF         COND(&IMPTYPE = '*PCKADJ'  +
+                         *OR &IMPTYPE =  '*ADJDEMD' +
+                         *OR &IMPTYPE = '*DEMDOLY') +
+                          THEN(DO)                                /* (530 M) */
+
+   /* Define message queues to use                                   (520bA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPADJ')           /* (520bA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPADJERR')     /* (520bA) */
+
+   /* Create new member name                                         (520bA) */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (520bA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (520bA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('K' *CAT &NXTNUMA)   /* (520bA) */
+
+   /* Rename members                                                 (520bA) */
+
+               RNMM       FILE(IMPFPCKQ) MBR(&MBR) NEWMBR(&NEWMBR) /*(520bA) */
+
+   /* Call program to do import                                      (520bA) */
+
+/*             CALL  PGM(HQ240CL) PARM(&NEWMBR &RUN &OUTQ &FORM)  /* (530 D) */
+               CALL       PGM(HQ240CL) PARM(&IMPTYPE &NEWMBR &RUN +
+                            &OUTQ &FORM)                          /* (530 M) */
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (520bA) */
+               GOTO BOTTOM                                        /* (520bA) */
+             ENDDO                                                /* (520bA) */
+
+/* Type = *PO */
+
+             IF COND(&IMPTYPE = '*PO') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPPO')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPPOERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('P' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFPOH) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM       FILE(IMPFPOD) MBR(&MBR) NEWMBR(&NEWMBR)
+
+   /* Call program to do import */
+
+               CALL  PGM(PI250CL) PARM(&NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+
+/* Type = *PO2 */
+
+             IF COND(&IMPTYPE = '*PO2') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPPO')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPPOERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('P' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFPOH2) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM       FILE(IMPFPOD2) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFPOHM) MBR(&MBR) NEWMBR(&NEWMBR) /* (510bA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (510bA) */
+               RNMM      FILE(IMPFPODM) MBR(&MBR) NEWMBR(&NEWMBR) /* (530bA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (530bA) */
+
+   /* Call program to do import */
+
+               CALL  PGM(PI260CL) PARM(&NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+
+/* Type = *PO2MP & *PO2MT - Multi-Warehouse P/O Import.              (640aA) */
+
+             IF         COND(&IMPTYPE = '*PO2MP' +
+                         *OR &IMPTYPE = '*PO2MT') THEN(DO)        /* (640aA) */
+
+   /* Define message queues to use                                   (640aA) */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPPO')            /* (640aA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPPOERR')
+
+   /* Create new member name                                         (640aA) */
+                                                                  /* (640aA) */
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (640a45 */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (640aA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('P' *CAT &NXTNUMA)   /* (640aA) */
+
+   /* Rename members                                                 (640aA) */
+
+               RNMM       FILE(IMPFPOH2M) MBR(&MBR) NEWMBR(&NEWMBR) /*(640aA)*/
+               RNMM      FILE(IMPFPOHMM) MBR(&MBR) NEWMBR(&NEWMBR) /*(640aA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (640aA) */
+               RNMM       FILE(IMPFPOD2M) MBR(&MBR) NEWMBR(&NEWMBR) /*(640aA)*/
+               RNMM      FILE(IMPFPODMM) MBR(&MBR) NEWMBR(&NEWMBR) /*(640aA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (640aA) */
+
+   /* Call program to do import                                      (640aA) */
+
+               CALL       PGM(PI400CL) PARM(&IMPTYPE &NEWMBR &RUN +
+                            &OUTQ &FORM)                          /* (640aA) */
+                                                                  /* (640aA) */
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (640aA) */
+               GOTO BOTTOM                                        /* (640aA) */
+             ENDDO                                                /* (640aA) */
+
+/* Type = *POSD1                                                     (650cA) */
+
+             IF COND(&IMPTYPE = '*POSD1') THEN(DO)                /* (650cA) */
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPPO')            /* (650cA) */
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPPOERR')      /* (650cA) */
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)              /* (650cA) */
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)            /* (650cA) */
+               CHGVAR     VAR(&NEWMBR) VALUE('P' *CAT &NXTNUMA)   /* (650cA) */
+
+   /* Rename members */
+
+               RNMM      FILE(IMPFPOSD) MBR(&MBR) NEWMBR(&NEWMBR) /* (650cA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (650cA) */
+
+   /* Call program to do import */
+
+               CALL  PGM(PI410CL) PARM(&NEWMBR &RUN &OUTQ &FORM)  /* (650cA) */
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')               /* (650cA) */
+               GOTO BOTTOM                                        /* (650cA) */
+             ENDDO                                                /* (650cA) */
+
+/* Type = *ITEM */
+
+             IF COND(&IMPTYPE = '*ITEM') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPITEM')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPITEMERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('I' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFITEM) MBR(&MBR) NEWMBR(&NEWMBR)
+
+   /* Call program to do import */
+
+               CALL  PGM(II230CL) PARM(&NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+
+/* Type = *ITEM2      Begin 4.17 Changes here.                                */
+
+             IF COND(&IMPTYPE = '*ITEM2') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPITEM')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPITEMERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('I' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFITMN) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFITMM) MBR(&MBR) NEWMBR(&NEWMBR) /* (510aA) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (510aA) */
+
+   /* Call program to do import */
+
+               CALL  PGM(II260CL) PARM(&NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO  /* End 4.17 changes here.                                 */
+
+/* Type = *ITM2FUL    Begin 5.00a Changes here.                               */
+/*        *ITM2PAR                                                            */
+
+             IF COND(&IMPTYPE = '*ITM2FUL' *or &IMPTYPE = '*ITM2PAR') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPITEM')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPITEMERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('I' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFITMN) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM      FILE(IMPFITMM) MBR(&MBR) NEWMBR(&NEWMBR) /* (520 A) */
+               MONMSG    MSGID(CPF3178 CPF0001)                   /* (520 A) */
+
+   /* Call program to do import */
+
+               CALL  PGM(II270CL) PARM(&IMPTYPE &NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO  /* End 5.00a changes here.                                */
+
+/* Type = *ITEM3      Begin 5.10a Changes here.                               */
+
+             IF         COND(&IMPTYPE = '*ITEM3' *OR &IMPTYPE = +
+                          '*ITM3PAR' *OR &IMPTYPE = '*ITM3FUL') +
+                        THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPITEM')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPITEMERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('I' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFITM3) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM       FILE(IMPFITMM) MBR(&MBR) NEWMBR(&NEWMBR)
+               MONMSG     MSGID(CPF3178 CPF0001)
+
+   /* Call program to do import */
+
+               CALL  PGM(II280CL) PARM(&IMPTYPE &NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO  /* End 5.10a changes here.                                */
+
+/* Type = *ITEM4      Begin 5.10c Changes here.                               */
+
+             IF         COND(&IMPTYPE = '*ITEM4' *OR &IMPTYPE = +
+                          '*ITM4PAR' *OR &IMPTYPE = '*ITM4FUL') +
+                        THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPITEM')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPITEMERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('I' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFITM4) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM       FILE(IMPFITMM) MBR(&MBR) NEWMBR(&NEWMBR)
+               MONMSG     MSGID(CPF3178 CPF0001)
+
+   /* Call program to do import */
+
+               CALL  PGM(II290CL) PARM(&IMPTYPE &NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO  /* End 5.10c changes here.                                */
+
+   /* Convert Item4 to Staging */
+             IF         COND(&IMPTYPE = '*ITM4STGP' *OR &IMPTYPE = +
+                          '*ITM4STGF') THEN(DO)                   /* (720aA) */
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPITEM')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPITEMERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('I' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFITM4) MBR(&MBR) NEWMBR(&NEWMBR)
+               RNMM       FILE(IMPFITMM) MBR(&MBR) NEWMBR(&NEWMBR)
+               MONMSG     MSGID(CPF3178 CPF0001)
+
+   /* Call program to do import */
+
+               CALL  PGM(II400CL) PARM(&IMPTYPE &NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO  /* End 5.10c changes here.                                */
+
+/* Type = *ORDQTY */         /* 413A */
+
+             IF COND(&IMPTYPE = '*ORDQTY') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPQTY')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPQTYERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('Q' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFITMO) MBR(&MBR) NEWMBR(&NEWMBR)
+
+   /* Call program to do import */
+
+               CALL  PGM(II250CL) PARM(&NEWMBR &RUN &OUTQ &FORM +
+                                       'Y' '*ALL')
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+
+/* Type = *HMSLT */         /* 414aA */
+
+             IF COND(&IMPTYPE = '*HMSLT') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPHSLT')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPHSLTERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('H' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFHSLT) MBR(&MBR) NEWMBR(&NEWMBR)
+
+   /* Call program to do import */
+
+             CALL       PGM(HI250CL) PARM(&NEWMBR &RUN &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO
+
+/* Type = *UPC   */         /* 500 A */
+
+             IF COND(&IMPTYPE = '*UPC  ') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPUPC')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPUPCERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('U' *CAT &NXTNUMA)
+
+   /* Rename members */
+
+               RNMM       FILE(IMPFUPC) MBR(&MBR) NEWMBR(&NEWMBR)
+
+   /* Call program to do import */
+
+               CALL       PGM(UC210CL) PARM(&NEWMBR &RUN *YES &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO      /* (500 A) */
+
+/* Type = *GOALTIM                                                   (520cA) */
+
+             IF COND(&IMPTYPE = '*GOALTIM') THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPGOAL')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPGOALERR')
+
+   /* Create new member name */
+
+               CALL       PGM(PIRFTP#) PARM(&NXTNUM)
+               CHGVAR     VAR(&NXTNUMA) VALUE(&NXTNUM)
+               CHGVAR     VAR(&NEWMBR) VALUE('U' *CAT &NXTNUMA)
+
+   /* Rename member */
+
+               RNMM       FILE(IMPFGOAL) MBR(&MBR) NEWMBR(&NEWMBR)
+
+   /* Call program to do import */
+
+               CALL       PGM(GT150CL) PARM(&NEWMBR &RUN *YES &OUTQ &FORM)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO                                                /* (520cA) */
+
+/* Type = *RTESAP     Begin SAP Parse & Import.    6.40                       */
+
+             IF         COND(&IMPTYPE = '*RTESAP') +
+                        THEN(DO)
+
+   /* Define message queues to use */
+
+               CHGVAR     VAR(&FTPMSGQ) VALUE('IMPITEM')
+               CHGVAR     VAR(&FTPERRMSGQ) VALUE('IMPITEMERR')
+
+   /* Call program to process IFS files */
+               CALL       PGM(PIRDIR)
+
+               CHGVAR     VAR(&FINISHED) VALUE('1')
+               GOTO BOTTOM
+             ENDDO  /* End *RTESAP changes here.                            */
+
+
+/*  Receive any messages and pass them on  */
+
+ GETOUT:
+
+             CHGVAR     VAR(&ERRCNT) VALUE(&ERRCNT + 1)
+             IF COND(&ERRCNT = 3) THEN(GOTO CMDLBL(BOTTOM))
+
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import FAILED, see following +
+                          message(s):' *BCAT &MBR *TCAT '/' *CAT +
+                          &IMPTYPE *TCAT '/' *CAT &RUN *TCAT '/' *CAT +
+                          &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPMSGQ) MSGTYPE(*INFO)
+             SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Import FAILED, see following +
+                          message(s):' *BCAT &MBR *TCAT '/' *CAT +
+                          &IMPTYPE *TCAT '/' *CAT &RUN *TCAT '/' *CAT +
+                          &JOB *TCAT '/' *CAT &USER) +
+                          TOMSGQ(&FTPERRMSGQ) MSGTYPE(*INFO)
+
+ NEXTMSG:    DO
+             RCVMSG     PGMQ(*SAME *) MSGQ(*PGMQ) MSGDTA(&MSGDTA) +
+                          MSGID(&MSGID) SEV(&SEV) +
+                          MSGF(&MSGF) MSGFLIB(&MSGFLIB)
+             IF         COND(&MSGID *EQ ' ') THEN(GOTO CMDLBL(NOMSG))
+
+             IF COND(&TYPE = '1') THEN(DO)
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) MSGTYPE(*COMP)
+             ENDDO
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                     MSGDTA(&MSGDTA) TOMSGQ(&FTPMSGQ) MSGTYPE(*COMP)
+
+               SNDPGMMSG  MSGID(&MSGID) MSGF(&MSGFLIB/&MSGF) +
+                          MSGDTA(&MSGDTA) TOMSGQ(&FTPERRMSGQ) +
+                          MSGTYPE(*COMP)
+
+             GOTO       CMDLBL(NEXTMSG)
+             ENDDO
+ NOMSG:
+
+ BOTTOM:
+
+        /*  Send '*Escape' message to caller */
+
+               IF COND(&FINISHED = '0') THEN(DO)
+                 SNDPGMMSG  MSGID(CPF9898) MSGF(QSYS/QCPFMSG) +
+                          MSGDTA('Error Occured Processing Member' +
+                          *BCAT &MBR) MSGTYPE(*ESCAPE)
+               ENDDO
+
+               RCLRSC     LVL(*CALLER)
+
+             ENDPGM

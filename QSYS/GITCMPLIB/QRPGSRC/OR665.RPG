@@ -1,0 +1,362 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1994 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  OR665     Catch weight Report.
+     F*  14 July, 2000
+     F*  Hemant Kapadia
+     F*
+     F*  Revisions:
+     F*
+415 AF*    02/16/01  DAS  4.15
+     F*      - Added REPORTS override for OR665PR.
+     F*
+416 AF*    05/31/02  MLB  4.16
+     F*      - OR665PR changed.  Warehouse department added to
+     F*        report.  No program changes. Compile only.
+     *
+530 A*    11/08/10  MLB  5.30
+     *      - Enh: Revised program to use OUTQ instead of DEV when
+     *        processing OVRPRTF cmd.
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*  9X        Top of page and level X continues.
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FOR665   IP  E           K        DISK
+     F*AREHS  IF  E           K        DISK
+     FRTEHED  IF  E           K        DISK
+415 DF**665PR O   E             90     PRINTER
+415 MFOR665PR O   E             90     PRINTER                        UC
+     E*----------------------------------------------------------------
+     E*
+     E*  Table and array
+     E*
+415 AE                    A80        80  1
+     E                    TTL     1   2 40
+     E                    RPD     1   5 25
+     E                    RECK        5  7 0
+     E                    LVLK        5  7 0
+     E*
+     E                    QPCK        5  5 0
+     E                    CUBE        5  9 3
+     E                    WGHT        5  9 2
+415 AE                    OVRPRT  1   1 80
+     E*
+     I*----------------------------------------------------------------
+     I              'Unload Seq:'         C         @UNLD
+     I              'Compartment:'        C         @COMP
+404 AI              'Pallet:'             C         @PALT
+     I*----------------------------------------------------------------
+     IOQREC
+     I                                              LBTRN#L1
+     C*----------------------------------------------------------------
+     C*  Let the show begin .....
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $CMD    8
+     C                     PARM           $RTYPE  8
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C*
+     C*  Start new page if one of following happened.
+     C*     - Overflow occurred.
+     C*
+     C           *IN90     IFEQ *ON
+     C           FIRST     OREQ *ON
+415 AC                     EXSR OPNPRT
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     ENDIF
+     C*
+     C*  Init total levels
+     C*
+     C*  Level 1 break - Item
+     C*
+     C           *INL1     IFEQ *ON
+     C                     Z-ADD1         L
+     C                     EXSR ZRZERO
+     C                     ENDIF
+     C*
+     C*                    MOVE *BLANKS   $CSTR
+     C*                    MOVE *BLANKS   CUST#
+     C*                    MOVE OHCUST    $CSTR
+     C*                    CALL 'ADJUST'
+     C*                    PARM '*LEFT   '$CCMD   8
+     C*                    PARM           $CSTR  30
+     C*                    MOVEL$CSTR     CUST#  11
+     C*                    MOVELOHCNAM    CSNAME
+     C*
+     C*  Print headings.
+     C*
+     C           *IN91     IFEQ *ON
+     C           *INL1     OREQ *ON
+     C                     WRITESKIP1
+     C                     ENDIF
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C* Detail Calcs
+     C*
+     C                     WRITEDETAIL1
+     C*
+     C*  Accumulate totals
+     C*
+     C                     ADD  LBQPCK    QPCK,1
+     C                     ADD  LBCUBE    CUBE,1
+     C                     ADD  LBSWGT    WGHT,1
+     C*
+     C*  Increment record counters
+     C*
+     C                     ADD  1         RECK,1
+     C                     ADD  1         LVLK,1
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE *OFF      *IN91
+     C                     MOVE *OFF      FIRST
+     C*----------------------------------------------------------------
+     C*
+     C* Item totals
+     C*
+     CL1                   Z-ADD1         L
+     CL1                   EXSR ZRROLL
+     C*
+     C**         RECK,L    IFGT 0
+     C**         *IN90     IFEQ *ON
+     C**                   EXSR ZRHEAD
+     C**                   ENDIF
+     C***                  EXSR ZRTOTL
+     C**                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C* Batch totals
+     C*
+     CLR                   Z-ADD2         L
+     C*
+     CLR         RECK,L    IFGT 0
+     CLR         *IN90     IFEQ *ON
+     CLR                   EXSR ZRHEAD
+     CLR                   ENDIF
+     CLR                   EXSR ZRTOTL
+     CLR                   WRITEFOOT1
+     CLR                   ENDIF
+     C*----------------------------------------------------------------
+     C*
+     C*          SUBROUTINES IN ALPHABETICAL ORDER
+     C*
+     C*----------------------------------------------------------------
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     C           *INZSR    BEGSR
+     C*
+     C                     TIME           TIME
+     C                     MOVE *ON       FIRST   1
+     C                     Z-ADD1         L       10
+     C                     EXSR ZRZERO
+415 AC*
+415 AC*  Variables and constants.
+415 AC*
+415 ACSR         *LIKE     DEFN $WHSE     LSTWHS
+415 ACSR         *LIKE     DEFN $DEV      LSTDEV
+415 ACSR         *LIKE     DEFN $FORM     LSTFRM
+     C*
+     C                     ENDSR
+415 AC*----------------------------------------------------------------
+415 AC*
+415 AC*  OPNPRT  Open printer file.
+415 AC*
+415 ACSR         OPNPRT    BEGSR
+     C*
+     C*   Get device and form type for department.
+     C*
+     CSR         LBWHSE    IFNE LSTWHS
+     CSR                   CALL 'GETRPT'
+     CSR                   PARM '*DEVFORM'$CMD    8
+     CSR                   PARM 'OR665PR' $LRPT  10
+     CSR                   PARM LBWHSE    $WHSE   30
+     CSR                   PARM ' '       $STYP   1
+     CSR                   PARM ' '       $WHDP   5
+     CSR                   PARM           $DESC  50
+     CSR                   PARM           $DEV   10
+     CSR                   PARM           $FORM  10
+     CSR                   Z-ADD$WHSE     LSTWHS
+     CSR                   ENDIF
+     C*
+     C*   Open printer file for department.
+     C*
+     CSR         OPENED    IFNE *ON
+     CSR         $DEV      ORNE LSTDEV
+     CSR         $FORM     ORNE LSTFRM
+     C*
+     C*      If printer already open then close it.
+     C*
+     CSR         OPENED    IFEQ *ON
+     CSR                   CLOSEOR665PR
+     CSR                   ENDIF
+     C*
+     C*      Override printer file.
+     C*
+     C*          OVRPRTF FILE(OR665PR) OUTQ(*DEV) DEV($dev)
+     C*                  FORMTYPE($form)
+     C*
+     CSR                   MOVEAOVRPRT,1  A80
+     CSR                   MOVEA$DEV      A80,38
+     CSR                   MOVEA$FORM     A80,59
+     CSR                   MOVEAA80       QCMD
+     C*
+     CSR                   CALL 'QCMDEXC'
+     CSR                   PARM           QCMD   80
+     CSR                   PARM 80        QLEN   155
+     C*
+     C*      Open printer file.
+     C*
+     CSR                   OPEN OR665PR
+     CSR                   MOVE *ON       OPENED  1
+     CSR                   MOVE $DEV      LSTDEV
+     CSR                   MOVE $FORM     LSTFRM
+     C*
+     CSR                   ENDIF
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Format report title.
+     C*
+     C           $RTYPE    IFEQ '*SUMMARY'
+     C                     MOVE TTL,1     TITLE
+     C                     ELSE
+     C                     MOVE TTL,2     TITLE
+     C                     ENDIF
+     C                     MOVELTITLE     $PSTR  60
+     C                     Z-ADD40        $PLEN   30
+     C*
+     C*   Center report title.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     TITLE
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     MOVELWHDESC    $PSTR  60
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*   Format Route number.
+     C*
+     C           RTKEY     KLIST
+     C                     KFLD           LBWHSE
+     C                     KFLD           LBRTE
+     C           RTKEY     CHAINRTEHED               79
+     C           *IN79     IFEQ *ON
+     C                     MOVE *BLANKS   RHRTE
+     C                     ENDIF
+     C                     MOVE *BLANKS   BATCH
+     C                     MOVE *BLANKS   $PSTR
+     C           BATCH     CAT  'Route:':1BATCH
+     C           BATCH     CAT  RHRTE:1   BATCH
+     C                     MOVELBATCH     $PSTR  60
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center batch/route description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR  60
+     C                     PARM           $PLEN   30
+     C                     MOVEL$PSTR     BATCH
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRHEAD    BEGSR
+     C*
+     C           *INL1     IFEQ *OFF
+     C                     MOVE *ON       *IN91
+     C                     END
+     C*
+     C                     MOVE *OFF      *IN90
+     C*
+     C                     WRITEHEAD1
+     C                     WRITECOLUMNS
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRROLL    BEGSR
+     C*
+     C           *LIKE     DEFN L         M
+     C           L         ADD  1         M
+     C*
+     C                     ADD  1         LVLK,M
+     C                     ADD  RECK,L    RECK,M
+     C*
+     C                     ADD  QPCK,L    QPCK,M
+     C                     ADD  CUBE,L    CUBE,M
+     C                     ADD  WGHT,L    WGHT,M
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRTOTL    BEGSR
+     C*
+     C                     Z-ADDQPCK,L    T#QPCK
+     C*                    Z-ADDCUBE,L    T#CUBE
+     C*                    Z-ADDWGHT,L    T#WGHT
+     C*
+     C                     MOVE RPD,L     $RPD
+     C                     WRITESKIP1
+     C                     WRITETOTAL1
+     C*
+     C                     ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRZERO    BEGSR
+     C*
+     C                     Z-ADD0         LVLK,L
+     C                     Z-ADD0         RECK,L
+     C*
+     C*                    Z-ADD0         CLS,L
+     C                     Z-ADD0         QPCK,L
+     C                     Z-ADD0         CUBE,L
+     C                     Z-ADD0         WGHT,L
+     C*
+     C                     ENDSR
+      *----------------------------------------------------------------
+      *
+      * Compile time tables
+      *
+**      TTL   Report title descriptions
+Catch Weight Report
+Catch Weight Report
+**      RPD   Report level descriptions
+
+ ** Totals    **
+
+
+
+**   OVRPRTF statment
+OVRPRTF FILE(OR665PR)           OUTQ(XXXXXXXXXX) FORMTYPE(XXXXXXXXXX)

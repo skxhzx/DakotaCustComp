@@ -1,0 +1,404 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 1993 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   799 Roosevelt Rd.  Bldg 6, Suite 108
+     F*   Glen Ellyn, IL  60137
+     F*   (708) 790-8383
+     F*----------------------------------------------------------------
+     F*
+     F*  RN161A    Customer returns report
+     F*  Roxanne Harrison
+     F*  12 May, 1999
+     F*
+     F*  Revisions
+     F*
+416 AF*    10/19/01  MLB  4.16
+     F*      - Field added to RN161A. Re-compile only.
+     F*
+500 AF*    01/07/05  RLP  5.00
+     F*      - Added field OROLB# to RN161A
+     F*      - Adding columns Disp Code, Route, Stop, Memo, Tran#
+     F*        to the report (City Line mod request)
+     F*      - Removed printing of Detail2 line-unecessary
+     F*
+500aAF*    01/12/05  RLP  5.00
+     F*      - Fix: Change from using LABEL file to using logical ORDH5
+     F*        since when entering a return, the user always enters
+     F*        Cust Order#
+500bAF*    01/24/05  RLP  5.00
+     F*      - Fix: Added ORTRN# to query file RN161A to get original
+     F*        TRN# instead of Batch#
+500cAF*    01/26/05  RLP  5.00
+     F*      - Fix: If ORTRN# is zero (as in when return entered just using
+     F*        ITEM#), we need to get back to original trans# so using ORDH5
+     F*        info we are going to read NEW logical LABEL93 looking for
+     F*        corresponding record(s), since the picked item could exist on
+     F*        multiple pallets we are going to print a double asterisk next
+     F*        Tran# on the report to indicate same if true
+510 AF*    03/26/07  RBD  5.10
+     F*      - Add printing of emp# and original selector.
+520aAF*    07/01/08  RH   5.20a
+     F*      - Fix: 500c change was getting return transaction in
+     F*        ZGTRAN when OHORD=0, add condition OHORD<>0.
+520bAF*    04/01/08  RH   5.20b
+     F*      - Enh: Add ORINV# to report.                              sing
+530a A*    11/24/09  GJA  5.30a
+     A*      - Enh:  Reinstated detail2, added ORORD, OROORD
+530b A*    07/29/10  RH   5.30b
+     A*      - Enh:  Add customer #
+640aAF*    03/18/11  RH   6.40a
+     F*      - Enh: Revised program to add support for Client id
+640bAF*    01/12/12  RH   6.40b
+     F*      - Enh: Add Customer name to detail 2 line.
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: Dairyland
+     F*
+DRYaAF*    03/18/11  RH   DRYa
+     F*      -  Enh: Revised program get Cust # from OHMISC field
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FRN161A  IP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+500cDF*ABEL   IF  E           K        DISK
+500aAFORDH5   IF  E           K        DISK
+500 AFRTEHED  IF  E           K        DISK
+500cAFLABEL93 IF  E           K        DISK
+510 AFPIRTRAN IF  E           K        DISK
+510 AFPIRUSER1IF  E           K        DISK
+     FRN161APRO   E             90     PRINTER
+640aAI*----------------------------------------------------------------
+640aAI*  Customer id
+640aAI*
+DRYaA /COPY QCOPYSRC,IL#DAIRYLA
+     I*****************************************************************
+     IOQREC
+     I                                              ORITEML2
+     I                                              ORRDTEL1
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $FROM  - From date - returned as unpacked numeric
+     C*      $TO    - To date - returned as unpacked numeric
+     C*      $ITEM  - Item # or *all
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $FROM   8
+     C                     PARM           $TO     8
+     C                     PARM           $ITEM  15
+     C                     PARM           $CODE   2
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C           *IN90     IFEQ '1'
+     C           FIRST     OREQ '1'
+     C                     MOVE '1'       *IN95
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C*  L2 break - Item change.
+     C*
+     C           *INL2     IFEQ '1'
+     C                     MOVE '1'       *IN92
+     C                     END
+     C*
+     C*  L1 break - Date change.
+     C*
+     C           *INL1     IFEQ '1'
+     C                     MOVE '1'       *IN91
+     C                     END
+     C*
+     C* Detail Calcs
+     C*
+     C           ORRTIM    DIV  100       W1TIME  40
+     C*
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE ORRDTE    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    W1DATE  60
+500cAC                     MOVE *BLANKS   W1MLT#
+500 AC*
+500 AC*    Go out and get Route & Stop, send to print.
+500 AC*
+500aDC*          OROLB#    CHAINLABEL                79
+500aAC           ORDKEY    CHAINORDH5                79
+500 AC           *IN79     IFEQ *OFF
+500aAC                     MOVE OHSTOP    W1STP
+500aAC                     MOVE ORWHSE    WHSKEY
+500aAC                     MOVE OHRTE     RTEKEY
+530bAC                     Z-ADDOHCUST    W1CUST
+640bAC                     MOVE OHCNAM    W1CNAM
+DRYaAC           CLIENT    IFEQ DAIRYL
+DRYaAC                     MOVE *ON       *IN66
+DRYaAC                     MOVE OHMISC    W1EDIT 10
+DRYaAC                     MOVELW1EDIT    W1CSTA 11
+DRYaAC                     ENDIF
+500 AC                     ELSE
+500 AC                     Z-ADD*ZEROS    W1STP
+500 AC                     Z-ADD*ZEROS    WHSKEY
+500 AC                     MOVE *BLANKS   RTEKEY
+530bAC                     Z-ADD*ZEROS    W1CUST
+640bAC                     MOVE *BLANKS   W1CNAM
+DRYaAC           CLIENT    IFEQ DAIRYL
+DRYaAC                     MOVE *ON       *IN66
+DRYaAC                     MOVE *BLANKS   W1EDIT
+DRYaAC                     MOVE *BLANKS   W1CSTA
+DRYaAC                     ENDIF
+500 AC                     ENDIF
+     C*
+500 AC           RTHKEY    CHAINRTEHED               79
+500 AC           *IN79     IFEQ *OFF
+500 AC                     MOVE RHRTE     W1RTE
+500 AC                     ELSE
+500 AC                     MOVE *BLANKS   W1RTE
+500 AC                     ENDIF
+     C*
+     C*    Send Disposition Code and Batch(Tran#) to print.
+     C*
+500 AC                     MOVE *BLANKS   W1DSPC  5
+500 AC                     Z-ADD*ZEROS    W1TRN#
+500 AC                     MOVE ORDCOD    W1DSPC
+500bDC*                    MOVE ORPBAT    W1TRN#
+500bAC                     MOVE ORTRN#    W1TRN#
+500cAC           ORTRN#    IFEQ 0
+520aAC           OHORD     ANDNE0
+500cAC                     EXSR ZGTRAN
+500cAC                     ENDIF
+500cDC*          OROLB#    CHAINLABEL                79
+500cDC*          *IN79     IFEQ *OFF
+500cDC*                    MOVE LBTRN#    W1TRN#
+500cDC*                    ELSE
+500cDC*                    MOVE *BLANKS   W1TRN#
+500cDC*                    ENDIF
+     C*
+     C*    Format Memo field to print.
+     C*
+520bMC*                    MOVE *BLANKS   W1MEM1 17
+520bDC                     MOVE *BLANKS   W1MEM1 30
+520aMC                     MOVE *BLANKS   W1MEM2 15
+411 DC*                    MOVELIAMEMO    W1MEM1
+    DC*                    MOVE IAMEMO    W1MEM2
+520bDC*                    MOVE ORRMEM    W1MEM1
+520bMC                     MOVELORRMEM    W1MEM1
+530aMC                     MOVE ORRMEM    W1MEM2
+520b C*
+520b C*    Move Inv# field to print.
+520b C*
+520bAC                     MOVE ORINV#    W1INV# 12
+530a C*    Move order# and original order#
+530a C*
+530aAC                     MOVE ORORD     W1ORD
+530aAC                     MOVE OROORD    W1OORD
+     C*
+     C*    Create a quantity string to print.
+     C*
+     C                     MOVE '*QTY2STR'$PCMD
+     C                     Z-ADDORQTY1    $PQTY1
+     C                     Z-ADDORQTY2    $PQTY2
+     C                     Z-ADDORQTY3    $PQTY3
+     C                     MOVE *BLANKS   $PQSTR
+     C*
+     C                     CALL 'CVTQTY'
+     C                     PARM           $PCMD   8
+     C                     PARM           $PPRG  10
+     C                     PARM           $PQTY1  70
+     C                     PARM           $PQTY2  70
+     C                     PARM           $PQTY3  70
+     C                     PARM           $PUM1   2
+     C                     PARM           $PUM2   2
+     C                     PARM           $PUM3   2
+     C                     PARM           $PQSTR 10
+     C                     PARM           $PUSTR 17
+     C                     PARM           $PRTN   8
+     C                     PARM           $PERM
+     C*
+     C                     MOVE $PQSTR    W1QTY
+510 AC                     Z-ADD0         W1EMP#
+510 AC                     MOVE *BLANKS   W1NAM
+510 AC                     MOVEL'*NONE'   W1NAM
+510 AC           W1TRN#    CHAINPIRTRAN              79
+510 AC           *IN79     IFEQ *OFF
+510 AC                     Z-ADDPTEMP#    W1EMP#
+510 AC           PTEMP#    CHAINPIRUSER1             79
+510 AC           *IN79     IFEQ *OFF
+510 AC                     MOVE *BLANKS   W1NAM
+510 AC           USFNAM    CAT  USLNAM:1  W1NAM
+510 AC                     ENDIF
+510 AC                     ENDIF
+     C                     WRITEDETAIL1
+     C*
+500 DC*          W1MEM2    IFNE *BLANKS
+DRYaAC                     SELEC
+DRYaAC           CLIENT    WHEQ DAIRYL
+DRYaAC                     WRITEDETAILD
+DRYaAC                     OTHER
+530aMC                     WRITEDETAIL2
+DRYaAC                     ENDSL
+500 DC*                    ENDIF
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE '0'       FIRST
+     C                     MOVE '0'       *IN91
+     C                     MOVE '0'       *IN92
+     C*
+     CL1                   WRITESKIP1
+     C*
+     CLRN95                EXSR ZRFRMT
+     CLRN95                EXSR ZRHEAD
+     CLRN95                WRITEDETAIL3
+     CLR                   WRITEFOOT1
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+     C*
+640aAC*
+640aAC* Get client id.
+640aAC*
+640aAC           *NAMVAR   DEFN PIRCLIENT CLIENT 10
+640aAC                     IN   CLIENT
+     C*
+     C*  Define Keys
+     C*
+500aAC           ORDKEY    KLIST
+500aAC                     KFLD           ORWHSE
+500aAC                     KFLD           ORORD
+     C*
+500 AC           RTHKEY    KLIST
+500 AC                     KFLD           WHSKEY  30
+500 AC                     KFLD           RTEKEY  5
+     C*
+500cAC           LBLKEY    KLIST
+500cAC                     KFLD           ORWHSE
+500cAC                     KFLD           OHORD
+500cAC                     KFLD           ORITEM
+     C*
+500cACSR                   MOVE *OFF      FOREVR  1
+     CSR                   TIME           TIME
+     CSR                   MOVE '1'       FIRST   1
+     C*
+     C*   Convert dates to MMDDYY format.
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $FROM     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1FROM  60
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $TO       $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1TO    60
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           ORWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*
+     C*   Move item # .
+     C*
+     C                     MOVE *BLANKS   ITEM
+     C                     MOVEL$ITEM     ITEM
+     CSR         $CODE     IFEQ *BLANKS
+     CSR                   MOVE '*ALL'    CODE
+     CSR                   ELSE
+     CSR                   MOVEL$CODE     CODE
+     CSR                   ENDIF
+     C                     ENDSR
+     C*****************************************************************
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         *INL1     IFEQ '0'
+     CSR                   MOVE '1'       *IN91
+     CSR                   END
+     C*
+     CSR         *INL2     IFEQ '0'
+     CSR                   MOVE '1'       *IN92
+     CSR                   END
+     C*
+     CSR                   MOVE '0'       *IN90
+     CSR                   WRITEHEAD1
+     CSR                   WRITECOLUMNS
+     C*
+     CSR                   ENDSR
+     C*****************************************************************
+     C*
+     C*  Get tran# based on ORORD
+     C*
+500cACSR         ZGTRAN    BEGSR
+     C*
+500cACSR                   MOVE *BLANKS   W1MLT#
+500cACSR         LBLKEY    SETLLLABEL93
+500cACSR         FOREVR    DOWEQFOREVR
+500cACSR         LBLKEY    READELABEL93                  79
+500cACSR         *IN79     IFEQ *ON
+500cACSR                   LEAVE
+500cACSR                   ENDIF
+500cACSR                   MOVE LBTRN#    W1TRN#
+500cACSR         LBLKEY    READELABEL93                  79
+500cACSR         *IN79     IFEQ *ON
+500cACSR                   LEAVE
+500cACSR                   ELSE
+500cACSR                   MOVE '**'      W1MLT#
+500cACSR                   LEAVE
+500cACSR                   ENDIF
+500cACSR                   ENDDO
+     C*
+500cACSR                   ENDSR

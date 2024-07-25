@@ -1,0 +1,316 @@
+     F*----------------------------------------------------------------
+     F*   Copyright (C) 2005 BFC Software, Inc. - All Rights Reserved
+     F*   BFC Software, Inc.
+     F*   245 W. Roosevelt Rd.  Bldg 8, Suite 51
+     F*   West Chicago, IL  60185
+     F*   (630) 562-0375
+     F*----------------------------------------------------------------
+     F*
+     F*  IT313E    Item/Slot activity report Item/Close dt/trans
+     F*  Hemant Kapadia
+     F*  Roxanne Harrison
+     F*  20 February, 2006
+     F*
+     F*----------------------------------------------------------------
+     F*  Revisions
+     F*
+500a F*    02/20/06  RH
+     F*      - Created
+     F*
+     F*----------------------------------------------------------------
+     F*  Client Custom Revisions: BiRite
+     F*
+BIR AF*    09/27/05  MLB  BIR
+     F*      - Revised program to call GETHINFO to retrieve Date
+     F*        Last Sold. Added code to write BiRite specific
+     F*        column headings (COLBIR) and detail line (DTLBIR).
+     F*
+     F*----------------------------------------------------------------
+     F*  Indicator usage
+     F*
+     F*  79        Not on file/End of file indicator
+     F*  90        Overflow Indicator
+     F*
+     F*----------------------------------------------------------------
+     F*  File Specs
+     F*
+     FIT313D  IP  E           K        DISK
+     FWAREHS  IF  E           K        DISK
+     FIT313EPRO   E             90     PRINTER
+     E*----------------------------------------------------------------
+     E*  Table and array definitions
+     E*
+415aME                    TABT    1   7  1
+415aME                    TABTYP  1   7 10
+416aME                    MSGL    1   1 18
+412 DE*                   TABT    1   4  1
+412 DE*                   TABTYP  1   4 10
+     I*****************************************************************
+     IWKREC
+     I                                              WKITEML2
+     I                                              WKDATEL1
+500 AI*----------------------------------------------------------------
+500 AI*  Customer id
+500 AI*
+500 AI              'GETCLIENT'           C         @GETCL
+500 AI*
+BIR A /COPY QCOPYSRC,IL#BIRITE
+BIR AI*----------------------------------------------------------------
+BIR AI*
+BIR AI*  Program parameters
+BIR AI*
+BIR AI$LPARM      DS
+BIR AI                                        1   8 $LCMD
+BIR AI                                        9  18 $LPRG
+BIR AI                                       19  68 $LUKY
+BIR AI                                       69  76 $LRTN
+BIR AI                                       77 136 $LERM
+BIR AI                                       77  80 $LMSG
+BIR AI*
+BIR AI*   Redefine key
+BIR AI*
+BIR AI                                       19  210$LWHSE
+BIR AI                                       22  36 $LITEM
+BIR AI                                       37  420$LLSLD
+BIR AI*
+     I*----------------------------------------------------------------
+     I*  Called programs
+     I*
+     I              'CVTDTE'              C         @CVTDT
+     I$CVTDT      DS
+     I                                        1   8 $CVCMD
+     I                                        9  18 $CVPRG
+     I                                       19  24 $CVD6I
+     I                                       25  32 $CVD8I
+     I                                       33  380$CVD6O
+     I                                       39  460$CVD8O
+     I                                       47  64 $CVSTO
+     I                                       65  72 $CVRTN
+     I                                       73 132 $CVERM
+     I                                       73  76 $CVMSG
+     I*----------------------------------------------------------------
+     I*
+     I$PERM       DS
+     I                                        1  60 XXERM
+     I                                        1   4 $PMSG
+     C*----------------------------------------------------------------
+     C*  Parameters
+     C*
+     C*    Input Parameters
+     C*      $FROM  - From date - returned as unpacked numeric
+     C*      $TO    - To date - returned as unpacked numeric
+     C*      $ITEM  - Item # or *all
+     C*      $DISP  - Slot or *all
+     C*
+     C*    Returned Parameters
+     C*      None
+     C*
+     C           *ENTRY    PLIST
+     C                     PARM           $FROM   8
+     C                     PARM           $TO     8
+     C                     PARM           $ITEM  15
+     C                     PARM           $DISP  12
+416a C                     PARM           $LINK   1
+     C*----------------------------------------------------------------
+     C*
+     C*  Report Heading
+     C*
+     C           *IN90     IFEQ '1'
+     C           FIRST     OREQ '1'
+214 AC                     MOVE '1'       *IN95
+     C                     EXSR ZRFRMT
+     C                     EXSR ZRHEAD
+     C                     END
+     C*
+     C*  L2 break - Item change.
+     C*
+     C           *INL2     IFEQ '1'
+     C                     MOVE '1'       *IN92
+BIR AC*
+BIR AC           CLIENT    IFEQ BIRITE
+BIR AC*    Get Last Sold date from Host file.
+BIR AC                     MOVEL'*LSTSOLD'$LCMD
+BIR AC                     MOVE WKWHSE    $LWHSE
+ IR AC                     MOVE WKITEM    $LITEM
+BIR AC                     MOVE *ZEROS    $LLSLD
+BIR AC                     CALL 'GETHINFO'
+BIR AC                     PARM           $LPARM
+BIR AC                     Z-ADD$LLSLD    WKLSLD
+BIR AC                     ENDIF
+BIR AC*
+     C                     END
+     C*
+     C*  L1 break - Date change.
+     C*
+     C           *INL1     IFEQ '1'
+     C                     MOVE '1'       *IN91
+     C                     END
+     C*
+     C* Detail Calcs
+     C*
+BIR AC*
+BIR AC           CLIENT    IFEQ BIRITE
+BIR AC                     MOVELWKITEM    WKITMS
+BIR AC                     ENDIF
+BIR AC*
+     C*
+     C* Lookup Type
+     C           WKTYPE    LOKUPTABT      TABTYP         09
+     C           *IN09     IFEQ '1'
+     C                     MOVELTABTYP    W1TYPE
+     C                     ELSE
+415aMC                     MOVELWKTYPE    W1TYPE
+415aDC*                    MOVE *BLANKS   W1TYPE
+     C                     ENDIF
+     C* Convert date
+     C                     MOVE '*CMDMDY '$CVCMD
+     C                     MOVE WKDATE    $CVD8I
+     C                     CALL @CVTDT
+     C                     PARM           $CVTDT
+     C                     Z-ADD$CVD6O    W1DATE  60
+417a C* Convert close date
+417a C           WKCDTE    IFGT 0
+417a C                     MOVE '*CMDMDY '$CVCMD
+417a C                     MOVE WKCDTE    $CVD8I
+417a C                     CALL @CVTDT
+417a C                     PARM           $CVTDT
+417a C                     Z-ADD$CVD6O    W1CDTE  60
+417a C                     ELSE
+417a C                     Z-ADD0         W1CDTE
+417a C                     ENDIF
+     C*
+     C* Convert quantity
+     C                     Z-ADDWKQTY     W1QTY   50
+BIR AC           CLIENT    IFEQ BIRITE
+BIR AC                     WRITEDTLBIR
+BIR AC                     ELSE
+     C                     WRITEDETAIL1
+BIR AC                     ENDIF
+     C*
+     C*  Set off top-of-page indicators
+     C*
+     C                     MOVE '0'       FIRST
+     C                     MOVE '0'       *IN91
+     C                     MOVE '0'       *IN92
+     C*
+     CL1                   WRITESKIP1
+     C*
+214 ACLRN95                EXSR ZRFRMT
+214 ACLRN95                EXSR ZRHEAD
+214 ACLRN95                WRITEDETAIL2
+     CLR                   WRITEFOOT1
+BIR AC*
+BIR ACLR         CLIENT    IFEQ BIRITE
+BIR AC*
+BIR AC*    Close open host files before pgm exit.
+BIR ACLR                   MOVEL'*CLOSE  '$LCMD
+BIR ACLR                   CALL 'GETHINFO'
+BIR ACLR                   PARM           $LPARM
+BIR ACLR                   ENDIF
+BIR AC*
+     C*****************************************************************
+     C*
+     C*  *INZSR  Initialization subrotine
+     C*
+     CSR         *INZSR    BEGSR
+500 AC*
+500 AC* Get client id.
+500 AC*
+500 AC                     CALL @GETCL
+500 AC                     PARM           CLIENT 10
+500 AC*
+     C*
+     CSR                   MOVE '1'       FIRST   1
+     C*
+     C*   Convert dates to MMDDYY format.
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $FROM     $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1FROM  60
+     C*
+     CSR                   MOVE '*CMDMDY '$CVCMD
+     CSR                   MOVE $TO       $CVD8I
+     CSR                   CALL @CVTDT
+     CSR                   PARM           $CVTDT
+     CSR                   Z-ADD$CVD6O    W1TO    60
+     C*
+     CSR                   ENDSR
+     C*----------------------------------------------------------------
+     C*
+     C           ZRFRMT    BEGSR
+     C*
+     C*   Get warehouse description.
+     C*
+     C                     MOVE *BLANKS   WHSE
+     C                     MOVE *BLANKS   $PSTR
+     C           WKWHSE    CHAINWAREHS               79
+     C           *IN79     IFEQ *OFF
+     C                     MOVELWHDESC    $PSTR  60
+     C                     ELSE
+     C                     MOVE *BLANKS   $PSTR
+     C                     ENDIF
+     C                     Z-ADD30        $PLEN   30
+     C*
+     C*   Center warehouse description.
+     C*
+     C                     CALL 'CENTER'
+     C                     PARM           $PSTR
+     C                     PARM           $PLEN
+     C                     MOVEL$PSTR     WHSE
+     C*
+     C*
+     C*   Move item # and slot description.
+     C*
+     C                     MOVE *BLANKS   ITEM
+     C                     MOVE *BLANKS   DISP
+     C                     MOVEL$ITEM     ITEM
+     C                     MOVEL$DISP     DISP
+416a C                     MOVE *BLANKS   LINK
+416a C           $LINK     IFEQ 'Y'
+416a C                     MOVELMSGL,1    LINK
+416a C                     ENDIF
+     C                     ENDSR
+     C*****************************************************************
+     C*
+     CSR         ZRHEAD    BEGSR
+     C*
+     CSR         *INL1     IFEQ '0'
+     CSR                   MOVE '1'       *IN91
+     CSR                   END
+     C*
+     CSR         *INL2     IFEQ '0'
+     CSR                   MOVE '1'       *IN92
+     CSR                   END
+     C*
+     CSR                   MOVE '0'       *IN90
+     CSR                   WRITEHEAD1
+BIR AC           CLIENT    IFEQ BIRITE
+BIR AC                     WRITECOLBIR
+BIR AC                     ELSE
+     CSR                   WRITECOLUMNS
+BIR AC                     ENDIF
+     C*
+     CSR                   ENDSR
+     O*
+     O*  COMPILE TIME TABLES
+     O*
+**
+B
+O
+R
+P
+I
+A
+T
+**
+Bulk pick
+Pick
+Replenish
+Put away
+Inventory
+Adjustment
+Transfer
+**
+Linked item exists
